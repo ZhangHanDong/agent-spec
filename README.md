@@ -324,3 +324,60 @@ The current system is strongest when the contract can be checked by:
 - boundary checks against an explicit or staged change set
 
 More advanced verifier layers can still be added, but the current model is already sufficient for self-hosting `agent-spec` with task contracts.
+
+## Contributing
+
+agent-spec is self-bootstrapping: the project uses itself to govern its own development. When you contribute, you follow the same Contract-driven workflow that agent-spec teaches.
+
+### The contribution flow
+
+Every change starts with a Task Contract. Before writing code, create a `.spec` file in `specs/` that defines what you're building — the intent, the technical decisions that are already fixed, the files you'll touch, and the BDD scenarios that define "done." Then implement against the Contract and verify with `lifecycle`.
+
+```bash
+# 1. Create a task contract for your change
+agent-spec init --level task --lang en --name "my-feature"
+# Edit the generated spec: fill in Intent, Decisions, Boundaries, Completion Criteria
+
+# 2. Check that the contract itself is well-written
+agent-spec lint specs/my-feature.spec --min-score 0.7
+
+# 3. Implement your change
+
+# 4. Verify against the contract
+agent-spec lifecycle specs/my-feature.spec --code . --change-scope worktree --format json
+
+# 5. Run the repo-wide guard before committing
+agent-spec guard --spec-dir specs --code .
+
+# 6. Generate the PR description
+agent-spec explain specs/my-feature.spec --code . --format markdown
+```
+
+The `guard` pre-commit hook is installed via `agent-spec install-hooks`. It checks all specs in `specs/` against your staged changes — your commit will be blocked if any contract fails.
+
+### Project-level rules
+
+The file `specs/project.spec` defines constraints that every task spec inherits. Read it before writing your first Contract — it tells you what the project enforces globally (e.g. "all public CLI behavior must have regression tests," "verification results must distinguish pass/fail/skip/uncertain").
+
+### Roadmap specs
+
+Future work lives in `specs/roadmap/`. These are real Task Contracts but they are not checked by the default `guard` run. When a roadmap spec is ready for implementation, promote it to the top-level `specs/` directory. See `specs/roadmap/README.md` for the promotion rule.
+
+### Using AI agents to contribute
+
+If you use Claude Code, Codex, Cursor, or another AI coding agent, the project ships integration files that teach the agent the Contract-driven workflow:
+
+```bash
+# Install agent-spec skills into your agent's configuration
+npx skills add ZhangHanDong/agent-spec
+```
+
+The `agent-spec-tool-first` skill tells the agent to read the Contract first, implement within its Boundaries, run `lifecycle` to verify, and retry on failure without modifying the spec. The `agent-spec-authoring` skill helps the agent draft or revise Task Contracts in the DSL.
+
+For agents without skill support, the project includes `AGENTS.md` (Codex), `.cursorrules` (Cursor), and `.aider.conf.yml` (Aider) with the essential command reference.
+
+### What we review
+
+Pull requests are evaluated through Contract Acceptance, not line-by-line code review. The reviewer checks two things: is the Contract definition correct (does it capture the right intent and edge cases), and did all verifications pass (lifecycle reports all-green). If both are yes, the PR is approved.
+
+This means the quality of your Contract matters as much as the quality of your code. A well-written Contract with thorough exception-path scenarios is a stronger contribution than clever code with a thin spec.

@@ -1,0 +1,42 @@
+# agent-spec Contract Guard — Minimal Version
+#
+# A simpler workflow that just runs guard and posts the result.
+# Use this if you want the fastest possible setup.
+#
+# Copy to: .github/workflows/contract-guard.yml
+
+name: Contract Guard
+
+on: [pull_request]
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache agent-spec
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/agent-spec
+          key: agent-spec-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install agent-spec
+        run: |
+          command -v agent-spec || cargo install --path . --bin agent-spec
+
+      - name: Contract Guard
+        run: agent-spec guard --spec-dir specs --code . --change-scope worktree
+
+      - name: Contract Summary
+        if: always()
+        run: |
+          for spec in specs/*.spec; do
+            [ -f "$spec" ] || continue
+            echo "---"
+            agent-spec explain "$spec" --code . --format markdown 2>/dev/null || true
+          done >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,196 @@
+# agent-spec Contract Guard — GitHub Actions Workflow
+#
+# This workflow runs agent-spec's contract verification on every pull request.
+# It checks that all .spec files in specs/ pass lint and verification against
+# the PR's changed files, then posts a Contract review summary to the PR.
+#
+# Prerequisites:
+#   - agent-spec is installable via `cargo install` or available as a binary
+#   - Task specs live in specs/ (configurable below)
+#   - The project has Cargo.toml at the root (for test execution)
+#
+# Usage:
+#   Copy this file to .github/workflows/contract-guard.yml in your repo.
+
+name: Contract Guard
+
+on:
+  pull_request:
+    branches: [main, master]
+  # Also run on push to main for post-merge verification
+  push:
+    branches: [main, master]
+
+# Cancel in-progress runs for the same PR
+concurrency:
+  group: contract-guard-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Minimum quality score for spec lint (0.0 - 1.0)
+  MIN_SCORE: "0.6"
+  # Directory containing .spec files
+  SPEC_DIR: "specs"
+  # Code directory to verify against
+  CODE_DIR: "."
+
+jobs:
+  contract-guard:
+    name: Contract Verification
+    runs-on: ubuntu-latest
+    # Grant write permission for PR comments and step summary
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      # ── Setup ────────────────────────────────────────────
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # Full history needed for change-scope worktree to work correctly
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # Cache the compiled agent-spec binary to avoid rebuilding every run.
+      # The cache key includes the agent-spec version from Cargo.toml so
+      # it invalidates when the tool is upgraded.
+      - name: Cache agent-spec binary
+        id: cache-agent-spec
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/agent-spec
+          key: agent-spec-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install agent-spec
+        if: steps.cache-agent-spec.outputs.cache-hit != 'true'
+        run: cargo install --path . --bin agent-spec
+
+      # ── Guard: lint + verify all specs ───────────────────
+      - name: Run Contract Guard
+        id: guard
+        # Use worktree scope on PRs to catch all changes, not just staged
+        run: |
+          echo "::group::Contract Guard Output"
+          agent-spec guard \
+            --spec-dir "$SPEC_DIR" \
+            --code "$CODE_DIR" \
+            --change-scope worktree \
+            --min-score "$MIN_SCORE" \
+            2>&1 | tee /tmp/guard-output.txt
+          GUARD_EXIT=${PIPESTATUS[0]}
+          echo "::endgroup::"
+          echo "exit_code=$GUARD_EXIT" >> "$GITHUB_OUTPUT"
+          exit $GUARD_EXIT
+        continue-on-error: true
+
+      # ── Explain: generate Contract summaries ─────────────
+      # Run explain on each spec to build the PR summary.
+      # This runs even if guard failed — reviewers need to see what went wrong.
+      - name: Generate Contract Summaries
+        id: explain
+        run: |
+          SUMMARY=""
+          SPEC_COUNT=0
+          PASS_COUNT=0
+          FAIL_COUNT=0
+
+          for spec in "$SPEC_DIR"/*.spec; do
+            [ -f "$spec" ] || continue
+            SPEC_COUNT=$((SPEC_COUNT + 1))
+            SPEC_NAME=$(basename "$spec" .spec)
+
+            # Run explain and capture output
+            EXPLAIN_OUTPUT=$(agent-spec explain "$spec" \
+              --code "$CODE_DIR" \
+              --format markdown 2>/dev/null || echo "⚠️ explain failed for $spec")
+
+            # Check if this spec passes
+            if agent-spec lifecycle "$spec" \
+              --code "$CODE_DIR" \
+              --change-scope worktree \
+              --format json 2>/dev/null | grep -q '"passed": true'; then
+              PASS_COUNT=$((PASS_COUNT + 1))
+              STATUS="✅"
+            else
+              FAIL_COUNT=$((FAIL_COUNT + 1))
+              STATUS="❌"
+            fi
+
+            SUMMARY="${SUMMARY}
+
+          <details>
+          <summary>${STATUS} ${SPEC_NAME}</summary>
+
+          ${EXPLAIN_OUTPUT}
+
+          </details>
+          "
+          done
+
+          # Write the full summary to a file for later steps
+          {
+            echo "## 📋 Contract Guard Report"
+            echo ""
+            if [ "$FAIL_COUNT" -eq 0 ] && [ "$SPEC_COUNT" -gt 0 ]; then
+              echo "**✅ All ${SPEC_COUNT} contract(s) passed.**"
+            elif [ "$SPEC_COUNT" -eq 0 ]; then
+              echo "**ℹ️ No .spec files found in \`${SPEC_DIR}/\`.**"
+            else
+              echo "**❌ ${FAIL_COUNT} of ${SPEC_COUNT} contract(s) failed.**"
+            fi
+            echo ""
+            echo "| Total | Passed | Failed |"
+            echo "| --- | --- | --- |"
+            echo "| ${SPEC_COUNT} | ${PASS_COUNT} | ${FAIL_COUNT} |"
+            echo ""
+            echo "$SUMMARY"
+          } > /tmp/contract-summary.md
+
+          # Also write to GitHub Step Summary (visible in Actions tab)
+          cat /tmp/contract-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      # ── PR Comment: post summary to the pull request ─────
+      - name: Post Contract Summary to PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('/tmp/contract-summary.md', 'utf8');
+
+            // Find existing agent-spec comment to update (avoid duplicates)
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const marker = '<!-- agent-spec-contract-guard -->';
+            const body = `${marker}\n${summary}`;
+            const existing = comments.find(c => c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body,
+              });
+            }
+
+      # ── Final verdict ────────────────────────────────────
+      - name: Check Guard Result
+        if: steps.guard.outputs.exit_code != '0'
+        run: |
+          echo "::error::Contract Guard failed. See the Contract Summary above for details."
+          exit 1

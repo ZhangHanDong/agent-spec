@@ -1,41 +1,23 @@
-[workspace]
-resolver = "3"
-members = [
-    "crates/spec-core",
-    "crates/spec-parser",
-    "crates/spec-lint",
-    "crates/spec-verify",
-    "crates/spec-report",
-    "crates/spec-gateway",
-    "crates/spec-cli",
-]
-
-[workspace.package]
+[package]
+name = "agent-spec"
+description = "AI-native BDD/Spec verification tool for contract-driven agent coding"
 edition = "2024"
 version = "0.2.0"
 license = "MIT"
 repository = "https://github.com/ZhangHanDong/agent-spec"
 homepage = "https://github.com/ZhangHanDong/agent-spec"
 
-[workspace.dependencies]
-spec-core = { version = "0.2.0", path = "crates/spec-core" }
-spec-parser = { version = "0.2.0", path = "crates/spec-parser" }
-spec-lint = { version = "0.2.0", path = "crates/spec-lint" }
-spec-verify = { version = "0.2.0", path = "crates/spec-verify" }
-spec-report = { version = "0.2.0", path = "crates/spec-report" }
-spec-gateway = { version = "0.2.0", path = "crates/spec-gateway" }
-
+[dependencies]
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1.49", features = ["full"] }
 
-[workspace.lints.rust]
+[lints.rust]
 unsafe_code = "deny"
 
-[workspace.lints.clippy]
+[lints.clippy]
 all = { level = "warn", priority = -1 }
 unwrap_used = "deny"
 expect_used = "deny"
