@@ -96,10 +96,11 @@ Or study the examples in [`examples/`](examples).
 
 ### AI Agent Skills
 
-This repo ships two agent skills under [`skills/`](skills):
+This repo ships three agent skills under [`skills/`](skills):
 
 - **`agent-spec-tool-first`**: the default integration path — tells the agent to use `agent-spec` as a CLI tool and drive tasks through `contract`, `lifecycle`, and `guard`.
 - **`agent-spec-authoring`**: the authoring path — helps write or revise Task Contracts in the DSL.
+- **`agent-spec-estimate`**: the estimation path — maps Task Contract elements (scenarios, decisions, boundaries) to round-based effort estimates.
 
 #### Install for Claude Code
 
@@ -107,6 +108,7 @@ This repo ships two agent skills under [`skills/`](skills):
 # Copy to your global skills directory
 cp -r skills/agent-spec-tool-first ~/.claude/skills/
 cp -r skills/agent-spec-authoring ~/.claude/skills/
+cp -r skills/agent-spec-estimate ~/.claude/skills/
 ```
 
 Or symlink for auto-updates:
@@ -114,6 +116,7 @@ Or symlink for auto-updates:
 ```bash
 ln -s "$(pwd)/skills/agent-spec-tool-first" ~/.claude/skills/
 ln -s "$(pwd)/skills/agent-spec-authoring" ~/.claude/skills/
+ln -s "$(pwd)/skills/agent-spec-estimate" ~/.claude/skills/
 ```
 
 #### Install for Codex
