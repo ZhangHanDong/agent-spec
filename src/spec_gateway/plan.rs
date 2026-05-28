@@ -761,6 +761,28 @@ pub fn format_plan_prompt(ctx: &PlanContext) -> String {
 
     // Task sketch
     out.push_str("# Suggested Implementation Order\n\n");
+
+    // Behavior rules: which examples prove which rule (Phase 1 BDD grouping).
+    if !ctx.contract.rules.is_empty() {
+        out.push_str("## Behavior Rules\n\n");
+        for rule in &ctx.contract.rules {
+            if rule.name == rule.key.id {
+                out.push_str(&format!("- Rule `{}`\n", rule.key.id));
+            } else {
+                out.push_str(&format!("- Rule `{}` — {}\n", rule.key.id, rule.name));
+            }
+            for scenario in ctx
+                .contract
+                .completion_criteria
+                .iter()
+                .filter(|s| s.rule.as_deref() == Some(rule.key.id.as_str()))
+            {
+                out.push_str(&format!("  - {}\n", scenario.name));
+            }
+        }
+        out.push('\n');
+    }
+
     if ctx.task_sketch.groups.is_empty() {
         out.push_str("No scenario dependencies detected.\n\n");
     } else {
@@ -838,6 +860,7 @@ mod tests {
             forbidden: vec!["src/spec_parser/**".into()],
             out_of_scope: vec!["AI generation".into()],
             completion_criteria: Vec::new(),
+            rules: vec![],
         }
     }
 
@@ -1031,6 +1054,7 @@ mod tests {
             forbidden: Vec::new(),
             out_of_scope: Vec::new(),
             completion_criteria: Vec::new(),
+            rules: vec![],
         };
 
         let resolved = ResolvedSpec {
@@ -1127,6 +1151,45 @@ mod tests {
     }
 
     #[test]
+    fn test_plan_prompt_includes_rule_grouping() {
+        let doc = crate::spec_parser::parse_spec_from_str(
+            r#"spec: task
+name: "退款"
+---
+
+## 完成条件
+
+### Rule: refund-must-be-idempotent — 退款幂等
+场景: 首次退款成功
+  测试: t1
+  当 退款
+  那么 成功
+场景: 重复退款不重复扣减
+  测试: t2
+  当 再次退款
+  那么 不重复
+"#,
+        )
+        .unwrap();
+        let contract = crate::spec_gateway::TaskContract::from_doc(&doc);
+        let resolved = make_test_resolved();
+        let ctx = build_plan_context(
+            &contract,
+            &resolved,
+            std::path::Path::new("."),
+            ScanDepth::Shallow,
+        );
+        let prompt = format_plan_prompt(&ctx);
+
+        assert!(prompt.contains("## Behavior Rules"));
+        assert!(prompt.contains("Rule `refund-must-be-idempotent` — 退款幂等"));
+        // The two examples proving the rule are listed under it.
+        let rule_pos = prompt.find("refund-must-be-idempotent").unwrap();
+        let ex_pos = prompt.find("首次退款成功").unwrap();
+        assert!(rule_pos < ex_pos, "examples listed under their rule");
+    }
+
+    #[test]
     fn test_plan_full_depth_includes_pub_signatures() {
         let contract = make_test_contract();
         let resolved = make_test_resolved();
@@ -1154,6 +1217,7 @@ mod tests {
             forbidden: Vec::new(),
             out_of_scope: Vec::new(),
             completion_criteria: Vec::new(),
+            rules: vec![],
         };
 
         let resolved = ResolvedSpec {

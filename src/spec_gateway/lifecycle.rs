@@ -820,6 +820,111 @@ name: "Contract fidelity"
     }
 
     #[test]
+    fn test_new_bdd_lints_do_not_affect_lifecycle_verdict() {
+        // Triggers bdd-rule-grouping (3 ungrouped scenarios) and
+        // bdd-implementation-detail-step (点击), all warning/info.
+        let input = r#"spec: task
+name: "lint-not-gating"
+---
+
+## 完成条件
+
+场景: 一
+  测试: t1
+  当 用户点击按钮
+  那么 成功
+场景: 二
+  测试: t2
+  当 a
+  那么 b
+场景: 三
+  测试: t3
+  当 a
+  那么 b
+"#;
+        let doc = crate::spec_parser::parse_spec_from_str(input).unwrap();
+        let report = crate::spec_lint::LintPipeline::with_defaults().run(&doc);
+        let bdd: Vec<_> = report
+            .diagnostics
+            .iter()
+            .filter(|d| d.rule.starts_with("bdd-"))
+            .collect();
+        assert!(!bdd.is_empty(), "expected bdd-* diagnostics to fire");
+        assert!(
+            bdd.iter()
+                .all(|d| d.severity != crate::spec_core::Severity::Error),
+            "bdd-* lints must never be Error (would gate lifecycle)"
+        );
+
+        // is_passing reads only the verification summary — never lint — so an
+        // all-pass report passes regardless of the bdd diagnostics above.
+        let gw = SpecGateway::from_input(input).unwrap();
+        let all_pass = VerificationReport {
+            spec_name: "lint-not-gating".into(),
+            results: vec![crate::spec_core::ScenarioResult {
+                scenario_name: "一".into(),
+                verdict: Verdict::Pass,
+                step_results: vec![],
+                evidence: vec![],
+                duration_ms: 0,
+            }],
+            summary: crate::spec_core::VerificationSummary {
+                total: 1,
+                passed: 1,
+                failed: 0,
+                skipped: 0,
+                uncertain: 0,
+                pending_review: 0,
+            },
+        };
+        assert!(gw.is_passing(&all_pass));
+    }
+
+    #[test]
+    fn test_existing_specs_pass_lifecycle_after_v1_changes() {
+        // Every existing spec/example must still parse, and the new bdd-* lints
+        // must never gate them (no Error severity from v1 rules).
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut checked = 0usize;
+        for dir in ["specs", "examples"] {
+            let base = root.join(dir);
+            let mut stack = vec![base];
+            while let Some(d) = stack.pop() {
+                let Ok(entries) = fs::read_dir(&d) else {
+                    continue;
+                };
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        stack.push(path);
+                        continue;
+                    }
+                    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    if !(name.ends_with(".spec") || name.ends_with(".spec.md")) {
+                        continue;
+                    }
+                    let doc = crate::spec_parser::parse_spec(&path)
+                        .unwrap_or_else(|e| panic!("failed to parse {}: {e:?}", path.display()));
+                    let report = crate::spec_lint::LintPipeline::with_defaults().run(&doc);
+                    for d in &report.diagnostics {
+                        if d.rule.starts_with("bdd-") {
+                            assert_ne!(
+                                d.severity,
+                                crate::spec_core::Severity::Error,
+                                "bdd lint gated {}: {}",
+                                path.display(),
+                                d.message
+                            );
+                        }
+                    }
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked > 0, "expected to check existing specs");
+    }
+
+    #[test]
     fn test_verify_with_ai_mode_stub_marks_uncovered_scenarios_uncertain() {
         let gw = SpecGateway::from_input(
             r#"spec: task
