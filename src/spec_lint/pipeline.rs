@@ -44,6 +44,11 @@ impl LintPipeline {
         p.add(Box::new(super::linters::FlagCombinationCoverageLinter));
         p.add(Box::new(super::linters::PlatformDecisionTagLinter));
         p.add(Box::new(super::linters::CircularDependencyLinter));
+        // BDD semantics v1 (Phase 1) — warning/info only, never gating.
+        p.add(Box::new(super::linters::BddRuleIdLinter));
+        p.add(Box::new(super::linters::BddRuleGroupingLinter));
+        p.add(Box::new(super::linters::BddScenarioShapeLinter));
+        p.add(Box::new(super::linters::BddImplementationDetailStepLinter));
         p
     }
 

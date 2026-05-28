@@ -2030,6 +2030,241 @@ fn dfs_find_cycle<'a>(
     None
 }
 
+// =============================================================================
+// BDD semantics v1 linters (Phase 1). All warning/info — never Error, so they
+// stay out of the lifecycle pass/fail verdict. Diagnostics carry agent-readable
+// self-correction guidance: why the rule exists, how to fix, when an exception
+// is legitimate, and how to leave a trace if not fixing.
+// =============================================================================
+
+/// `bdd-rule-id`: a `Rule:` / `规则:` line whose leading token is not a valid
+/// kebab-case id is dropped by the parser (no auto-slugify). Warn so the author
+/// gives it a stable id or removes it.
+pub struct BddRuleIdLinter;
+
+impl SpecLinter for BddRuleIdLinter {
+    fn name(&self) -> &str {
+        "bdd-rule-id"
+    }
+
+    fn lint(&self, doc: &SpecDocument) -> Vec<LintDiagnostic> {
+        let mut diags = Vec::new();
+        for section in &doc.sections {
+            if let Section::AcceptanceCriteria { malformed_rules, .. } = section {
+                for m in malformed_rules {
+                    diags.push(LintDiagnostic {
+                        rule: "bdd-rule-id".into(),
+                        severity: Severity::Warning,
+                        message: format!(
+                            "Rule line '{}' has no explicit kebab-case id, so no rule was created and its scenarios are ungrouped",
+                            truncate_bdd(&m.raw, 50)
+                        ),
+                        span: m.span,
+                        suggestion: Some(
+                            "A Rule needs a stable id (^[a-z][a-z0-9-]$) because it survives display-name edits and lifts to capability scope unchanged. \
+Fix: `Rule: kebab-id — 显示名` (em dash or two-space separator), or `Rule: kebab-id` alone. \
+If you don't want a rule here, delete the line — scenarios stay flat. \
+If you must keep it as-is for now, leave `<!-- lint-ack: bdd-rule-id — <reason> -->` (full lint-ack lands in Phase 5).".into(),
+                        ),
+                    });
+                }
+            }
+        }
+        diags
+    }
+}
+
+/// `bdd-rule-grouping`: suggests grouping when many scenarios are ungrouped, and
+/// warns on a `Rule:` that has no scenarios proving it.
+pub struct BddRuleGroupingLinter;
+
+impl SpecLinter for BddRuleGroupingLinter {
+    fn name(&self) -> &str {
+        "bdd-rule-grouping"
+    }
+
+    fn lint(&self, doc: &SpecDocument) -> Vec<LintDiagnostic> {
+        let mut diags = Vec::new();
+        for section in &doc.sections {
+            if let Section::AcceptanceCriteria {
+                scenarios,
+                rules,
+                span,
+                ..
+            } = section
+            {
+                // Empty rule: declared but proven by nothing.
+                for r in rules {
+                    if r.scenario_names.is_empty() {
+                        diags.push(LintDiagnostic {
+                            rule: "bdd-rule-grouping".into(),
+                            severity: Severity::Warning,
+                            message: format!(
+                                "Rule '{}' has no scenarios proving it",
+                                r.key.id
+                            ),
+                            span: r.span,
+                            suggestion: Some(
+                                "A rule is a promise; an unproven promise is just prose. \
+Add at least one `Scenario:`/`Example:` under it (with a `Test:` selector), or remove the Rule line. \
+To keep it deliberately empty for now, leave `<!-- lint-ack: bdd-rule-grouping — <reason> -->`.".into(),
+                            ),
+                        });
+                    }
+                }
+
+                // Many ungrouped scenarios: suggest introducing rules.
+                let ungrouped = scenarios.iter().filter(|s| s.rule.is_none()).count();
+                if rules.is_empty() && ungrouped >= 3 {
+                    diags.push(LintDiagnostic {
+                        rule: "bdd-rule-grouping".into(),
+                        severity: Severity::Info,
+                        message: format!(
+                            "{ungrouped} scenarios with no Rule grouping"
+                        ),
+                        span: *span,
+                        suggestion: Some(
+                            "Grouping scenarios under `Rule: <id> — <name>` makes the behavior they prove explicit and lets the rule lift to capability scope later. \
+Add `Rule:` headers above related scenarios. \
+This is a suggestion, not a gate — if flat structure is right for this spec, ignore it or leave `<!-- lint-ack: bdd-rule-grouping — <reason> -->`.".into(),
+                        ),
+                    });
+                }
+            }
+        }
+        diags
+    }
+}
+
+/// `bdd-scenario-shape`: each scenario should have When + Then, and should not
+/// open with And/But (a continuation with nothing to continue).
+pub struct BddScenarioShapeLinter;
+
+impl SpecLinter for BddScenarioShapeLinter {
+    fn name(&self) -> &str {
+        "bdd-scenario-shape"
+    }
+
+    fn lint(&self, doc: &SpecDocument) -> Vec<LintDiagnostic> {
+        let mut diags = Vec::new();
+        for section in &doc.sections {
+            if let Section::AcceptanceCriteria { scenarios, .. } = section {
+                for sc in scenarios {
+                    if sc.steps.is_empty() {
+                        continue;
+                    }
+                    let has_when = sc.steps.iter().any(|s| s.kind == StepKind::When);
+                    let has_then = sc.steps.iter().any(|s| s.kind == StepKind::Then);
+                    if !has_when || !has_then {
+                        let missing = match (has_when, has_then) {
+                            (false, false) => "When and Then",
+                            (false, true) => "When",
+                            (true, false) => "Then",
+                            _ => unreachable!(),
+                        };
+                        diags.push(LintDiagnostic {
+                            rule: "bdd-scenario-shape".into(),
+                            severity: Severity::Warning,
+                            message: format!(
+                                "scenario '{}' is missing {missing}",
+                                sc.display_name()
+                            ),
+                            span: sc.span,
+                            suggestion: Some(
+                                "A behavioral example needs a trigger (When/当) and an observable outcome (Then/那么) because without them the verifier cannot bind it to behavior. \
+Fix: add the missing step(s). \
+If this is intentionally a setup-only fragment, reconsider whether it should be a Scenario at all. \
+To keep it as-is for now, leave `<!-- lint-ack: bdd-scenario-shape — <reason> -->` (full lint-ack lands in Phase 5).".into(),
+                            ),
+                        });
+                    }
+                    if matches!(
+                        sc.steps[0].kind,
+                        StepKind::And | StepKind::But
+                    ) {
+                        diags.push(LintDiagnostic {
+                            rule: "bdd-scenario-shape".into(),
+                            severity: Severity::Warning,
+                            message: format!(
+                                "scenario '{}' opens with And/But (并且/但是) — nothing to continue from",
+                                sc.display_name()
+                            ),
+                            span: sc.steps[0].span,
+                            suggestion: Some(
+                                "And/But continue a prior Given/When/Then, because an opening continuation has nothing to continue from. \
+Fix: start the scenario with Given/When/Then (假设/当/那么) instead. \
+If the leading And/But is deliberate, leave `<!-- lint-ack: bdd-scenario-shape — <reason> -->` (full lint-ack lands in Phase 5).".into(),
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+        diags
+    }
+}
+
+/// `bdd-implementation-detail-step`: steps that describe UI/script procedure
+/// (click/type/visit/CSS selectors, 点击/输入/访问...) instead of behavior.
+pub struct BddImplementationDetailStepLinter;
+
+const BDD_IMPL_DETAIL_EN: &[&str] = &[
+    "click", "type ", "visit", "press ", "data-testid", "css selector", ".class", "#id",
+    "navigate to",
+];
+
+const BDD_IMPL_DETAIL_ZH: &[&str] = &[
+    "点击", "输入", "访问", "填写", "选择", "打开页面", "查看页面", "拖拽",
+];
+
+impl SpecLinter for BddImplementationDetailStepLinter {
+    fn name(&self) -> &str {
+        "bdd-implementation-detail-step"
+    }
+
+    fn lint(&self, doc: &SpecDocument) -> Vec<LintDiagnostic> {
+        let mut diags = Vec::new();
+        for section in &doc.sections {
+            if let Section::AcceptanceCriteria { scenarios, .. } = section {
+                for sc in scenarios {
+                    for step in &sc.steps {
+                        let lower = step.text.to_lowercase();
+                        let hit_en = BDD_IMPL_DETAIL_EN.iter().find(|kw| lower.contains(*kw));
+                        let hit_zh = BDD_IMPL_DETAIL_ZH.iter().find(|kw| step.text.contains(*kw));
+                        if let Some(kw) = hit_en.or(hit_zh) {
+                            diags.push(LintDiagnostic {
+                                rule: "bdd-implementation-detail-step".into(),
+                                severity: Severity::Info,
+                                message: format!(
+                                    "step describes UI/implementation procedure ('{kw}') rather than behavior"
+                                ),
+                                span: step.span,
+                                suggestion: Some(
+                                    "Behavioral steps survive UI refactors; procedural ones break when the page changes. \
+Prefer `When the user signs in` over `When the user clicks the #login button`. \
+If this step genuinely must assert UI mechanics, leave it and (Phase 5) `<!-- lint-ack: bdd-implementation-detail-step — <reason> -->`.".into(),
+                                ),
+                            });
+                            break; // one hint per step
+                        }
+                    }
+                }
+            }
+        }
+        diags
+    }
+}
+
+/// Truncate a string to `max` chars for diagnostic messages.
+fn truncate_bdd(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let truncated: String = s.chars().take(max.saturating_sub(3)).collect();
+        format!("{truncated}...")
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::len_zero, clippy::unwrap_used)]
 mod tests {
@@ -3006,5 +3241,211 @@ Scenario: C
             "should not detect cycle in linear chain, got: {:?}",
             diags
         );
+    }
+
+    // ---- BDD semantics v1 lints ----
+
+
+    fn guidance_has_four_elements(s: &str) -> bool {
+        // (1) why exists  (2) how to fix  (3) when exception ok  (4) lint-ack trace
+        let l = s.to_lowercase();
+        let why = l.contains("because")
+            || l.contains("survives")
+            || l.contains("promise")
+            || l.contains("behavioral")
+            || l.contains("cannot");
+        let how =
+            l.contains("fix") || l.contains("add") || l.contains("prefer") || l.contains("start");
+        let exception =
+            l.contains("if ") || l.contains("ignore") || l.contains("reconsider");
+        let ack = l.contains("lint-ack");
+        why && how && exception && ack
+    }
+
+    #[test]
+    fn test_freeform_rule_emits_warning_and_does_not_group_scenarios() {
+        let input = r#"spec: task
+name: "促销"
+---
+
+## 完成条件
+
+规则: VIP 折扣优先于促销叠加
+场景: 折扣场景
+  测试: test_discount
+  假设 a
+  当 b
+  那么 c
+"#;
+        let doc = parse_spec_from_str(input).unwrap();
+        // No BehaviorRule created; scenario ungrouped.
+        match &doc.sections[0] {
+            Section::AcceptanceCriteria {
+                rules, scenarios, ..
+            } => {
+                assert!(rules.is_empty(), "invalid id must not create a rule");
+                assert!(scenarios[0].rule.is_none());
+            }
+            other => panic!("expected AcceptanceCriteria, got {other:?}"),
+        }
+        let diags = BddRuleIdLinter.lint(&doc);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].rule, "bdd-rule-id");
+        assert_eq!(diags[0].severity, Severity::Warning);
+    }
+
+    #[test]
+    fn test_bdd_rule_grouping_suggests_when_three_or_more_scenarios_uncategorized() {
+        let input = r#"spec: task
+name: "无分组"
+---
+
+## 完成条件
+
+场景: 一
+  测试: t1
+  当 a
+  那么 b
+场景: 二
+  测试: t2
+  当 a
+  那么 b
+场景: 三
+  测试: t3
+  当 a
+  那么 b
+"#;
+        let doc = parse_spec_from_str(input).unwrap();
+        let diags = BddRuleGroupingLinter.lint(&doc);
+        assert!(diags.iter().any(|d| d.rule == "bdd-rule-grouping"
+            && d.severity == Severity::Info));
+    }
+
+    #[test]
+    fn test_bdd_rule_grouping_warns_on_empty_rule() {
+        let input = r#"spec: task
+name: "空规则"
+---
+
+## 完成条件
+
+### Rule: orphan-rule — 没有场景的规则
+"#;
+        let doc = parse_spec_from_str(input).unwrap();
+        let diags = BddRuleGroupingLinter.lint(&doc);
+        let warn = diags
+            .iter()
+            .find(|d| d.rule == "bdd-rule-grouping" && d.severity == Severity::Warning)
+            .expect("empty rule should warn");
+        assert!(warn.message.contains("orphan-rule"));
+    }
+
+    #[test]
+    fn test_bdd_scenario_shape_flags_missing_when_or_then() {
+        let input = r#"spec: task
+name: "缺步骤"
+---
+
+## 完成条件
+
+场景: 只有假设
+  测试: t1
+  假设 用户已登录
+"#;
+        let doc = parse_spec_from_str(input).unwrap();
+        let diags = BddScenarioShapeLinter.lint(&doc);
+        assert!(diags.iter().any(|d| d.rule == "bdd-scenario-shape"
+            && d.severity == Severity::Warning));
+    }
+
+    #[test]
+    fn test_bdd_scenario_shape_flags_leading_and_or_but() {
+        let input = r#"spec: task
+name: "首步And"
+---
+
+## 完成条件
+
+场景: 错误开头
+  测试: t1
+  并且 这是一个错误的开头
+  当 触发
+  那么 结果
+"#;
+        let doc = parse_spec_from_str(input).unwrap();
+        let diags = BddScenarioShapeLinter.lint(&doc);
+        assert!(diags.iter().any(|d| d.rule == "bdd-scenario-shape"
+            && d.message.contains("And/But")));
+    }
+
+    #[test]
+    fn test_bdd_implementation_detail_flags_ui_verbs_en_and_zh() {
+        let en = r#"spec: task
+name: "ui en"
+---
+
+## Completion Criteria
+
+Scenario: login flow
+  Test: t1
+  Given the login page
+  When the user clicks the #login button
+  Then a welcome page shows
+"#;
+        let doc = parse_spec_from_str(en).unwrap();
+        let diags = BddImplementationDetailStepLinter.lint(&doc);
+        assert!(diags.iter().any(|d| d.rule == "bdd-implementation-detail-step"
+            && d.severity == Severity::Info));
+
+        let zh = r#"spec: task
+name: "ui zh"
+---
+
+## 完成条件
+
+场景: 登录流程
+  测试: t1
+  假设 登录页已打开
+  当 用户点击登录按钮
+  那么 显示欢迎页
+"#;
+        let doc = parse_spec_from_str(zh).unwrap();
+        let diags = BddImplementationDetailStepLinter.lint(&doc);
+        assert!(diags.iter().any(|d| d.rule == "bdd-implementation-detail-step"));
+    }
+
+    #[test]
+    fn test_new_bdd_lints_emit_self_correction_guidance() {
+        // Each bdd-* lint's suggestion must carry the four-element guidance.
+        let input = r#"spec: task
+name: "guidance"
+---
+
+## 完成条件
+
+规则: NOT-kebab
+### Rule: orphan-rule — 空规则
+场景: 缺then
+  测试: t1
+  当 用户点击按钮
+"#;
+        let doc = parse_spec_from_str(input).unwrap();
+        let mut all = Vec::new();
+        all.extend(BddRuleIdLinter.lint(&doc));
+        all.extend(BddRuleGroupingLinter.lint(&doc));
+        all.extend(BddScenarioShapeLinter.lint(&doc));
+        all.extend(BddImplementationDetailStepLinter.lint(&doc));
+        assert!(
+            all.iter().any(|d| d.rule == "bdd-rule-id"),
+            "expected bdd-rule-id diagnostic"
+        );
+        for d in &all {
+            let g = d.suggestion.as_deref().unwrap_or("");
+            assert!(
+                guidance_has_four_elements(g),
+                "lint {} suggestion missing self-correction guidance element: {g}",
+                d.rule
+            );
+        }
     }
 }

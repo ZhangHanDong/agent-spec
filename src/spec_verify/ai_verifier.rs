@@ -255,6 +255,7 @@ mod tests {
                         Section::AcceptanceCriteria {
                             scenarios: vec![scenario.clone()],
                             rules: vec![],
+                            malformed_rules: vec![],
                             span: Span::line(3),
                         },
                     ],

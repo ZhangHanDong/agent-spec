@@ -1,7 +1,7 @@
 use crate::spec_core::{
-    BehaviorRule, Boundary, BoundaryCategory, Constraint, ConstraintCategory, ReviewMode, RuleKey,
-    RuleScope, Scenario, ScenarioMode, Section, Span, SpecDocument, SpecError, SpecResult, Step,
-    TestSelector,
+    BehaviorRule, Boundary, BoundaryCategory, Constraint, ConstraintCategory, MalformedRule,
+    ReviewMode, RuleKey, RuleScope, Scenario, ScenarioMode, Section, Span, SpecDocument, SpecError,
+    SpecResult, Step, TestSelector,
 };
 use std::path::{Path, PathBuf};
 
@@ -153,10 +153,11 @@ fn build_section(
             Ok(Section::Boundaries { items, span })
         }
         SectionKind::AcceptanceCriteria => {
-            let (scenarios, rules) = parse_scenarios(lines, task_stem)?;
+            let (scenarios, rules, malformed_rules) = parse_scenarios(lines, task_stem)?;
             Ok(Section::AcceptanceCriteria {
                 scenarios,
                 rules,
+                malformed_rules,
                 span,
             })
         }
@@ -255,12 +256,12 @@ fn parse_boundaries(lines: &[(usize, &str)]) -> Vec<Boundary> {
     items
 }
 
-fn parse_scenarios(
-    lines: &[(usize, &str)],
-    task_stem: &str,
-) -> SpecResult<(Vec<Scenario>, Vec<BehaviorRule>)> {
+type ParsedScenarios = (Vec<Scenario>, Vec<BehaviorRule>, Vec<MalformedRule>);
+
+fn parse_scenarios(lines: &[(usize, &str)], task_stem: &str) -> SpecResult<ParsedScenarios> {
     let mut scenarios = Vec::new();
     let mut rules: Vec<BehaviorRule> = Vec::new();
+    let mut malformed_rules: Vec<MalformedRule> = Vec::new();
     let mut current_name: Option<(String, usize)> = None;
     let mut current_steps: Vec<Step> = Vec::new();
     let mut current_test_selector: Option<TestSelectorDraft> = None;
@@ -318,7 +319,13 @@ fn parse_scenarios(
                     });
                     current_rule_id = Some(id);
                 }
-                None => current_rule_id = None,
+                None => {
+                    current_rule_id = None;
+                    malformed_rules.push(MalformedRule {
+                        raw: raw.to_string(),
+                        span: Span::line(line_num),
+                    });
+                }
             }
             continue;
         }
@@ -439,7 +446,7 @@ fn parse_scenarios(
         );
     }
 
-    Ok((scenarios, rules))
+    Ok((scenarios, rules, malformed_rules))
 }
 
 /// Split a `Rule:` header's raw content into `(id, display_name)`.

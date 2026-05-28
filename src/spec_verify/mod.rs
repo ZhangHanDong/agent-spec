@@ -179,6 +179,7 @@ mod tests {
                     sections: vec![Section::AcceptanceCriteria {
                         scenarios: vec![scenario.clone()],
                         rules: vec![],
+                        malformed_rules: vec![],
                         span: Span::line(1),
                     }],
                     source_path: PathBuf::new(),

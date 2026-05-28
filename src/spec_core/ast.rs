@@ -69,6 +69,11 @@ pub enum Section {
         /// Additive (Phase 1 BDD semantics); empty for specs without `Rule:` lines.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         rules: Vec<BehaviorRule>,
+        /// `Rule:` lines whose id was not a valid kebab-case identifier.
+        /// Retained (not promoted to a [`BehaviorRule`]) so the `bdd-rule-id`
+        /// lint can flag them. Additive.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        malformed_rules: Vec<MalformedRule>,
         span: Span,
     },
     OutOfScope {
@@ -183,6 +188,15 @@ pub struct BehaviorRule {
     /// Names of scenarios grouped under this rule, in document order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scenario_names: Vec<String>,
+    pub span: Span,
+}
+
+/// A `Rule:` header whose leading token was not a valid kebab-case id, so it
+/// was not promoted to a [`BehaviorRule`]. Carries the raw content for the
+/// `bdd-rule-id` lint to report.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MalformedRule {
+    pub raw: String,
     pub span: Span,
 }
 
