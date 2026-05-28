@@ -158,6 +158,7 @@ mod tests {
             review: Default::default(),
             mode: Default::default(),
             depends_on: vec![],
+            rule: None,
             span: Span::line(1),
         };
         let ctx = VerificationContext {
@@ -177,6 +178,7 @@ mod tests {
                     },
                     sections: vec![Section::AcceptanceCriteria {
                         scenarios: vec![scenario.clone()],
+                        rules: vec![],
                         span: Span::line(1),
                     }],
                     source_path: PathBuf::new(),

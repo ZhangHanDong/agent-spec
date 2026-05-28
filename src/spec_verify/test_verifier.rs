@@ -321,6 +321,7 @@ fn helper() {}
             review: Default::default(),
             mode: Default::default(),
             depends_on: vec![],
+            rule: None,
             span: Span::default(),
         };
         let legacy = HashMap::from([("场景一".to_string(), "legacy_test_name".to_string())]);
@@ -345,6 +346,7 @@ fn helper() {}
             review: Default::default(),
             mode: Default::default(),
             depends_on: vec![],
+            rule: None,
             span: Span::default(),
         };
         let legacy = HashMap::from([(

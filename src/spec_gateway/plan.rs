@@ -863,6 +863,7 @@ mod tests {
                 review: crate::spec_core::ReviewMode::Auto,
                 mode: crate::spec_core::ScenarioMode::Standard,
                 depends_on: Vec::new(),
+                rule: None,
                 span: Span::default(),
             },
             Scenario {
@@ -873,6 +874,7 @@ mod tests {
                 review: crate::spec_core::ReviewMode::Auto,
                 mode: crate::spec_core::ScenarioMode::Standard,
                 depends_on: Vec::new(),
+                rule: None,
                 span: Span::default(),
             },
             Scenario {
@@ -889,6 +891,7 @@ mod tests {
                 review: crate::spec_core::ReviewMode::Auto,
                 mode: crate::spec_core::ScenarioMode::Standard,
                 depends_on: vec!["scenario A".into()],
+                rule: None,
                 span: Span::default(),
             },
             Scenario {
@@ -899,6 +902,7 @@ mod tests {
                 review: crate::spec_core::ReviewMode::Auto,
                 mode: crate::spec_core::ScenarioMode::Standard,
                 depends_on: Vec::new(),
+                rule: None,
                 span: Span::default(),
             },
         ];

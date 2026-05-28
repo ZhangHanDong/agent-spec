@@ -65,6 +65,10 @@ pub enum Section {
     },
     AcceptanceCriteria {
         scenarios: Vec<Scenario>,
+        /// BDD behavior rules grouping scenarios under this section.
+        /// Additive (Phase 1 BDD semantics); empty for specs without `Rule:` lines.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        rules: Vec<BehaviorRule>,
         span: Span,
     },
     OutOfScope {
@@ -143,6 +147,45 @@ impl ReviewMode {
     }
 }
 
+/// Scope of a BDD behavior rule. The keystone of the BDD-spine roadmap:
+/// the same Rule primitive lifts across task/capability/project scope by
+/// changing only this field, never the stable `id`.
+///
+/// Phase 1 only produces `Task`; `Capability` and `Project` are reserved
+/// variants written into the AST but not parsed/loaded/promoted yet.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuleScope {
+    /// Task scope, namespaced by the spec file stem (not the human display name).
+    Task(String),
+    /// Capability scope (reserved; Phase 3).
+    Capability(String),
+    /// Project scope (reserved; Phase 3).
+    Project,
+}
+
+/// Stable identity of a behavior rule: `{ scope, id }`.
+/// `id` is the stable kebab-case identifier; the human display text lives in
+/// `BehaviorRule.name` and may change freely without breaking references.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuleKey {
+    pub scope: RuleScope,
+    pub id: String,
+}
+
+/// A BDD behavior rule: a promise the system should keep, proven by one or
+/// more scenarios (examples). Formulation-layer primitive (Phase 1).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BehaviorRule {
+    pub key: RuleKey,
+    /// Human-readable display text. Defaults to `key.id` when no display name given.
+    pub name: String,
+    /// Names of scenarios grouped under this rule, in document order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scenario_names: Vec<String>,
+    pub span: Span,
+}
+
 /// A BDD scenario.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Scenario {
@@ -157,6 +200,10 @@ pub struct Scenario {
     pub mode: ScenarioMode,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub depends_on: Vec<String>,
+    /// `id` of the owning [`BehaviorRule`], if this scenario is grouped under one.
+    /// Additive (Phase 1 BDD semantics); `None` for ungrouped/legacy scenarios.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule: Option<String>,
     pub span: Span,
 }
 

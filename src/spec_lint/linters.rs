@@ -493,7 +493,7 @@ impl SpecLinter for ScenarioPresenceLinter {
             .sections
             .iter()
             .filter_map(|section| match section {
-                Section::AcceptanceCriteria { scenarios, span } => Some((scenarios, span)),
+                Section::AcceptanceCriteria { scenarios, span, .. } => Some((scenarios, span)),
                 _ => None,
             })
             .collect();
@@ -573,7 +573,7 @@ impl SpecLinter for SycophancyLinter {
                 Section::Constraints { items, span } => {
                     (items.iter().map(|c| c.text.as_str()).collect(), *span)
                 }
-                Section::AcceptanceCriteria { scenarios, span } => {
+                Section::AcceptanceCriteria { scenarios, span, .. } => {
                     let texts: Vec<&str> = scenarios
                         .iter()
                         .flat_map(|s| s.steps.iter().map(|st| st.text.as_str()))
@@ -1201,7 +1201,7 @@ impl SpecLinter for ErrorPathLinter {
         }
 
         for section in &doc.sections {
-            if let Section::AcceptanceCriteria { scenarios, span } = section {
+            if let Section::AcceptanceCriteria { scenarios, span, .. } = section {
                 if scenarios.is_empty() {
                     continue;
                 }

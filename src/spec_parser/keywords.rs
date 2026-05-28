@@ -78,23 +78,46 @@ pub fn match_section_header(line: &str) -> Option<SectionKind> {
     }
 }
 
-/// Scenario header recognition.
+/// Scenario header recognition. `Example:` / `例子:` / `示例:` are accepted as
+/// aliases of `Scenario:` / `场景:` (Cucumber treats Example and Scenario as
+/// synonyms); the parser stores both as `Scenario`.
 pub fn match_scenario_header(line: &str) -> Option<&str> {
     let trimmed = line.trim().trim_start_matches('#').trim();
 
-    if let Some(rest) = trimmed
-        .strip_prefix("场景:")
-        .or_else(|| trimmed.strip_prefix("场景："))
-    {
-        Some(rest.trim())
-    } else {
-        let lower = trimmed.to_lowercase();
-        if lower.starts_with("scenario:") {
-            Some(trimmed["scenario:".len()..].trim())
-        } else {
-            None
+    // Chinese scenario / example aliases
+    for prefix in ["场景:", "场景：", "示例:", "示例：", "例子:", "例子："] {
+        if let Some(rest) = trimmed.strip_prefix(prefix) {
+            return Some(rest.trim());
         }
     }
+
+    let lower = trimmed.to_lowercase();
+    for prefix in ["scenario:", "example:"] {
+        if lower.starts_with(prefix) {
+            return Some(trimmed[prefix.len()..].trim());
+        }
+    }
+
+    None
+}
+
+/// Behavior rule header recognition: `Rule:` / `规则:`.
+/// Returns the raw content after the colon (id and optional display name);
+/// the parser is responsible for splitting and validating the kebab-case id.
+pub fn match_rule_header(line: &str) -> Option<&str> {
+    let trimmed = line.trim().trim_start_matches('#').trim();
+
+    if let Some(rest) = trimmed
+        .strip_prefix("规则:")
+        .or_else(|| trimmed.strip_prefix("规则："))
+    {
+        return Some(rest.trim());
+    }
+    let lower = trimmed.to_lowercase();
+    if lower.starts_with("rule:") {
+        return Some(trimmed["rule:".len()..].trim());
+    }
+    None
 }
 
 /// Scenario-level test selector binding.
@@ -347,6 +370,32 @@ mod tests {
             match_scenario_header("Scenario: Full refund"),
             Some("Full refund")
         );
+    }
+
+    #[test]
+    fn test_scenario_header_accepts_example_aliases() {
+        assert_eq!(match_scenario_header("Example: Full refund"), Some("Full refund"));
+        assert_eq!(match_scenario_header("示例: 余额不足"), Some("余额不足"));
+        assert_eq!(match_scenario_header("例子: 余额充足"), Some("余额充足"));
+        assert_eq!(match_scenario_header("### Example: Happy path"), Some("Happy path"));
+    }
+
+    #[test]
+    fn test_match_rule_header() {
+        assert_eq!(
+            match_rule_header("Rule: auth-must-not-leak — 鉴权失败不得泄漏内部错误"),
+            Some("auth-must-not-leak — 鉴权失败不得泄漏内部错误")
+        );
+        assert_eq!(
+            match_rule_header("规则: vip-discount-priority"),
+            Some("vip-discount-priority")
+        );
+        assert_eq!(
+            match_rule_header("### Rule: refund-idempotent"),
+            Some("refund-idempotent")
+        );
+        assert_eq!(match_rule_header("场景: 普通场景"), None);
+        assert_eq!(match_rule_header("- 普通条目"), None);
     }
 
     #[test]

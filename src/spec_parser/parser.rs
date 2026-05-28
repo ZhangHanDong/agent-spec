@@ -1,26 +1,51 @@
 use crate::spec_core::{
-    Boundary, BoundaryCategory, Constraint, ConstraintCategory, ReviewMode, Scenario,
-    ScenarioMode, Section, Span, SpecDocument, SpecError, SpecResult, Step, TestSelector,
+    BehaviorRule, Boundary, BoundaryCategory, Constraint, ConstraintCategory, ReviewMode, RuleKey,
+    RuleScope, Scenario, ScenarioMode, Section, Span, SpecDocument, SpecError, SpecResult, Step,
+    TestSelector,
 };
 use std::path::{Path, PathBuf};
 
 use super::keywords::{
     SectionKind, TestSelectorField, extract_params, match_depends_field, match_mode_field,
-    match_review_field, match_scenario_header, match_scenario_tags, match_section_header,
-    match_step_keyword, match_test_selector, match_test_selector_field,
+    match_review_field, match_rule_header, match_scenario_header, match_scenario_tags,
+    match_section_header, match_step_keyword, match_test_selector, match_test_selector_field,
 };
 use super::meta::parse_meta;
 
 /// Parse a .spec/.spec.md file from disk.
 pub fn parse_spec(path: &Path) -> SpecResult<SpecDocument> {
     let content = std::fs::read_to_string(path)?;
-    let mut doc = parse_spec_from_str(&content)?;
+    let stem = task_stem_from_path(path);
+    let mut doc = parse_spec_from_str_with_stem(&content, &stem)?;
     doc.source_path = path.to_path_buf();
     Ok(doc)
 }
 
+/// Derive the task scope namespace from a spec path: the file stem with any
+/// `.spec.md` / `.spec` suffix removed (e.g. `task-foo.spec.md` -> `task-foo`).
+pub fn task_stem_from_path(path: &Path) -> String {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default();
+    name.strip_suffix(".spec.md")
+        .or_else(|| name.strip_suffix(".spec"))
+        .unwrap_or(name)
+        .to_string()
+}
+
 /// Parse a .spec/.spec.md string into a SpecDocument.
+///
+/// Task-scope behavior rules are namespaced by an empty stem; use
+/// [`parse_spec`] (from a path) or [`parse_spec_from_str_with_stem`] when the
+/// task stem matters.
 pub fn parse_spec_from_str(input: &str) -> SpecResult<SpecDocument> {
+    parse_spec_from_str_with_stem(input, "")
+}
+
+/// Parse a .spec/.spec.md string with an explicit task-scope namespace
+/// (the spec file stem), used to build `RuleScope::Task(stem)`.
+pub fn parse_spec_from_str_with_stem(input: &str, task_stem: &str) -> SpecResult<SpecDocument> {
     let lines: Vec<&str> = input.lines().collect();
 
     // Split on front-matter separator `---`
@@ -38,7 +63,7 @@ pub fn parse_spec_from_str(input: &str) -> SpecResult<SpecDocument> {
 
     let meta = parse_meta(meta_lines).map_err(SpecError::FrontMatter)?;
 
-    let sections = parse_body(body_lines, body_offset)?;
+    let sections = parse_body(body_lines, body_offset, task_stem)?;
 
     Ok(SpecDocument {
         meta,
@@ -48,7 +73,7 @@ pub fn parse_spec_from_str(input: &str) -> SpecResult<SpecDocument> {
 }
 
 /// Parse the body of a spec (after `---`) into sections.
-fn parse_body(lines: &[&str], offset: usize) -> SpecResult<Vec<Section>> {
+fn parse_body(lines: &[&str], offset: usize, task_stem: &str) -> SpecResult<Vec<Section>> {
     let mut sections = Vec::new();
     let mut current_section: Option<(SectionKind, usize)> = None; // (kind, start_line)
     let mut section_lines: Vec<(usize, &str)> = Vec::new(); // (absolute_line, text)
@@ -59,7 +84,7 @@ fn parse_body(lines: &[&str], offset: usize) -> SpecResult<Vec<Section>> {
         if let Some(kind) = match_section_header(line) {
             // Flush previous section
             if let Some((prev_kind, start)) = current_section.take() {
-                let section = build_section(prev_kind, &section_lines, start)?;
+                let section = build_section(prev_kind, &section_lines, start, task_stem)?;
                 sections.push(section);
                 section_lines.clear();
             }
@@ -79,7 +104,7 @@ fn parse_body(lines: &[&str], offset: usize) -> SpecResult<Vec<Section>> {
 
     // Flush last section
     if let Some((kind, start)) = current_section {
-        let section = build_section(kind, &section_lines, start)?;
+        let section = build_section(kind, &section_lines, start, task_stem)?;
         sections.push(section);
     }
 
@@ -99,6 +124,7 @@ fn build_section(
     kind: SectionKind,
     lines: &[(usize, &str)],
     start_line: usize,
+    task_stem: &str,
 ) -> SpecResult<Section> {
     let end_line = lines.last().map_or(start_line, |(ln, _)| *ln);
     let span = Span::new(start_line, 0, end_line, 0);
@@ -127,8 +153,12 @@ fn build_section(
             Ok(Section::Boundaries { items, span })
         }
         SectionKind::AcceptanceCriteria => {
-            let scenarios = parse_scenarios(lines)?;
-            Ok(Section::AcceptanceCriteria { scenarios, span })
+            let (scenarios, rules) = parse_scenarios(lines, task_stem)?;
+            Ok(Section::AcceptanceCriteria {
+                scenarios,
+                rules,
+                span,
+            })
         }
         SectionKind::OutOfScope => {
             let items = lines
@@ -225,8 +255,12 @@ fn parse_boundaries(lines: &[(usize, &str)]) -> Vec<Boundary> {
     items
 }
 
-fn parse_scenarios(lines: &[(usize, &str)]) -> SpecResult<Vec<Scenario>> {
+fn parse_scenarios(
+    lines: &[(usize, &str)],
+    task_stem: &str,
+) -> SpecResult<(Vec<Scenario>, Vec<BehaviorRule>)> {
     let mut scenarios = Vec::new();
+    let mut rules: Vec<BehaviorRule> = Vec::new();
     let mut current_name: Option<(String, usize)> = None;
     let mut current_steps: Vec<Step> = Vec::new();
     let mut current_test_selector: Option<TestSelectorDraft> = None;
@@ -235,28 +269,82 @@ fn parse_scenarios(lines: &[(usize, &str)]) -> SpecResult<Vec<Scenario>> {
     let mut current_mode: ScenarioMode = ScenarioMode::Standard;
     let mut current_depends_on: Vec<String> = Vec::new();
     let mut reading_test_selector_block = false;
+    // The active behavior rule id for scenarios that follow a `Rule:` header.
+    let mut current_rule_id: Option<String> = None;
+    // The rule the in-progress scenario belongs to, captured at its start so
+    // a later `Rule:` header does not retroactively re-group it.
+    let mut current_scenario_rule: Option<String> = None;
+
+    // Flush helper assigns the scenario's rule and links it back to the rule.
+    macro_rules! push_scenario {
+        ($name:expr, $start:expr, $end:expr, $steps:expr, $selector:expr,
+         $tags:expr, $review:expr, $mode:expr, $depends:expr, $rule:expr) => {{
+            let rule_id: Option<String> = $rule;
+            if let Some(id) = &rule_id
+                && let Some(r) = rules.iter_mut().find(|r| &r.key.id == id)
+            {
+                r.scenario_names.push($name.clone());
+            }
+            scenarios.push(Scenario {
+                name: $name,
+                steps: $steps,
+                test_selector: $selector,
+                tags: $tags,
+                review: $review,
+                mode: $mode,
+                depends_on: $depends,
+                rule: rule_id,
+                span: Span::new($start, 0, $end, 0),
+            });
+        }};
+    }
 
     for &(line_num, line) in lines {
+        if let Some(raw) = match_rule_header(line) {
+            // A `Rule:` header sets the active rule for subsequent scenarios.
+            // Invalid (non-kebab) ids are dropped here; the `bdd-rule-id` lint
+            // reports them from the raw source.
+            let (id, name) = parse_rule_header_content(raw);
+            match id {
+                Some(id) => {
+                    rules.push(BehaviorRule {
+                        key: RuleKey {
+                            scope: RuleScope::Task(task_stem.to_string()),
+                            id: id.clone(),
+                        },
+                        name,
+                        scenario_names: Vec::new(),
+                        span: Span::line(line_num),
+                    });
+                    current_rule_id = Some(id);
+                }
+                None => current_rule_id = None,
+            }
+            continue;
+        }
         if let Some(name) = match_scenario_header(line) {
             // Flush previous scenario
             if let Some((prev_name, start)) = current_name.take() {
                 let end = current_steps.last().map_or(start, |s| s.span.end_line);
-                scenarios.push(Scenario {
-                    name: prev_name,
-                    steps: std::mem::take(&mut current_steps),
-                    test_selector: finalize_test_selector(current_test_selector.take(), end)?,
-                    tags: std::mem::take(&mut current_tags),
-                    review: std::mem::take(&mut current_review),
-                    mode: std::mem::take(&mut current_mode),
-                    depends_on: std::mem::take(&mut current_depends_on),
-                    span: Span::new(start, 0, end, 0),
-                });
+                push_scenario!(
+                    prev_name,
+                    start,
+                    end,
+                    std::mem::take(&mut current_steps),
+                    finalize_test_selector(current_test_selector.take(), end)?,
+                    std::mem::take(&mut current_tags),
+                    std::mem::take(&mut current_review),
+                    std::mem::take(&mut current_mode),
+                    std::mem::take(&mut current_depends_on),
+                    current_scenario_rule.take()
+                );
             }
             current_name = Some((name.to_string(), line_num));
             current_tags = Vec::new();
             current_review = ReviewMode::default();
             current_mode = ScenarioMode::Standard;
             current_depends_on = Vec::new();
+            current_scenario_rule = current_rule_id.clone();
             reading_test_selector_block = false;
         } else if let Some(tags) = match_scenario_tags(line) {
             if current_name.is_some() {
@@ -337,19 +425,62 @@ fn parse_scenarios(lines: &[(usize, &str)]) -> SpecResult<Vec<Scenario>> {
     // Flush last scenario
     if let Some((name, start)) = current_name {
         let end = current_steps.last().map_or(start, |s| s.span.end_line);
-        scenarios.push(Scenario {
+        push_scenario!(
             name,
-            steps: current_steps,
-            test_selector: finalize_test_selector(current_test_selector, end)?,
-            tags: current_tags,
-            review: current_review,
-            mode: current_mode,
-            depends_on: current_depends_on,
-            span: Span::new(start, 0, end, 0),
-        });
+            start,
+            end,
+            current_steps,
+            finalize_test_selector(current_test_selector, end)?,
+            current_tags,
+            current_review,
+            current_mode,
+            current_depends_on,
+            current_scenario_rule.take()
+        );
     }
 
-    Ok(scenarios)
+    Ok((scenarios, rules))
+}
+
+/// Split a `Rule:` header's raw content into `(id, display_name)`.
+///
+/// The id must be an explicit kebab-case identifier (`^[a-z][a-z0-9-]*$`).
+/// Separator between id and display name is an em dash (`—`) or two-or-more
+/// spaces. No auto-slugify: if the leading token is not a valid id, returns
+/// `(None, raw)` so the `bdd-rule-id` lint can flag it and no rule is created.
+fn parse_rule_header_content(raw: &str) -> (Option<String>, String) {
+    let raw = raw.trim();
+    let (id_part, name_part) = if let Some(idx) = raw.find('—') {
+        (
+            raw[..idx].trim(),
+            raw[idx + '—'.len_utf8()..].trim(),
+        )
+    } else if let Some(idx) = raw.find("  ") {
+        (raw[..idx].trim(), raw[idx..].trim())
+    } else {
+        (raw, "")
+    };
+
+    if is_valid_rule_id(id_part) {
+        let name = if name_part.is_empty() {
+            id_part.to_string()
+        } else {
+            name_part.to_string()
+        };
+        (Some(id_part.to_string()), name)
+    } else {
+        (None, raw.to_string())
+    }
+}
+
+/// Validates a behavior rule id against `^[a-z][a-z0-9-]*$`.
+fn is_valid_rule_id(s: &str) -> bool {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_lowercase() => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
 #[derive(Default)]
@@ -1111,6 +1242,218 @@ Scenario: C
             }
             other => panic!("expected AcceptanceCriteria, got {other:?}"),
         }
+    }
+
+    // ---- BDD semantics v1: Rule / Example parsing ----
+
+    use crate::spec_core::{BehaviorRule, RuleScope, Section as Sec};
+
+    fn rules_of(doc: &SpecDocument) -> Vec<BehaviorRule> {
+        doc.sections
+            .iter()
+            .find_map(|s| match s {
+                Sec::AcceptanceCriteria { rules, .. } => Some(rules.clone()),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    fn scenarios_of(doc: &SpecDocument) -> Vec<Scenario> {
+        doc.sections
+            .iter()
+            .find_map(|s| match s {
+                Sec::AcceptanceCriteria { scenarios, .. } => Some(scenarios.clone()),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn test_parse_rule_header_creates_behavior_rule() {
+        let input = r#"spec: task
+name: "鉴权"
+---
+
+## 完成条件
+
+### Rule: auth-must-not-leak — 鉴权失败不得泄漏内部错误
+场景: 失败返回稳定错误
+  测试: test_auth_stable_error
+  假设 鉴权失败
+  当 返回响应
+  那么 不包含内部堆栈
+"#;
+        let doc = parse_spec_from_str_with_stem(input, "task-auth").unwrap();
+        let rules = rules_of(&doc);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].key.id, "auth-must-not-leak");
+        assert_eq!(rules[0].key.scope, RuleScope::Task("task-auth".into()));
+        assert_eq!(rules[0].name, "鉴权失败不得泄漏内部错误");
+        assert_eq!(rules[0].scenario_names, vec!["失败返回稳定错误".to_string()]);
+
+        let scenarios = scenarios_of(&doc);
+        assert_eq!(scenarios[0].rule.as_deref(), Some("auth-must-not-leak"));
+    }
+
+    #[test]
+    fn test_parse_rule_header_without_display_name() {
+        let input = r#"spec: task
+name: "退款"
+---
+
+## 完成条件
+
+### Rule: refund-must-be-idempotent
+场景: 重复退款只生效一次
+  测试: test_refund_idempotent
+  假设 已退款
+  当 再次退款
+  那么 不重复扣减
+"#;
+        let doc = parse_spec_from_str_with_stem(input, "task-refund").unwrap();
+        let rules = rules_of(&doc);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].key.id, "refund-must-be-idempotent");
+        assert_eq!(rules[0].name, "refund-must-be-idempotent");
+    }
+
+    #[test]
+    fn test_parse_chinese_rule_alias() {
+        let input = r#"spec: task
+name: "促销"
+---
+
+## 完成条件
+
+规则: vip-discount-priority — VIP 折扣优先级高于促销
+示例: VIP 用户折扣优先
+  测试: test_vip_priority
+  假设 用户是 VIP
+  当 同时存在促销
+  那么 应用 VIP 折扣
+"#;
+        let doc = parse_spec_from_str_with_stem(input, "task-promo").unwrap();
+        let rules = rules_of(&doc);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].key.id, "vip-discount-priority");
+        assert_eq!(rules[0].name, "VIP 折扣优先级高于促销");
+        let scenarios = scenarios_of(&doc);
+        assert_eq!(scenarios.len(), 1);
+        assert_eq!(scenarios[0].name, "VIP 用户折扣优先");
+        assert_eq!(scenarios[0].rule.as_deref(), Some("vip-discount-priority"));
+    }
+
+    #[test]
+    fn test_parse_example_alias_as_scenario() {
+        let input = r#"spec: task
+name: "提现"
+---
+
+## 完成条件
+
+Example: 余额充足时提现成功
+  测试: test_withdraw_ok
+  假设 余额 "200"
+  当 提现 "100"
+  那么 成功
+
+示例: 余额不足时提现失败
+  测试: test_withdraw_insufficient
+  假设 余额 "50"
+  当 提现 "100"
+  那么 拒绝
+"#;
+        let doc = parse_spec_from_str_with_stem(input, "task-withdraw").unwrap();
+        let scenarios = scenarios_of(&doc);
+        assert_eq!(scenarios.len(), 2);
+        assert_eq!(scenarios[0].name, "余额充足时提现成功");
+        assert_eq!(scenarios[1].name, "余额不足时提现失败");
+        // No new "Example" AST node — both are Scenario, serialized as such.
+        let json = serde_json::to_string(&doc).unwrap();
+        assert!(!json.contains("\"Example\""));
+        assert!(!json.contains("\"example\""));
+    }
+
+    #[test]
+    fn test_legacy_spec_without_rule_compat() {
+        // A spec with no Rule line: scenarios carry rule == None, no rules emitted.
+        let doc = parse_spec_from_str(SAMPLE_SPEC).unwrap();
+        let scenarios = scenarios_of(&doc);
+        assert!(!scenarios.is_empty());
+        assert!(scenarios.iter().all(|s| s.rule.is_none()));
+        assert!(rules_of(&doc).is_empty());
+    }
+
+    #[test]
+    fn test_rule_scope_serializes_to_json() {
+        let input = r#"spec: task
+name: "鉴权"
+---
+
+## 完成条件
+
+### Rule: auth-must-not-leak — 鉴权失败不得泄漏内部错误
+场景: 失败返回稳定错误
+  测试: test_auth_stable_error
+  假设 鉴权失败
+  当 返回响应
+  那么 不包含内部堆栈
+"#;
+        let doc = parse_spec_from_str_with_stem(input, "task-auth").unwrap();
+        let json = serde_json::to_string(&doc).unwrap();
+        // RuleScope::Task(stem) serializes as { "task": "<stem>" }
+        assert!(json.contains(r#""scope":{"task":"task-auth"}"#));
+        assert!(json.contains(r#""id":"auth-must-not-leak""#));
+        assert!(json.contains(r#""rule":"auth-must-not-leak""#));
+    }
+
+    #[test]
+    fn test_capability_scope_is_reserved_in_v1() {
+        // Capability / Project scope are declared and (de)serialize cleanly,
+        // but the v1 parser never produces them.
+        let doc = parse_spec_from_str_with_stem(
+            r#"spec: task
+name: "鉴权"
+---
+
+## 完成条件
+
+### Rule: auth-ok
+场景: 通过
+  测试: test_ok
+  假设 a
+  当 b
+  那么 c
+"#,
+            "task-auth",
+        )
+        .unwrap();
+        assert!(
+            rules_of(&doc)
+                .iter()
+                .all(|r| matches!(r.key.scope, RuleScope::Task(_)))
+        );
+
+        // Reserved variants round-trip through serde.
+        let cap = RuleScope::Capability("ecosystem-import".into());
+        let cap_json = serde_json::to_string(&cap).unwrap();
+        assert_eq!(cap_json, r#"{"capability":"ecosystem-import"}"#);
+        let back: RuleScope = serde_json::from_str(&cap_json).unwrap();
+        assert_eq!(back, cap);
+        let proj_json = serde_json::to_string(&RuleScope::Project).unwrap();
+        assert_eq!(proj_json, r#""project""#);
+        let proj_back: RuleScope = serde_json::from_str(&proj_json).unwrap();
+        assert_eq!(proj_back, RuleScope::Project);
+    }
+
+    #[test]
+    fn test_json_output_additive_only() {
+        // A legacy spec (no Rule) must not emit `rules` or scenario `rule`
+        // keys, so v0.2.7 consumers see an unchanged shape.
+        let doc = parse_spec_from_str(SAMPLE_SPEC).unwrap();
+        let json = serde_json::to_string(&doc).unwrap();
+        assert!(!json.contains("\"rules\""));
+        assert!(!json.contains("\"rule\""));
     }
 
     #[test]

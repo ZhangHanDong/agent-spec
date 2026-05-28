@@ -220,6 +220,7 @@ mod tests {
             review: Default::default(),
             mode: Default::default(),
             depends_on: vec![],
+            rule: None,
             span: Span::line(1),
         };
 
@@ -253,6 +254,7 @@ mod tests {
                         },
                         Section::AcceptanceCriteria {
                             scenarios: vec![scenario.clone()],
+                            rules: vec![],
                             span: Span::line(3),
                         },
                     ],
