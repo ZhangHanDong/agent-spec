@@ -59,6 +59,21 @@
 - **`lifecycle.rs` / `main.rs` 的测试追加**:合约已预留"仅限已有 `#[cfg(test)] mod tests` 追加测试"的 carve-out;本期在 `lifecycle.rs` 追加了 2 个回归测试,未触碰 `is_passing` 函数体或主路径。
 - **`bdd-implementation-detail-step` 关键词扩充**:合约示例只列了英文关键词;实现按合约决策的"中英文双语"要求补了中文 UI 动词(点击/输入/访问/填写/选择/打开页面/查看页面/拖拽)。属合约意图内,非偏离,记此备查。
 
+## 对抗式 bug 猎杀(post-implementation)
+
+Phase 1 落地后,用 Claude Code 动态工作流做了一次 scoped 对抗审查:**5 个独立 finder lens** 提出候选 bug,**对抗 verifier 用预构建二进制实证反驳**,默认 refuted 除非观察到真实错误行为。
+
+- 规模:21 agents,16 候选,16 verified,**5 confirmed / 0 uncertain / 11 refuted**(~74 万 subagent tokens,~9.5 min)。
+- 0 误报:11 个候选被实证反驳(verifier 跑了 control spec 隔离因果),证明对抗反驳有效。
+- 5 个确认 bug 全部是 TDD 漏掉的"看起来对"的边界:
+  1. **分隔符优先级**(med):`Rule: id  显示名 — 含破折号` —— em dash 先于双空格被检,劫持了 id 切分 → rule 被当 malformed 丢弃。修:**最左分隔符优先**。
+  2. 同根因(double-space 分隔 + 显示名含 em dash)。
+  3. **跨 Rule 边界 step 泄漏**(med):Rule 头与下一场景之间的游离 step 被并入上一场景。修:Rule 头 flush 当前场景。
+  4. **全角冒号英文场景头**(med):`Scenario：A` 不被识别 → 6 步泄漏进一个场景。修:英文 Scenario/Example 头接受全角 `：` + step 收集加 `current_name` 守卫。
+  5. **全角冒号英文 Rule 头**(low):`Rule：` 静默丢分组。修:同 4。
+
+**Takeaway**:对抗审查是 TDD 的正交补充——TDD 证明"我想到的行为对",对抗审查找"我没想到的输入"。本轮 5 个 bug 全部是 ASCII-only + 未混合 em-dash 的测试盲区,且都集中在双语/Unicode 边界(印证 §5.3 双语 DSL 是真实复杂度来源,不是文案)。所有修复遵循"无 repro 不修 + 无 failing test 不修",5 个 RED 测试先行。
+
 ## 下一步
 
 - 下一个 phase:Phase 2(机械覆盖矩阵),合约草案待写 `specs/task-coverage-matrix-v1.spec.md`。
