@@ -302,7 +302,24 @@ fn parse_scenarios(lines: &[(usize, &str)], task_stem: &str) -> SpecResult<Parse
 
     for &(line_num, line) in lines {
         if let Some(raw) = match_rule_header(line) {
-            // A `Rule:` header sets the active rule for subsequent scenarios.
+            // A `Rule:` header closes any in-progress scenario (so stray steps
+            // after the header do not leak into the prior scenario across the
+            // rule boundary) and sets the active rule for subsequent scenarios.
+            if let Some((prev_name, start)) = current_name.take() {
+                let end = current_steps.last().map_or(start, |s| s.span.end_line);
+                push_scenario!(
+                    prev_name,
+                    start,
+                    end,
+                    std::mem::take(&mut current_steps),
+                    finalize_test_selector(current_test_selector.take(), end)?,
+                    std::mem::take(&mut current_tags),
+                    std::mem::take(&mut current_review),
+                    std::mem::take(&mut current_mode),
+                    std::mem::take(&mut current_depends_on),
+                    current_scenario_rule.take()
+                );
+            }
             // Invalid (non-kebab) ids are dropped here; the `bdd-rule-id` lint
             // reports them from the raw source.
             let (id, name) = parse_rule_header_content(raw);
@@ -411,6 +428,12 @@ fn parse_scenarios(lines: &[(usize, &str)], task_stem: &str) -> SpecResult<Parse
             reading_test_selector_block = false;
         }
 
+        // Only collect steps while inside a scenario, so steps under an
+        // unrecognized header do not bleed into the next scenario.
+        if current_name.is_none() {
+            continue;
+        }
+
         if let Some((kind, text)) = match_step_keyword(line) {
             let params = extract_params(text);
             current_steps.push(Step {
@@ -457,15 +480,15 @@ fn parse_scenarios(lines: &[(usize, &str)], task_stem: &str) -> SpecResult<Parse
 /// `(None, raw)` so the `bdd-rule-id` lint can flag it and no rule is created.
 fn parse_rule_header_content(raw: &str) -> (Option<String>, String) {
     let raw = raw.trim();
-    let (id_part, name_part) = if let Some(idx) = raw.find('—') {
-        (
-            raw[..idx].trim(),
-            raw[idx + '—'.len_utf8()..].trim(),
-        )
-    } else if let Some(idx) = raw.find("  ") {
-        (raw[..idx].trim(), raw[idx..].trim())
-    } else {
-        (raw, "")
+    // Leftmost separator wins, so an em dash inside the display name does not
+    // hijack a double-space-delimited id (and vice versa).
+    let em = raw.find('—');
+    let dsp = raw.find("  ");
+    let (id_part, name_part) = match (em, dsp) {
+        (Some(e), Some(d)) if d < e => (raw[..d].trim(), raw[d..].trim()),
+        (Some(e), _) => (raw[..e].trim(), raw[e + '—'.len_utf8()..].trim()),
+        (None, Some(d)) => (raw[..d].trim(), raw[d..].trim()),
+        (None, None) => (raw, ""),
     };
 
     if is_valid_rule_id(id_part) {
@@ -1461,6 +1484,71 @@ name: "鉴权"
         let json = serde_json::to_string(&doc).unwrap();
         assert!(!json.contains("\"rules\""));
         assert!(!json.contains("\"rule\""));
+    }
+
+    // ---- Adversarial hunt regressions (Phase 1 parser) ----
+
+    #[test]
+    fn test_rule_double_space_separator_with_em_dash_in_display() {
+        // Bug 1/2: leftmost separator wins. Double-space is the intended
+        // id/name separator even when the display name contains an em dash.
+        let input = "spec: task\nname: \"x\"\n---\n\n## 完成条件\n\n### Rule: rate-limit  Throttling — protect upstream\n场景: 超阈值\n  测试: t\n  当 a\n  那么 b\n";
+        let doc = parse_spec_from_str_with_stem(input, "task-x").unwrap();
+        let rules = rules_of(&doc);
+        assert_eq!(rules.len(), 1, "double-space separator must yield one rule");
+        assert_eq!(rules[0].key.id, "rate-limit");
+        assert_eq!(rules[0].name, "Throttling — protect upstream");
+        assert_eq!(scenarios_of(&doc)[0].rule.as_deref(), Some("rate-limit"));
+    }
+
+    #[test]
+    fn test_rule_em_dash_separator_with_double_space_in_display() {
+        // Mirror: em-dash is leftmost -> it is the separator; trailing double
+        // spaces inside the display name are preserved (trimmed at ends only).
+        let input = "spec: task\nname: \"x\"\n---\n\n## 完成条件\n\n### Rule: auth-leak — fails  must not leak\n场景: s\n  测试: t\n  当 a\n  那么 b\n";
+        let doc = parse_spec_from_str_with_stem(input, "task-x").unwrap();
+        let rules = rules_of(&doc);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].key.id, "auth-leak");
+        assert_eq!(rules[0].name, "fails  must not leak");
+    }
+
+    #[test]
+    fn test_stray_step_after_rule_header_does_not_leak_into_prior_scenario() {
+        // Bug 3: a step-like line between a Rule header and the next scenario
+        // must not attach to the previous scenario across the rule boundary.
+        let input = "spec: task\nname: \"x\"\n---\n\n## 完成条件\n\n### Rule: rule-one — first\n场景: A\n  当 b\n  那么 c\n\n### Rule: rule-two — second\n  那么 stray\n场景: B\n  当 e\n  那么 f\n";
+        let doc = parse_spec_from_str_with_stem(input, "task-x").unwrap();
+        let scenarios = scenarios_of(&doc);
+        let a = scenarios.iter().find(|s| s.name == "A").unwrap();
+        assert_eq!(a.steps.len(), 2, "scenario A must keep exactly its own steps");
+        assert_eq!(a.rule.as_deref(), Some("rule-one"));
+        let b = scenarios.iter().find(|s| s.name == "B").unwrap();
+        assert_eq!(b.rule.as_deref(), Some("rule-two"));
+    }
+
+    #[test]
+    fn test_fullwidth_colon_english_scenario_header_is_recognized() {
+        // Bug 4: `Scenario：` (English word + full-width colon) must parse as a
+        // header, so steps do not bleed into the next scenario.
+        let input = "spec: task\nname: \"x\"\n---\n\n## 完成条件\n\nScenario：A\n  假设 a1\n  当 a2\n  那么 a3\n\nScenario: B\n  假设 b1\n  当 b2\n  那么 b3\n";
+        let doc = parse_spec_from_str(input).unwrap();
+        let scenarios = scenarios_of(&doc);
+        assert_eq!(scenarios.len(), 2, "both scenarios must be recognized");
+        assert_eq!(scenarios[0].name, "A");
+        assert_eq!(scenarios[0].steps.len(), 3, "A's steps must not bleed into B");
+        assert_eq!(scenarios[1].steps.len(), 3);
+    }
+
+    #[test]
+    fn test_fullwidth_colon_english_rule_header_is_recognized() {
+        // Bug 5: `Rule：` (English word + full-width colon) must create a rule.
+        let input = "spec: task\nname: \"x\"\n---\n\n## 完成条件\n\nRule：auth-must-not-leak\nScenario: stable error\n  当 a\n  那么 b\n";
+        let doc = parse_spec_from_str_with_stem(input, "task-x").unwrap();
+        let rules = rules_of(&doc);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].key.id, "auth-must-not-leak");
+        assert_eq!(scenarios_of(&doc)[0].rule.as_deref(), Some("auth-must-not-leak"));
     }
 
     #[test]

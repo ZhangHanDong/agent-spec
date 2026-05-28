@@ -91,10 +91,15 @@ pub fn match_scenario_header(line: &str) -> Option<&str> {
         }
     }
 
+    // English keywords, accepting both ASCII `:` and full-width `：`
+    // (common when authoring with a CJK IME on).
     let lower = trimmed.to_lowercase();
-    for prefix in ["scenario:", "example:"] {
-        if lower.starts_with(prefix) {
-            return Some(trimmed[prefix.len()..].trim());
+    for word in ["scenario", "example"] {
+        for colon in [":", "："] {
+            let prefix = format!("{word}{colon}");
+            if lower.starts_with(&prefix) {
+                return Some(trimmed[prefix.len()..].trim());
+            }
         }
     }
 
@@ -114,8 +119,11 @@ pub fn match_rule_header(line: &str) -> Option<&str> {
         return Some(rest.trim());
     }
     let lower = trimmed.to_lowercase();
-    if lower.starts_with("rule:") {
-        return Some(trimmed["rule:".len()..].trim());
+    for colon in [":", "："] {
+        let prefix = format!("rule{colon}");
+        if lower.starts_with(&prefix) {
+            return Some(trimmed[prefix.len()..].trim());
+        }
     }
     None
 }
