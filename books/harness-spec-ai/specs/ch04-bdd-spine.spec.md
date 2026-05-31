@@ -14,6 +14,7 @@ tags: [book, chapter, bdd, formulation]
 - 明确 `Example` 与 `Scenario` 在 Cucumber 语境中同义
 - 用 `Rule -> Example -> Test Selector -> Verdict` 连接到 agent-spec BDD-spine
 - 不把本章写成 Cucumber 使用教程
+- 图文预算遵循 `visual-budget.md` 第 4 章: 6,000-7,000 字符、5-6 个视觉单元、至少 2 个 Mermaid 图
 
 ## Boundaries
 
@@ -62,4 +63,3 @@ Scenario: BDD spine maps to agent-spec
 - Full Cucumber setup
 - `.feature` import/export
 - Scenario Outline expansion
-

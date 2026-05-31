@@ -418,6 +418,7 @@ name: "边界"
                     tags: vec![],
                     depends: vec![],
                     estimate: None,
+                    capability: None,
                 },
                 sections: vec![],
                 source_path: PathBuf::new(),

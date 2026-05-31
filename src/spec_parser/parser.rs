@@ -63,7 +63,14 @@ pub fn parse_spec_from_str_with_stem(input: &str, task_stem: &str) -> SpecResult
 
     let meta = parse_meta(meta_lines).map_err(SpecError::FrontMatter)?;
 
-    let sections = parse_body(body_lines, body_offset, task_stem)?;
+    // Rules parsed from a capability spec take Capability scope (the spec's
+    // name); everything else takes Task scope (the file stem).
+    let rule_scope = match meta.level {
+        crate::spec_core::SpecLevel::Capability => RuleScope::Capability(meta.name.clone()),
+        _ => RuleScope::Task(task_stem.to_string()),
+    };
+
+    let sections = parse_body(body_lines, body_offset, &rule_scope)?;
 
     Ok(SpecDocument {
         meta,
@@ -73,7 +80,7 @@ pub fn parse_spec_from_str_with_stem(input: &str, task_stem: &str) -> SpecResult
 }
 
 /// Parse the body of a spec (after `---`) into sections.
-fn parse_body(lines: &[&str], offset: usize, task_stem: &str) -> SpecResult<Vec<Section>> {
+fn parse_body(lines: &[&str], offset: usize, rule_scope: &RuleScope) -> SpecResult<Vec<Section>> {
     let mut sections = Vec::new();
     let mut current_section: Option<(SectionKind, usize)> = None; // (kind, start_line)
     let mut section_lines: Vec<(usize, &str)> = Vec::new(); // (absolute_line, text)
@@ -84,7 +91,7 @@ fn parse_body(lines: &[&str], offset: usize, task_stem: &str) -> SpecResult<Vec<
         if let Some(kind) = match_section_header(line) {
             // Flush previous section
             if let Some((prev_kind, start)) = current_section.take() {
-                let section = build_section(prev_kind, &section_lines, start, task_stem)?;
+                let section = build_section(prev_kind, &section_lines, start, rule_scope)?;
                 sections.push(section);
                 section_lines.clear();
             }
@@ -104,7 +111,7 @@ fn parse_body(lines: &[&str], offset: usize, task_stem: &str) -> SpecResult<Vec<
 
     // Flush last section
     if let Some((kind, start)) = current_section {
-        let section = build_section(kind, &section_lines, start, task_stem)?;
+        let section = build_section(kind, &section_lines, start, rule_scope)?;
         sections.push(section);
     }
 
@@ -124,7 +131,7 @@ fn build_section(
     kind: SectionKind,
     lines: &[(usize, &str)],
     start_line: usize,
-    task_stem: &str,
+    rule_scope: &RuleScope,
 ) -> SpecResult<Section> {
     let end_line = lines.last().map_or(start_line, |(ln, _)| *ln);
     let span = Span::new(start_line, 0, end_line, 0);
@@ -153,7 +160,7 @@ fn build_section(
             Ok(Section::Boundaries { items, span })
         }
         SectionKind::AcceptanceCriteria => {
-            let (scenarios, rules, malformed_rules) = parse_scenarios(lines, task_stem)?;
+            let (scenarios, rules, malformed_rules) = parse_scenarios(lines, rule_scope)?;
             Ok(Section::AcceptanceCriteria {
                 scenarios,
                 rules,
@@ -258,7 +265,7 @@ fn parse_boundaries(lines: &[(usize, &str)]) -> Vec<Boundary> {
 
 type ParsedScenarios = (Vec<Scenario>, Vec<BehaviorRule>, Vec<MalformedRule>);
 
-fn parse_scenarios(lines: &[(usize, &str)], task_stem: &str) -> SpecResult<ParsedScenarios> {
+fn parse_scenarios(lines: &[(usize, &str)], rule_scope: &RuleScope) -> SpecResult<ParsedScenarios> {
     let mut scenarios = Vec::new();
     let mut rules: Vec<BehaviorRule> = Vec::new();
     let mut malformed_rules: Vec<MalformedRule> = Vec::new();
@@ -327,11 +334,12 @@ fn parse_scenarios(lines: &[(usize, &str)], task_stem: &str) -> SpecResult<Parse
                 Some(id) => {
                     rules.push(BehaviorRule {
                         key: RuleKey {
-                            scope: RuleScope::Task(task_stem.to_string()),
+                            scope: rule_scope.clone(),
                             id: id.clone(),
                         },
                         name,
                         scenario_names: Vec::new(),
+                        events: Vec::new(),
                         span: Span::line(line_num),
                     });
                     current_rule_id = Some(id);
@@ -1549,6 +1557,34 @@ name: "鉴权"
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].key.id, "auth-must-not-leak");
         assert_eq!(scenarios_of(&doc)[0].rule.as_deref(), Some("auth-must-not-leak"));
+    }
+
+    #[test]
+    fn test_capability_spec_rule_has_capability_scope() {
+        let input = r#"spec: capability
+name: "ecosystem-import"
+---
+
+## 完成条件
+
+### Rule: import-preserves-traceability — 导入保留来源 ID
+"#;
+        let doc = parse_spec_from_str_with_stem(input, "ignored-stem").unwrap();
+        let rules = rules_of(&doc);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].key.id, "import-preserves-traceability");
+        assert_eq!(
+            rules[0].key.scope,
+            RuleScope::Capability("ecosystem-import".into())
+        );
+    }
+
+    #[test]
+    fn test_task_without_capability_is_none_additive() {
+        let doc = parse_spec_from_str(SAMPLE_SPEC).unwrap();
+        assert_eq!(doc.meta.capability, None);
+        let json = serde_json::to_string(&doc).unwrap();
+        assert!(!json.contains("\"capability\""));
     }
 
     #[test]

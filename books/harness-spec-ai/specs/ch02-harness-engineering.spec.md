@@ -14,6 +14,7 @@ tags: [book, chapter, harness, architecture]
 - 对比 Prompt engineering、Context engineering、Agent engineering、Harness engineering
 - 引入 Anthropic long-running harness 与 Claude Agent SDK 作为设计参照
 - 不把 harness 缩减为某个 SDK、CLI 或平台
+- 图文预算遵循 `visual-budget.md` 第 2 章: 6,000-7,000 字符、5-6 个视觉单元、至少 2 个 Mermaid 图
 
 ## Boundaries
 
@@ -61,4 +62,3 @@ Scenario: long-running harness pattern is reusable
 - Full Claude Agent SDK tutorial
 - MCP protocol internals
 - Rust code implementation
-

@@ -7,6 +7,8 @@ use std::path::PathBuf;
 pub enum SpecLevel {
     Org,
     Project,
+    /// Capability scope: a long-lived living-spec holding Rules proven by tasks (Phase 3).
+    Capability,
     Task,
 }
 
@@ -32,6 +34,10 @@ pub struct SpecMeta {
     /// Estimated effort (e.g., "0.5d", "2d", "1w").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub estimate: Option<String>,
+    /// Capability this task contributes to (Phase 3). Additive; `None` for
+    /// specs that declare no `capability:`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability: Option<String>,
 }
 
 /// A parsed .spec document.
@@ -178,6 +184,24 @@ pub struct RuleKey {
     pub id: String,
 }
 
+/// Lifecycle event in a behavior rule's provenance log (Phase 3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RuleEventKind {
+    Created,
+    Promoted,
+    Affirmed,
+    Deprecated,
+}
+
+/// A single provenance event on a behavior rule.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuleEvent {
+    pub kind: RuleEventKind,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub note: String,
+}
+
 /// A BDD behavior rule: a promise the system should keep, proven by one or
 /// more scenarios (examples). Formulation-layer primitive (Phase 1).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -188,6 +212,9 @@ pub struct BehaviorRule {
     /// Names of scenarios grouped under this rule, in document order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scenario_names: Vec<String>,
+    /// Provenance event log (Phase 3). Additive; empty for freshly-parsed rules.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub events: Vec<RuleEvent>,
     pub span: Span,
 }
 

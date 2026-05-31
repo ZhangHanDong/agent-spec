@@ -221,4 +221,36 @@ mod tests {
         let json = serde_json::to_string(&some).unwrap();
         assert!(json.contains("\"provenance\":\"computational\""));
     }
+
+    // ---- Phase 3: Rule event log ----
+
+    #[test]
+    fn test_rule_events_additive_empty_by_default() {
+        use crate::spec_core::{BehaviorRule, RuleKey, RuleScope, Span};
+        let rule = BehaviorRule {
+            key: RuleKey {
+                scope: RuleScope::Task("t".into()),
+                id: "r".into(),
+            },
+            name: "r".into(),
+            scenario_names: vec![],
+            events: vec![],
+            span: Span::line(1),
+        };
+        let json = serde_json::to_string(&rule).unwrap();
+        assert!(!json.contains("\"events\""), "empty events must skip key: {json}");
+    }
+
+    #[test]
+    fn test_rule_event_roundtrips() {
+        use crate::spec_core::{RuleEvent, RuleEventKind};
+        let ev = RuleEvent {
+            kind: RuleEventKind::Promoted,
+            note: "from task-foo".into(),
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        let back: RuleEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, ev);
+        assert!(json.contains("\"promoted\""));
+    }
 }

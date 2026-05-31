@@ -13,4 +13,4 @@ create-missing = false
 git-repository-url = "https://github.com/ZhangHanDong/agent-spec"
 site-url = "/harness-spec-ai/"
 additional-css = []
-
+additional-js = ["mermaid.min.js", "mermaid-init.js"]

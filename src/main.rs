@@ -95,6 +95,20 @@ enum Commands {
         #[arg(long, default_value = "text")]
         format: String,
     },
+    /// Promote a passing task Rule into a capability spec (living-spec library)
+    Promote {
+        /// Task spec file containing the Rule
+        spec: PathBuf,
+        /// Rule id to promote
+        #[arg(long)]
+        rule: String,
+        /// Target capability name (-> specs/capabilities/<name>.spec.md)
+        #[arg(long = "to")]
+        to: String,
+        /// Code directory to verify against (the promote gate)
+        #[arg(long)]
+        code: PathBuf,
+    },
     /// Create a starter .spec.md file
     Init {
         /// Spec level: org, project, task
@@ -301,6 +315,12 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             ai_mode,
             format,
         } => cmd_matrix(&spec, &code, &change, &change_scope, &ai_mode, &format),
+        Commands::Promote {
+            spec,
+            rule,
+            to,
+            code,
+        } => cmd_promote(&spec, &rule, &to, &code),
         Commands::Init {
             level,
             name,
@@ -568,6 +588,138 @@ fn cmd_matrix(
         _ => matrix.to_text(),
     };
     println!("{out}");
+    Ok(())
+}
+
+// ── Promote (Phase 3: capability living-spec library) ───────────
+
+/// Scenario names grouped under a rule id within a parsed spec, or None if the
+/// rule id is not declared.
+fn rule_scenarios(doc: &crate::spec_core::SpecDocument, rule_id: &str) -> Option<Vec<String>> {
+    for section in &doc.sections {
+        if let crate::spec_core::Section::AcceptanceCriteria { rules, .. } = section
+            && let Some(r) = rules.iter().find(|r| r.key.id == rule_id)
+        {
+            return Some(r.scenario_names.clone());
+        }
+    }
+    None
+}
+
+/// The promote gate: every Example proving the rule must have a `pass` verdict.
+fn examples_all_pass(
+    scenario_names: &[String],
+    report: &crate::spec_core::VerificationReport,
+) -> bool {
+    scenario_names.iter().all(|name| {
+        report
+            .results
+            .iter()
+            .find(|r| &r.scenario_name == name)
+            .is_some_and(|r| r.verdict == crate::spec_core::Verdict::Pass)
+    })
+}
+
+/// Produce the capability spec content with `rule_id` present (idempotent).
+/// If `existing` already declares the rule, it is returned unchanged.
+fn upsert_capability_rule(
+    existing: Option<&str>,
+    cap_name: &str,
+    rule_id: &str,
+    rule_name: &str,
+    from_task: &str,
+) -> String {
+    let rule_line = if rule_name.is_empty() || rule_name == rule_id {
+        format!("### Rule: {rule_id}  <!-- promoted from {from_task} -->\n")
+    } else {
+        format!("### Rule: {rule_id} — {rule_name}  <!-- promoted from {from_task} -->\n")
+    };
+
+    match existing {
+        Some(content) if rule_already_present(content, rule_id) => content.to_string(),
+        Some(content) => {
+            // Append the rule under the existing Completion Criteria section.
+            let mut out = content.trim_end().to_string();
+            out.push('\n');
+            out.push_str(&rule_line);
+            out.push('\n');
+            out
+        }
+        None => {
+            format!(
+                "spec: capability\nname: \"{cap_name}\"\ntags: [capability]\n---\n\n## 意图\n\n{cap_name} 能力的长寿命行为真相库(由 promote 累积)。\n\n## 完成条件\n\n{rule_line}\n"
+            )
+        }
+    }
+}
+
+/// True if a capability spec already declares a rule with this id.
+fn rule_already_present(content: &str, rule_id: &str) -> bool {
+    content.lines().any(|line| {
+        crate::spec_parser::match_rule_header(line)
+            .map(|raw| rule_id_of(raw) == rule_id)
+            .unwrap_or(false)
+    })
+}
+
+/// Extract the leading kebab id token from a Rule header's raw content.
+fn rule_id_of(raw: &str) -> &str {
+    let raw = raw.trim();
+    let cut = raw.find('—').or_else(|| raw.find("  ")).unwrap_or(raw.len());
+    raw[..cut].trim()
+}
+
+fn cmd_promote(
+    spec: &Path,
+    rule_id: &str,
+    capability: &str,
+    code: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let doc = crate::spec_parser::parse_spec(spec)?;
+    let scenario_names = rule_scenarios(&doc, rule_id)
+        .ok_or_else(|| format!("rule id `{rule_id}` not found in {}", spec.display()))?;
+
+    let gw = crate::spec_gateway::SpecGateway::load(spec)?;
+    let report = gw.verify(code)?;
+    if !examples_all_pass(&scenario_names, &report) {
+        return Err(format!(
+            "promote gate failed: not all examples of rule `{rule_id}` pass (need all `pass`)"
+        )
+        .into());
+    }
+
+    // Rule display name from the task doc.
+    let rule_name = doc
+        .sections
+        .iter()
+        .find_map(|s| match s {
+            crate::spec_core::Section::AcceptanceCriteria { rules, .. } => {
+                rules.iter().find(|r| r.key.id == rule_id).map(|r| r.name.clone())
+            }
+            _ => None,
+        })
+        .unwrap_or_default();
+
+    let from_task = crate::spec_parser::task_stem_from_path(spec);
+    let cap_dir = spec
+        .parent()
+        .unwrap_or(Path::new("specs"))
+        .join("capabilities");
+    std::fs::create_dir_all(&cap_dir)?;
+    let cap_path = cap_dir.join(format!("{capability}.spec.md"));
+    let existing = std::fs::read_to_string(&cap_path).ok();
+    let updated = upsert_capability_rule(
+        existing.as_deref(),
+        capability,
+        rule_id,
+        &rule_name,
+        &from_task,
+    );
+    std::fs::write(&cap_path, updated)?;
+    println!(
+        "promoted rule `{rule_id}` -> {} (capability `{capability}`)",
+        cap_path.display()
+    );
     Ok(())
 }
 
@@ -2339,6 +2491,7 @@ fn format_level(level: crate::spec_core::SpecLevel) -> &'static str {
     match level {
         crate::spec_core::SpecLevel::Org => "org",
         crate::spec_core::SpecLevel::Project => "project",
+        crate::spec_core::SpecLevel::Capability => "capability",
         crate::spec_core::SpecLevel::Task => "task",
     }
 }
@@ -2783,6 +2936,102 @@ mod tests {
         save_checkpoint, vcs, warn_duplicate_spec_extensions,
     };
     use super::{ScenarioAiDecision, assemble_explain_markdown, build_matrix_for, merge_ai_decisions};
+    use super::{examples_all_pass, rule_scenarios, upsert_capability_rule};
+
+    // ---- Phase 3: promote ----
+
+    fn report_with(verdicts: &[(&str, crate::spec_core::Verdict)]) -> crate::spec_core::VerificationReport {
+        let results = verdicts
+            .iter()
+            .map(|(name, v)| crate::spec_core::ScenarioResult {
+                scenario_name: (*name).into(),
+                verdict: *v,
+                step_results: vec![],
+                evidence: vec![],
+                duration_ms: 0,
+                provenance: None,
+            })
+            .collect();
+        crate::spec_core::VerificationReport::from_results("t".into(), results)
+    }
+
+    const PROMOTE_SPEC: &str = r#"spec: task
+name: "退款"
+---
+
+## 完成条件
+
+### Rule: r-ok — 退款幂等
+场景: 首次退款
+  测试: t1
+  当 a
+  那么 b
+场景: 重复退款
+  测试: t2
+  当 a
+  那么 b
+"#;
+
+    #[test]
+    fn test_promote_unknown_rule_id_errors() {
+        let doc = crate::spec_parser::parse_spec_from_str(PROMOTE_SPEC).unwrap();
+        assert!(rule_scenarios(&doc, "r-missing").is_none());
+        assert!(rule_scenarios(&doc, "r-ok").is_some());
+    }
+
+    #[test]
+    fn test_promote_refuses_when_an_example_fails() {
+        let doc = crate::spec_parser::parse_spec_from_str(PROMOTE_SPEC).unwrap();
+        let names = rule_scenarios(&doc, "r-ok").unwrap();
+        let report = report_with(&[
+            ("首次退款", crate::spec_core::Verdict::Pass),
+            ("重复退款", crate::spec_core::Verdict::Fail),
+        ]);
+        assert!(!examples_all_pass(&names, &report), "a failing example must block promote");
+    }
+
+    #[test]
+    fn test_promote_appends_rule_when_examples_pass() {
+        let content = upsert_capability_rule(None, "billing", "r-ok", "退款幂等", "task-refund");
+        // Re-parse the generated capability spec: rule present with Capability scope.
+        let doc = crate::spec_parser::parse_spec_from_str(&content).unwrap();
+        assert_eq!(doc.meta.level, crate::spec_core::SpecLevel::Capability);
+        let rule = doc.sections.iter().find_map(|s| match s {
+            crate::spec_core::Section::AcceptanceCriteria { rules, .. } => {
+                rules.iter().find(|r| r.key.id == "r-ok").cloned()
+            }
+            _ => None,
+        });
+        let rule = rule.expect("r-ok must be present");
+        assert_eq!(
+            rule.key.scope,
+            crate::spec_core::RuleScope::Capability("billing".into())
+        );
+        assert!(content.contains("promoted from task-refund"), "must record promotion provenance");
+    }
+
+    #[test]
+    fn test_promote_is_idempotent_for_same_rule() {
+        let first = upsert_capability_rule(None, "billing", "r-ok", "退款幂等", "task-refund");
+        let second = upsert_capability_rule(Some(&first), "billing", "r-ok", "退款幂等", "task-refund");
+        assert_eq!(first, second, "re-promoting the same rule must be a no-op");
+        // r-ok appears exactly once.
+        assert_eq!(second.matches("Rule: r-ok").count(), 1);
+    }
+
+    #[test]
+    fn test_promote_does_not_change_is_passing() {
+        let gw = crate::spec_gateway::SpecGateway::from_input(PROMOTE_SPEC).unwrap();
+        let report = report_with(&[
+            ("首次退款", crate::spec_core::Verdict::Pass),
+            ("重复退款", crate::spec_core::Verdict::Pass),
+        ]);
+        let before = report.summary.clone();
+        let passing_before = gw.is_passing(&report);
+        let _ = upsert_capability_rule(None, "billing", "r-ok", "退款幂等", "task-refund");
+        assert_eq!(passing_before, gw.is_passing(&report));
+        assert_eq!(before.total, report.summary.total);
+    }
 
     #[test]
     fn test_matrix_command_runs_verification_in_default_mode() {

@@ -14,6 +14,7 @@ tags: [book, chapter, harness, thesis]
 - 用 `vibe coding -> spec-driven -> harness engineering` 建立叙事递进
 - 明确 Harness.io 公司与 AI harness 工程范式同名但无技术血缘
 - 本章只建立问题和主线，不展开工具谱系细节
+- 图文预算遵循 `visual-budget.md` 第 1 章: 4,000-5,000 字符、3-4 个视觉单元、至少 1 个 Mermaid 图
 
 ## Boundaries
 
@@ -61,4 +62,3 @@ Scenario: chapter ends with book map
 - Detailed Spec Kit command walkthrough
 - Domestic IDE market comparison
 - Writing chapter 2 material inside chapter 1
-

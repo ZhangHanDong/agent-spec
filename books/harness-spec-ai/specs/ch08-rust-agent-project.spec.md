@@ -14,6 +14,7 @@ tags: [book, chapter, rust, agent, practical]
 - SDK 现状必须诚实说明：OpenAI/Anthropic 官方 Rust SDK 生态不如 Python/TypeScript 完整
 - 默认示例用 provider trait 隔离具体模型 SDK
 - 代码章节后续必须附完整 spec、plan、tasks、AGENTS.md 片段
+- 图文预算遵循 `visual-budget.md` 第 8 章: 7,000-8,000 字符、6-7 个视觉单元、至少 2 个 Mermaid 图
 
 ## Boundaries
 
@@ -62,4 +63,3 @@ Scenario: example ends with lifecycle check
 - Production deployment
 - Full MCP server implementation
 - Benchmark and observability stack
-

@@ -309,6 +309,7 @@ mod tests {
                     tags: vec![],
                     depends: vec![],
                     estimate: None,
+                    capability: None,
                 },
                 sections: vec![Section::Constraints {
                     items: constraints,

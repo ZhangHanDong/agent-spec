@@ -187,6 +187,7 @@ mod tests {
                         tags: vec![],
                         depends: vec![],
                         estimate: None,
+                        capability: None,
                     },
                     sections: vec![Section::AcceptanceCriteria {
                         scenarios: vec![scenario.clone()],
@@ -268,6 +269,7 @@ mod tests {
                         tags: vec![],
                         depends: vec![],
                         estimate: None,
+                        capability: None,
                     },
                     sections: vec![],
                     source_path: PathBuf::new(),

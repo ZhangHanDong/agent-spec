@@ -14,6 +14,7 @@ tags: [book, chapter, rust, codex-rs, agents-md]
 - 重点讲 Rust trait、模块边界、测试反馈、crate 组织和反模式警告
 - 引用 OpenAI Codex 仓库规则时使用短摘录和转述，避免长段复制
 - 以工程判断解释规则价值，而不是做风格偏好争论
+- 图文预算遵循 `visual-budget.md` 第 7 章: 6,000-7,000 字符、4-5 个视觉单元、至少 1 个 Mermaid 图
 
 ## Boundaries
 
@@ -60,4 +61,3 @@ Scenario: just cargo insta feedback loop is described
 - OpenAI API usage
 - Implementing a Rust agent
 - Detailed codex-core module map
-

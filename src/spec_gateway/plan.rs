@@ -940,6 +940,7 @@ mod tests {
                     tags: vec![],
                     depends: vec![],
                     estimate: None,
+                    capability: None,
                 },
                 sections: vec![
                     Section::Boundaries {
@@ -1067,6 +1068,7 @@ mod tests {
                     tags: vec![],
                     depends: vec![],
                     estimate: None,
+                    capability: None,
                 },
                 sections: vec![Section::Boundaries {
                     items: vec![Boundary {
@@ -1230,6 +1232,7 @@ name: "退款"
                     tags: vec![],
                     depends: vec![],
                     estimate: None,
+                    capability: None,
                 },
                 sections: vec![Section::Boundaries {
                     items: vec![Boundary {

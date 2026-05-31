@@ -14,6 +14,7 @@ tags: [book, chapter, agents-md, skills, mcp]
 - Skills 采用 progressive disclosure 解释，不展开每个厂商实现
 - MCP 只讲能力边界，不讲协议细节
 - 强调普通 Markdown + YAML frontmatter 的低接入成本
+- 图文预算遵循 `visual-budget.md` 第 5 章: 5,000-6,000 字符、4-5 个视觉单元、至少 1 个 Mermaid 图
 
 ## Boundaries
 
@@ -61,4 +62,3 @@ Scenario: MCP is capability and Skill is procedure
 - MCP implementation tutorial
 - Vendor-specific adapter walkthrough
 - Full AGENTS.md specification reproduction
-

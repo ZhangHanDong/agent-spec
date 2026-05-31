@@ -14,6 +14,7 @@ tags: [book, chapter, writing, synthesis]
 - 类比服务于方法论，不写成写作软件评测
 - 本书自身的 mdBook + chapter specs 作为 meta-case
 - 结尾回到全书公式 `可靠 AI 开发 = Harness × Spec`
+- 图文预算遵循 `visual-budget.md` 第 9 章: 5,000-6,000 字符、4-5 个视觉单元、至少 1 个 Mermaid 图
 
 ## Boundaries
 
@@ -61,4 +62,3 @@ Scenario: final section uses this mdBook project as meta-case
 - Full novel planning template
 - Product comparison matrix
 - Claims about automated literary quality
-

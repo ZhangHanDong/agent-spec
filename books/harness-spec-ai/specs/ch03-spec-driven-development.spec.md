@@ -14,6 +14,7 @@ tags: [book, chapter, spec-driven, tools]
 - Kiro/EARS 作为产品化 spec-driven IDE 的对照案例
 - AGENTS.md、SKILL.md、task spec 作为不同粒度的推理时规约
 - 只保留国内 IDE 对 spec 标准化支持的一张映射表，不写全景报道
+- 图文预算遵循 `visual-budget.md` 第 3 章: 6,000-7,000 字符、5-6 个视觉单元、至少 1 个 Mermaid 图
 
 ## Boundaries
 
@@ -61,4 +62,3 @@ Scenario: market facts are labeled as snapshots
 - Tool installation tutorials
 - Deep product review of every IDE
 - Model training alignment details
-

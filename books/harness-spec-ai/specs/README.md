@@ -17,3 +17,4 @@ Known non-blocking lint warnings:
 
 Before drafting a chapter, use its spec as the acceptance checklist. Before finalizing a chapter, replace or supplement human-review selectors with concrete manuscript QA checks where practical.
 
+Visual budget and Mermaid rendering are governed by `visual-budget.md`.

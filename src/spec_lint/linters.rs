@@ -2085,6 +2085,9 @@ impl SpecLinter for BddRuleGroupingLinter {
 
     fn lint(&self, doc: &SpecDocument) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
+        // Capability specs legitimately hold Rules with no Examples (Examples
+        // live in task specs), so the empty-rule warning does not apply to them.
+        let is_capability = doc.meta.level == SpecLevel::Capability;
         for section in &doc.sections {
             if let Section::AcceptanceCriteria {
                 scenarios,
@@ -2095,7 +2098,7 @@ impl SpecLinter for BddRuleGroupingLinter {
             {
                 // Empty rule: declared but proven by nothing.
                 for r in rules {
-                    if r.scenario_names.is_empty() {
+                    if r.scenario_names.is_empty() && !is_capability {
                         diags.push(LintDiagnostic {
                             rule: "bdd-rule-grouping".into(),
                             severity: Severity::Warning,

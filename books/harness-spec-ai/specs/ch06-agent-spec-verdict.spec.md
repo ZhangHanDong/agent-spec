@@ -14,6 +14,7 @@ tags: [book, chapter, agent-spec, verdict]
 - 对比 Spec Kit 和 OpenSpec 时只保留与 agent-spec 差异化直接相关的部分
 - 强调 `skip != pass` 和 `provenance` 区分 computational / inferential evidence
 - coverage matrix 是 observability，不在本章宣称它改变 gate 语义
+- 图文预算遵循 `visual-budget.md` 第 6 章: 6,000-7,000 字符、5-6 个视觉单元、至少 2 个 Mermaid 图
 
 ## Boundaries
 
@@ -61,4 +62,3 @@ Scenario: coverage matrix is shown as traceability
 - Implementing new agent-spec features
 - Full source-code walkthrough of every verifier
 - Cross-language runner design
-

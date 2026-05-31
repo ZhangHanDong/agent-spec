@@ -9,6 +9,7 @@ pub fn parse_meta(lines: &[&str]) -> Result<SpecMeta, String> {
     let mut tags = Vec::new();
     let mut depends = Vec::new();
     let mut estimate = None;
+    let mut capability = None;
 
     for line in lines {
         let trimmed = line.trim();
@@ -27,6 +28,7 @@ pub fn parse_meta(lines: &[&str]) -> Result<SpecMeta, String> {
                 level = Some(match value.to_lowercase().as_str() {
                     "org" => SpecLevel::Org,
                     "project" => SpecLevel::Project,
+                    "capability" => SpecLevel::Capability,
                     "task" => SpecLevel::Task,
                     other => return Err(format!("unknown spec level: {other}")),
                 });
@@ -73,6 +75,12 @@ pub fn parse_meta(lines: &[&str]) -> Result<SpecMeta, String> {
                     estimate = Some(v.to_string());
                 }
             }
+            "capability" => {
+                let v = value.trim();
+                if !v.is_empty() {
+                    capability = Some(v.to_string());
+                }
+            }
             _ => {} // ignore unknown keys
         }
     }
@@ -89,6 +97,7 @@ pub fn parse_meta(lines: &[&str]) -> Result<SpecMeta, String> {
         tags,
         depends,
         estimate,
+        capability,
     })
 }
 
@@ -156,5 +165,31 @@ mod tests {
         let meta = parse_meta(&lines).unwrap();
         assert!(meta.depends.is_empty());
         assert!(meta.estimate.is_none());
+    }
+
+    // ---- Phase 3: capability ----
+
+    #[test]
+    fn test_parse_capability_spec_level() {
+        let meta = parse_meta(&["spec: capability", r#"name: "ecosystem-import""#]).unwrap();
+        assert_eq!(meta.level, SpecLevel::Capability);
+        assert_eq!(meta.name, "ecosystem-import");
+    }
+
+    #[test]
+    fn test_unknown_spec_level_rejected() {
+        let err = parse_meta(&["spec: nonsense"]).unwrap_err();
+        assert!(err.contains("unknown spec level"), "got: {err}");
+    }
+
+    #[test]
+    fn test_parse_task_capability_field() {
+        let meta = parse_meta(&[
+            "spec: task",
+            r#"name: "t""#,
+            "capability: ecosystem-import",
+        ])
+        .unwrap();
+        assert_eq!(meta.capability, Some("ecosystem-import".to_string()));
     }
 }
