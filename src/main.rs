@@ -95,6 +95,18 @@ enum Commands {
         #[arg(long, default_value = "text")]
         format: String,
     },
+    /// Generate per-tool integration files from a single source
+    GenIntegrations {
+        /// Target: agents, cursor, claude, or all
+        #[arg(long, default_value = "all")]
+        target: String,
+        /// Output directory
+        #[arg(long, default_value = ".")]
+        out: PathBuf,
+        /// Check for drift instead of writing (non-zero exit if drifted)
+        #[arg(long)]
+        check: bool,
+    },
     /// Promote a passing task Rule into a capability spec (living-spec library)
     Promote {
         /// Task spec file containing the Rule
@@ -315,6 +327,9 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             ai_mode,
             format,
         } => cmd_matrix(&spec, &code, &change, &change_scope, &ai_mode, &format),
+        Commands::GenIntegrations { target, out, check } => {
+            cmd_gen_integrations(&target, &out, check)
+        }
         Commands::Promote {
             spec,
             rule,
@@ -591,6 +606,49 @@ fn cmd_matrix(
         _ => matrix.to_text(),
     };
     println!("{out}");
+    Ok(())
+}
+
+// ── Integrations (Phase 6: single-source multi-tool generation) ──
+
+fn cmd_gen_integrations(
+    target: &str,
+    out: &Path,
+    check: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let targets: Vec<&str> = if target == "all" {
+        vec!["agents", "cursor", "claude"]
+    } else {
+        vec![target]
+    };
+    let filename = |t: &str| match t {
+        "agents" => "AGENTS.md",
+        "cursor" => ".cursorrules",
+        _ => "agent-spec-tool-first.md",
+    };
+
+    let mut drifted = Vec::new();
+    for t in &targets {
+        let rendered = crate::spec_report::render_named(t)?;
+        let path = out.join(filename(t));
+        if check {
+            let existing = std::fs::read_to_string(&path).unwrap_or_default();
+            if crate::spec_report::has_drifted(&existing, &rendered) {
+                drifted.push(path.display().to_string());
+            }
+        } else {
+            std::fs::write(&path, &rendered)?;
+            println!("wrote {}", path.display());
+        }
+    }
+
+    if check {
+        if drifted.is_empty() {
+            println!("integrations up to date (no drift)");
+        } else {
+            return Err(format!("integration drift detected: {}", drifted.join(", ")).into());
+        }
+    }
     Ok(())
 }
 

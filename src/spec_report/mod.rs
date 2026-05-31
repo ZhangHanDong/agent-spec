@@ -4,6 +4,9 @@ use serde::Serialize;
 pub mod coverage;
 pub use coverage::{CoverageMatrix, build_coverage_matrix, collect_test_function_names};
 
+pub mod integrations;
+pub use integrations::{has_drifted, render_named};
+
 /// Output format.
 pub enum OutputFormat {
     Text,
