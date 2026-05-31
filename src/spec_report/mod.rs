@@ -10,6 +10,9 @@ pub use integrations::{has_drifted, render_named};
 pub mod structural;
 pub use structural::structural_violations;
 
+pub mod audit;
+pub use audit::audit_specs;
+
 /// Output format.
 pub enum OutputFormat {
     Text,

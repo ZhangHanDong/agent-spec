@@ -95,6 +95,15 @@ enum Commands {
         #[arg(long, default_value = "text")]
         format: String,
     },
+    /// Audit a spec library's health (counts, unproven rules, open questions)
+    Audit {
+        /// Directory of specs to audit
+        #[arg(long = "spec-dir", default_value = "specs")]
+        spec_dir: PathBuf,
+        /// Output format: text, json
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
     /// Mechanical structural check: forbid a reference within a file glob
     CheckStructure {
         /// Code directory to scan
@@ -339,6 +348,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             ai_mode,
             format,
         } => cmd_matrix(&spec, &code, &change, &change_scope, &ai_mode, &format),
+        Commands::Audit { spec_dir, format } => cmd_audit(&spec_dir, &format),
         Commands::CheckStructure {
             code,
             forbid,
@@ -623,6 +633,31 @@ fn cmd_matrix(
         _ => matrix.to_text(),
     };
     println!("{out}");
+    Ok(())
+}
+
+// ── Audit (Phase 8: spec-library health) ───────────────────────
+
+fn cmd_audit(spec_dir: &Path, format: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let mut files = Vec::new();
+    collect_spec_files(spec_dir, &mut files)?;
+    files.sort();
+    let mut docs = Vec::new();
+    for f in &files {
+        if let Ok(doc) = crate::spec_parser::parse_spec(f) {
+            docs.push(doc);
+        }
+    }
+    let report = crate::spec_report::audit_specs(&docs);
+    if format == "json" {
+        println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
+    } else {
+        println!("agent-spec audit ({} specs in {})", report.spec_count, spec_dir.display());
+        println!("  rules: {} ({} unproven)", report.rule_count, report.unproven_rules);
+        println!("  scenarios: {} ({} ungrouped)", report.scenario_count, report.ungrouped_scenarios);
+        println!("  open questions: {}", report.open_questions);
+        println!("  malformed rules: {}", report.malformed_rules);
+    }
     Ok(())
 }
 
