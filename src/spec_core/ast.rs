@@ -40,11 +40,23 @@ pub struct SpecMeta {
     pub capability: Option<String>,
 }
 
+/// An author's deliberate waiver of a lint rule, recorded inline as
+/// `<!-- lint-ack: <code> — <reason> -->` (Phase 5).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LintAck {
+    pub code: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub reason: String,
+}
+
 /// A parsed .spec document.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpecDocument {
     pub meta: SpecMeta,
     pub sections: Vec<Section>,
+    /// Inline lint-ack waivers (Phase 5). Additive; empty for specs with none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lint_acks: Vec<LintAck>,
     #[serde(skip)]
     pub source_path: PathBuf,
 }

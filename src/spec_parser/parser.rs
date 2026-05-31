@@ -71,12 +71,44 @@ pub fn parse_spec_from_str_with_stem(input: &str, task_stem: &str) -> SpecResult
     };
 
     let sections = parse_body(body_lines, body_offset, &rule_scope)?;
+    let lint_acks = scan_lint_acks(body_lines);
 
     Ok(SpecDocument {
         meta,
         sections,
+        lint_acks,
         source_path: PathBuf::new(),
     })
+}
+
+/// Scan body lines for `<!-- lint-ack: <code> — <reason> -->` markers (Phase 5).
+fn scan_lint_acks(lines: &[&str]) -> Vec<crate::spec_core::LintAck> {
+    let mut acks = Vec::new();
+    for line in lines {
+        let t = line.trim();
+        let Some(rest) = t.strip_prefix("<!-- lint-ack:") else {
+            continue;
+        };
+        let Some(body) = rest.strip_suffix("-->") else {
+            continue;
+        };
+        let body = body.trim();
+        // Separator: em dash or colon.
+        let (code, reason) = if let Some(idx) = body.find('—') {
+            (body[..idx].trim(), body[idx + '—'.len_utf8()..].trim())
+        } else if let Some(idx) = body.find(':') {
+            (body[..idx].trim(), body[idx + 1..].trim())
+        } else {
+            (body, "")
+        };
+        if !code.is_empty() {
+            acks.push(crate::spec_core::LintAck {
+                code: code.to_string(),
+                reason: reason.to_string(),
+            });
+        }
+    }
+    acks
 }
 
 /// Parse the body of a spec (after `---`) into sections.
@@ -1567,6 +1599,38 @@ name: "鉴权"
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].key.id, "auth-must-not-leak");
         assert_eq!(scenarios_of(&doc)[0].rule.as_deref(), Some("auth-must-not-leak"));
+    }
+
+    #[test]
+    fn test_parse_lint_ack_marker() {
+        let input = r#"spec: task
+name: "x"
+---
+
+## 意图
+
+做点事。
+<!-- lint-ack: bdd-rule-id — 故意留作示例 -->
+
+## 完成条件
+
+场景: s
+  测试: t
+  当 a
+  那么 b
+"#;
+        let doc = parse_spec_from_str(input).unwrap();
+        assert_eq!(doc.lint_acks.len(), 1);
+        assert_eq!(doc.lint_acks[0].code, "bdd-rule-id");
+        assert!(doc.lint_acks[0].reason.contains("故意留作示例"));
+    }
+
+    #[test]
+    fn test_lint_acks_additive_empty() {
+        let doc = parse_spec_from_str(SAMPLE_SPEC).unwrap();
+        assert!(doc.lint_acks.is_empty());
+        let json = serde_json::to_string(&doc).unwrap();
+        assert!(!json.contains("lint_acks"));
     }
 
     fn questions_of(doc: &SpecDocument) -> Option<Vec<String>> {

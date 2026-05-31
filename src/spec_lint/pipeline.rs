@@ -66,9 +66,28 @@ impl LintPipeline {
 
         let quality_score = compute_quality(doc, &diagnostics);
 
+        // Apply lint-ack waivers: a Warning/Info diagnostic whose rule code is
+        // acknowledged moves to `acknowledged`. Error-level diagnostics are
+        // never suppressed (ack can only reduce noise, not pass real failures).
+        let acked_codes: std::collections::HashSet<&str> =
+            doc.lint_acks.iter().map(|a| a.code.as_str()).collect();
+        let mut acknowledged = Vec::new();
+        if !acked_codes.is_empty() {
+            let mut kept = Vec::with_capacity(diagnostics.len());
+            for d in diagnostics {
+                if d.severity != Severity::Error && acked_codes.contains(d.rule.as_str()) {
+                    acknowledged.push(d);
+                } else {
+                    kept.push(d);
+                }
+            }
+            diagnostics = kept;
+        }
+
         LintReport {
             spec_name: doc.meta.name.clone(),
             diagnostics,
+            acknowledged,
             quality_score,
         }
     }
@@ -281,4 +300,107 @@ fn compute_quality(doc: &SpecDocument, diagnostics: &[LintDiagnostic]) -> Qualit
     };
 
     QualityScore::compute(determinism, testability, coverage)
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod ack_tests {
+    use super::*;
+    use crate::spec_core::{LintDiagnostic, Span};
+    use crate::spec_parser::parse_spec_from_str;
+
+    const OPEN_Q_SPEC: &str = r#"spec: task
+name: "x"
+---
+
+## 完成条件
+
+场景: 一
+  测试: t1
+  当 a
+  那么 b
+场景: 二
+  测试: t2
+  当 a
+  那么 b
+场景: 三
+  测试: t3
+  当 a
+  那么 b
+
+## Questions
+
+- 还没想清楚
+"#;
+
+    fn with_ack(spec: &str, ack_line: &str) -> String {
+        spec.replacen("## Questions", &format!("{ack_line}\n\n## Questions"), 1)
+    }
+
+    #[test]
+    fn test_lint_ack_moves_warning_to_acknowledged() {
+        let input = with_ack(OPEN_Q_SPEC, "<!-- lint-ack: open-question — 原型阶段不需要 -->");
+        let doc = parse_spec_from_str(&input).unwrap();
+        let report = LintPipeline::with_defaults().run(&doc);
+        assert!(
+            !report.diagnostics.iter().any(|d| d.rule == "open-question"),
+            "acked open-question must leave main diagnostics"
+        );
+        assert!(
+            report.acknowledged.iter().any(|d| d.rule == "open-question"),
+            "acked open-question must appear in acknowledged"
+        );
+    }
+
+    #[test]
+    fn test_lint_ack_leaves_other_diagnostics() {
+        // open-question acked, but bdd-rule-grouping (3 ungrouped scenarios) remains.
+        let input = with_ack(OPEN_Q_SPEC, "<!-- lint-ack: open-question — ok -->");
+        let doc = parse_spec_from_str(&input).unwrap();
+        let report = LintPipeline::with_defaults().run(&doc);
+        assert!(
+            report.diagnostics.iter().any(|d| d.rule == "bdd-rule-grouping"),
+            "non-acked rule must remain"
+        );
+    }
+
+    struct ErrLinter;
+    impl SpecLinter for ErrLinter {
+        fn name(&self) -> &str {
+            "forced-error"
+        }
+        fn lint(&self, _doc: &SpecDocument) -> Vec<LintDiagnostic> {
+            vec![LintDiagnostic {
+                rule: "forced-error".into(),
+                severity: Severity::Error,
+                message: "boom".into(),
+                span: Span::line(1),
+                suggestion: None,
+            }]
+        }
+    }
+
+    #[test]
+    fn test_lint_ack_cannot_suppress_error() {
+        let input = with_ack(OPEN_Q_SPEC, "<!-- lint-ack: forced-error — try to hide -->");
+        let doc = parse_spec_from_str(&input).unwrap();
+        let mut p = LintPipeline::new();
+        p.add(Box::new(ErrLinter));
+        let report = p.run(&doc);
+        assert!(
+            report.diagnostics.iter().any(|d| d.rule == "forced-error"),
+            "ack must NOT suppress an Error-level diagnostic"
+        );
+        assert!(report.acknowledged.is_empty());
+    }
+
+    #[test]
+    fn test_ack_does_not_change_gating() {
+        let input = with_ack(OPEN_Q_SPEC, "<!-- lint-ack: open-question — ok -->");
+        let doc = parse_spec_from_str(&input).unwrap();
+        let report = LintPipeline::with_defaults().run(&doc);
+        // open-question is Warning, never gates; ack just records it.
+        assert!(!report.has_errors());
+        assert!(!report.acknowledged.is_empty());
+    }
 }

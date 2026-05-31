@@ -315,6 +315,7 @@ mod tests {
                     items: constraints,
                     span: Span::line(1),
                 }],
+                lint_acks: vec![],
                 source_path: PathBuf::new(),
             },
             inherited_constraints: vec![],

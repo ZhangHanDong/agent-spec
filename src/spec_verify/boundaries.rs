@@ -421,6 +421,7 @@ name: "边界"
                     capability: None,
                 },
                 sections: vec![],
+                lint_acks: vec![],
                 source_path: PathBuf::new(),
             },
             inherited_constraints: Vec::new(),
