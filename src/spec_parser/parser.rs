@@ -1604,6 +1604,57 @@ name: "鉴权"
     }
 
     #[test]
+    fn test_probe_from_scenario_with_selector() {
+        use crate::spec_core::Probe;
+        let input = r#"spec: task
+name: "x"
+---
+
+## 完成条件
+
+场景: 绑定
+  测试: test_x
+  当 a
+  那么 b
+"#;
+        let doc = parse_spec_from_str(input).unwrap();
+        let sc = &scenarios_of(&doc)[0];
+        match Probe::from_scenario(sc) {
+            Some(Probe::Test(sel)) => assert_eq!(sel.filter, "test_x"),
+            other => panic!("expected Probe::Test, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_probe_from_scenario_without_selector() {
+        use crate::spec_core::Probe;
+        let input = r#"spec: task
+name: "x"
+---
+
+## 完成条件
+
+场景: 无绑定
+  当 a
+  那么 b
+"#;
+        let doc = parse_spec_from_str(input).unwrap();
+        let sc = &scenarios_of(&doc)[0];
+        assert!(Probe::from_scenario(sc).is_none());
+    }
+
+    #[test]
+    fn test_scenario_unchanged_no_probe_field() {
+        use crate::spec_core::Probe;
+        // Scenario still exposes binding via test_selector; Probe is a derived view.
+        let doc = parse_spec_from_str(SAMPLE_SPEC).unwrap();
+        for sc in scenarios_of(&doc) {
+            // No panic; derivation is consistent with test_selector presence.
+            assert_eq!(Probe::from_scenario(&sc).is_some(), sc.test_selector.is_some());
+        }
+    }
+
+    #[test]
     fn test_parse_lint_ack_marker() {
         let input = r#"spec: task
 name: "x"

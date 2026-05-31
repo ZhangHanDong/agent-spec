@@ -336,6 +336,46 @@ impl TestSelector {
     }
 }
 
+/// A verifiable binding for a scenario (Phase 6.5). `Test` is the binding that
+/// exists today; the other variants are reserved mounting points for Phase 7
+/// runners (structural checks, benchmarks, external probes, AI inference).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum Probe {
+    Test(TestSelector),
+    /// A structural/static check expression (Phase 7).
+    Static(String),
+    /// A benchmark probe with a runner, filter, and threshold (Phase 7).
+    Benchmark {
+        runner: String,
+        filter: String,
+        threshold: String,
+    },
+    /// An external probe invoked via a runner with args (Phase 7).
+    External { runner: String, args: Vec<String> },
+    /// An inferential (AI) probe (Phase 7).
+    Inferential,
+}
+
+impl Probe {
+    /// Derive a scenario's probe. Back-compat shim: a scenario with a
+    /// `test_selector` derives `Probe::Test`; `Test:` remains sugar for it.
+    pub fn from_scenario(scenario: &Scenario) -> Option<Probe> {
+        scenario.test_selector.clone().map(Probe::Test)
+    }
+
+    /// Stable kind label for reporting.
+    pub fn kind_label(&self) -> &'static str {
+        match self {
+            Probe::Test(_) => "test",
+            Probe::Static(_) => "static",
+            Probe::Benchmark { .. } => "benchmark",
+            Probe::External { .. } => "external",
+            Probe::Inferential => "inferential",
+        }
+    }
+}
+
 /// BDD step keyword.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -394,4 +434,51 @@ pub struct ResolvedSpec {
     pub inherited_constraints: Vec<Constraint>,
     pub inherited_decisions: Vec<String>,
     pub all_scenarios: Vec<Scenario>,
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod probe_tests {
+    use super::*;
+
+    #[test]
+    fn test_probe_kind_label_test() {
+        let p = Probe::Test(TestSelector::filter_only("test_x"));
+        assert_eq!(p.kind_label(), "test");
+    }
+
+    #[test]
+    fn test_probe_kind_label_reserved_variants() {
+        assert_eq!(Probe::Static("x".into()).kind_label(), "static");
+        assert_eq!(
+            Probe::Benchmark {
+                runner: "criterion".into(),
+                filter: "b".into(),
+                threshold: "p95<2s".into()
+            }
+            .kind_label(),
+            "benchmark"
+        );
+        assert_eq!(
+            Probe::External {
+                runner: "curl".into(),
+                args: vec![]
+            }
+            .kind_label(),
+            "external"
+        );
+        assert_eq!(Probe::Inferential.kind_label(), "inferential");
+    }
+
+    #[test]
+    fn test_probe_roundtrips() {
+        let p = Probe::Benchmark {
+            runner: "criterion".into(),
+            filter: "bench_x".into(),
+            threshold: "p95<2000ms".into(),
+        };
+        let json = serde_json::to_string(&p).unwrap();
+        let back: Probe = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, p);
+    }
 }
