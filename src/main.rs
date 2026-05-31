@@ -623,8 +623,46 @@ fn examples_all_pass(
     })
 }
 
+/// True if a capability name is safe to interpolate into a file path:
+/// non-empty, no path separators, no `..`, not absolute.
+fn is_safe_capability_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.contains('/')
+        && !name.contains('\\')
+        && !name.contains("..")
+        && !name.starts_with('.')
+}
+
+/// The promote gate: the rule must have at least one Example, and every Example
+/// must have a `pass` verdict (an empty example set is NOT vacuously promotable).
+fn promote_gate_ok(
+    scenario_names: &[String],
+    report: &crate::spec_core::VerificationReport,
+) -> Result<(), String> {
+    if scenario_names.is_empty() {
+        return Err("rule has no examples to prove it (an unproven rule cannot be promoted)".into());
+    }
+    if !examples_all_pass(scenario_names, report) {
+        return Err("not all examples pass (need all `pass`)".into());
+    }
+    Ok(())
+}
+
+/// Whether a capability spec already declares a Completion Criteria section.
+fn has_completion_section(content: &str) -> bool {
+    content.lines().any(|l| {
+        let t = l.trim().trim_start_matches('#').trim().to_lowercase();
+        t.starts_with("完成条件")
+            || t.starts_with("验收标准")
+            || t.starts_with("completion criter")
+            || t.starts_with("acceptance criter")
+    })
+}
+
 /// Produce the capability spec content with `rule_id` present (idempotent).
-/// If `existing` already declares the rule, it is returned unchanged.
+/// If `existing` already declares the rule, it is returned unchanged. The
+/// promotion provenance is recorded on its OWN comment line (never inline on the
+/// Rule header, so it cannot leak into the parsed rule name).
 fn upsert_capability_rule(
     existing: Option<&str>,
     cap_name: &str,
@@ -633,24 +671,27 @@ fn upsert_capability_rule(
     from_task: &str,
 ) -> String {
     let rule_line = if rule_name.is_empty() || rule_name == rule_id {
-        format!("### Rule: {rule_id}  <!-- promoted from {from_task} -->\n")
+        format!("### Rule: {rule_id}\n")
     } else {
-        format!("### Rule: {rule_id} — {rule_name}  <!-- promoted from {from_task} -->\n")
+        format!("### Rule: {rule_id} — {rule_name}\n")
     };
+    let block = format!("<!-- promoted from {from_task} -->\n{rule_line}");
 
     match existing {
         Some(content) if rule_already_present(content, rule_id) => content.to_string(),
         Some(content) => {
-            // Append the rule under the existing Completion Criteria section.
             let mut out = content.trim_end().to_string();
+            if !has_completion_section(content) {
+                out.push_str("\n\n## 完成条件\n");
+            }
             out.push('\n');
-            out.push_str(&rule_line);
+            out.push_str(&block);
             out.push('\n');
             out
         }
         None => {
             format!(
-                "spec: capability\nname: \"{cap_name}\"\ntags: [capability]\n---\n\n## 意图\n\n{cap_name} 能力的长寿命行为真相库(由 promote 累积)。\n\n## 完成条件\n\n{rule_line}\n"
+                "spec: capability\nname: \"{cap_name}\"\ntags: [capability]\n---\n\n## 意图\n\n{cap_name} 能力的长寿命行为真相库(由 promote 累积)。\n\n## 完成条件\n\n{block}\n"
             )
         }
     }
@@ -666,9 +707,18 @@ fn rule_already_present(content: &str, rule_id: &str) -> bool {
 }
 
 /// Extract the leading kebab id token from a Rule header's raw content.
+/// Uses the LEFTMOST separator (em dash or double space) to match the parser's
+/// `parse_rule_header_content` exactly.
 fn rule_id_of(raw: &str) -> &str {
     let raw = raw.trim();
-    let cut = raw.find('—').or_else(|| raw.find("  ")).unwrap_or(raw.len());
+    let em = raw.find('—');
+    let ds = raw.find("  ");
+    let cut = match (em, ds) {
+        (Some(e), Some(d)) => e.min(d),
+        (Some(e), None) => e,
+        (None, Some(d)) => d,
+        (None, None) => raw.len(),
+    };
     raw[..cut].trim()
 }
 
@@ -678,18 +728,20 @@ fn cmd_promote(
     capability: &str,
     code: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if !is_safe_capability_name(capability) {
+        return Err(format!(
+            "unsafe capability name `{capability}` (no path separators, `..`, or leading `.`)"
+        )
+        .into());
+    }
     let doc = crate::spec_parser::parse_spec(spec)?;
     let scenario_names = rule_scenarios(&doc, rule_id)
         .ok_or_else(|| format!("rule id `{rule_id}` not found in {}", spec.display()))?;
 
     let gw = crate::spec_gateway::SpecGateway::load(spec)?;
     let report = gw.verify(code)?;
-    if !examples_all_pass(&scenario_names, &report) {
-        return Err(format!(
-            "promote gate failed: not all examples of rule `{rule_id}` pass (need all `pass`)"
-        )
-        .into());
-    }
+    promote_gate_ok(&scenario_names, &report)
+        .map_err(|e| format!("promote gate failed for rule `{rule_id}`: {e}"))?;
 
     // Rule display name from the task doc.
     let rule_name = doc
@@ -2974,6 +3026,65 @@ name: "退款"
   当 a
   那么 b
 "#;
+
+    use super::{is_safe_capability_name, promote_gate_ok, rule_id_of};
+
+    #[test]
+    fn test_promote_refuses_rule_with_no_examples() {
+        // C1/C6/C9: a rule with zero examples must NOT pass the gate (vacuous).
+        let report = report_with(&[]);
+        assert!(promote_gate_ok(&[], &report).is_err(), "empty examples must fail the gate");
+        let ok = report_with(&[("a", crate::spec_core::Verdict::Pass)]);
+        assert!(promote_gate_ok(&["a".to_string()], &ok).is_ok());
+    }
+
+    #[test]
+    fn test_promote_rule_name_excludes_provenance_comment() {
+        // C2/C8: the promoted rule, re-parsed, must not carry the HTML comment in its name.
+        let content = upsert_capability_rule(None, "billing", "r-bare", "r-bare", "task-x");
+        let doc = crate::spec_parser::parse_spec_from_str(&content).unwrap();
+        let rule = doc.sections.iter().find_map(|s| match s {
+            crate::spec_core::Section::AcceptanceCriteria { rules, .. } => {
+                rules.iter().find(|r| r.key.id == "r-bare").cloned()
+            }
+            _ => None,
+        }).expect("r-bare present");
+        assert!(!rule.name.contains("<!--"), "rule name must not contain the provenance comment: {}", rule.name);
+        assert_eq!(rule.name, "r-bare");
+    }
+
+    #[test]
+    fn test_promote_rejects_unsafe_capability_name() {
+        // C5/C7: path traversal / absolute / separators must be rejected.
+        assert!(!is_safe_capability_name("../evil"));
+        assert!(!is_safe_capability_name("/etc/passwd"));
+        assert!(!is_safe_capability_name("a/b"));
+        assert!(!is_safe_capability_name("a\\b"));
+        assert!(!is_safe_capability_name(""));
+        assert!(is_safe_capability_name("billing"));
+        assert!(is_safe_capability_name("ecosystem-import"));
+    }
+
+    #[test]
+    fn test_rule_id_of_matches_parser_on_double_space_before_em_dash() {
+        // C3: leftmost separator wins (double space before em dash).
+        assert_eq!(rule_id_of("id  desc — more"), "id");
+        assert_eq!(rule_id_of("id — desc"), "id");
+        assert_eq!(rule_id_of("id"), "id");
+    }
+
+    #[test]
+    fn test_promote_appends_under_completion_criteria() {
+        // C4: appending to a capability file lacking a Completion Criteria
+        // section must still place the rule where it parses as a rule.
+        let hand = "spec: capability\nname: \"billing\"\n---\n\n## 意图\n\n手写的能力文件,没有完成条件段。\n";
+        let updated = upsert_capability_rule(Some(hand), "billing", "r-ok", "退款幂等", "task-x");
+        let doc = crate::spec_parser::parse_spec_from_str(&updated).unwrap();
+        let has_rule = doc.sections.iter().any(|s| matches!(s,
+            crate::spec_core::Section::AcceptanceCriteria { rules, .. }
+                if rules.iter().any(|r| r.key.id == "r-ok")));
+        assert!(has_rule, "promoted rule must parse as a rule (under Completion Criteria)");
+    }
 
     #[test]
     fn test_promote_unknown_rule_id_errors() {

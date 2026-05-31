@@ -529,7 +529,9 @@ fn parse_scenarios(lines: &[(usize, &str)], rule_scope: &RuleScope) -> SpecResul
 /// spaces. No auto-slugify: if the leading token is not a valid id, returns
 /// `(None, raw)` so the `bdd-rule-id` lint can flag it and no rule is created.
 fn parse_rule_header_content(raw: &str) -> (Option<String>, String) {
-    let raw = raw.trim();
+    // Strip any trailing HTML comment (e.g. promotion provenance) so it never
+    // leaks into the rule id or display name.
+    let raw = raw.split("<!--").next().unwrap_or(raw).trim();
     // Leftmost separator wins, so an em dash inside the display name does not
     // hijack a double-space-delimited id (and vice versa).
     let em = raw.find('—');
