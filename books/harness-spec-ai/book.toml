@@ -1,0 +1,16 @@
+[book]
+title = "Harness 工程之 Spec 驱动 AI 开发"
+authors = ["ZhangHanDong", "Codex"]
+language = "zh-CN"
+multilingual = false
+src = "src"
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+git-repository-url = "https://github.com/ZhangHanDong/agent-spec"
+site-url = "/harness-spec-ai/"
+additional-css = []
+

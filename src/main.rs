@@ -2393,6 +2393,11 @@ fn merge_ai_decisions(
             .iter_mut()
             .find(|r| r.scenario_name == decision.scenario_name)
         {
+            // Only resolve Skip verdicts: a mechanically-proven pass/fail must
+            // never be overridden by a caller AI decision (mechanical is the moat).
+            if result.verdict != crate::spec_core::Verdict::Skip {
+                continue;
+            }
             result.verdict = decision.decision.verdict;
             result.step_results = result
                 .step_results
@@ -2834,6 +2839,69 @@ mod tests {
         assert!(out.contains("## Coverage Matrix"));
         assert!(out.contains("| Rule | Scenario | Test | Found | Verdict | Provenance |"));
         assert!(out.contains("refund-idempotent"));
+    }
+
+    #[test]
+    fn test_merge_ai_decisions_only_replaces_skip() {
+        // C7: a caller AI decision must NOT override a mechanically-proven
+        // pass/fail — only Skip verdicts may be resolved.
+        use crate::spec_core::{AiDecision, ScenarioResult, Verdict};
+        let results = vec![
+            ScenarioResult {
+                scenario_name: "已通过".into(),
+                verdict: Verdict::Pass,
+                step_results: vec![],
+                evidence: vec![],
+                duration_ms: 0,
+                provenance: Some(crate::spec_core::EvidenceProvenance::Computational),
+            },
+            ScenarioResult {
+                scenario_name: "未覆盖".into(),
+                verdict: Verdict::Skip,
+                step_results: vec![],
+                evidence: vec![],
+                duration_ms: 0,
+                provenance: None,
+            },
+        ];
+        let decisions = vec![
+            ScenarioAiDecision {
+                scenario_name: "已通过".into(),
+                decision: AiDecision {
+                    model: "caller".into(),
+                    confidence: 0.1,
+                    verdict: Verdict::Fail,
+                    reasoning: "ai disagrees".into(),
+                },
+            },
+            ScenarioAiDecision {
+                scenario_name: "未覆盖".into(),
+                decision: AiDecision {
+                    model: "caller".into(),
+                    confidence: 0.9,
+                    verdict: Verdict::Pass,
+                    reasoning: "ai approves".into(),
+                },
+            },
+        ];
+        let merged = merge_ai_decisions(results, &decisions);
+        let passed = merged.iter().find(|r| r.scenario_name == "已通过").unwrap();
+        assert_eq!(
+            passed.verdict,
+            Verdict::Pass,
+            "mechanical pass must NOT be overridden by AI"
+        );
+        assert_eq!(
+            passed.provenance,
+            Some(crate::spec_core::EvidenceProvenance::Computational),
+            "mechanical provenance must be preserved"
+        );
+        let skip = merged.iter().find(|r| r.scenario_name == "未覆盖").unwrap();
+        assert_eq!(skip.verdict, Verdict::Pass, "skip must be resolved by AI");
+        assert_eq!(
+            skip.provenance,
+            Some(crate::spec_core::EvidenceProvenance::Inferential)
+        );
     }
 
     #[test]

@@ -51,7 +51,7 @@ pub fn build_coverage_matrix(
     report: Option<&VerificationReport>,
     test_index: &HashSet<String>,
 ) -> CoverageMatrix {
-    let rows = resolved
+    let mut rows: Vec<CoverageRow> = resolved
         .all_scenarios
         .iter()
         .map(|scenario| {
@@ -81,6 +81,29 @@ pub fn build_coverage_matrix(
         })
         .collect();
 
+    // Append report results that match no spec scenario (e.g. the synthetic
+    // `[boundaries] ...` scenario), so a boundary FAIL is not silently dropped.
+    if let Some(r) = report {
+        let scenario_names: HashSet<&str> = resolved
+            .all_scenarios
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect();
+        for res in &r.results {
+            if scenario_names.contains(res.scenario_name.as_str()) {
+                continue;
+            }
+            rows.push(CoverageRow {
+                rule: None,
+                scenario: res.scenario_name.clone(),
+                test_selector: None,
+                test_found: TestFound::None,
+                verdict: Some(res.verdict),
+                provenance: provenance_of(res),
+            });
+        }
+    }
+
     CoverageMatrix { rows }
 }
 
@@ -94,9 +117,9 @@ impl CoverageMatrix {
         for r in &self.rows {
             out.push_str(&format!(
                 "| {} | {} | {} | {} | {} | {} |\n",
-                dash(r.rule.as_deref()),
-                r.scenario,
-                dash(r.test_selector.as_deref()),
+                md_cell(dash(r.rule.as_deref())),
+                md_cell(&r.scenario),
+                md_cell(dash(r.test_selector.as_deref())),
                 test_found_str(r.test_found),
                 r.verdict.map(verdict_str).unwrap_or("—"),
                 r.provenance.map(prov_str).unwrap_or("—"),
@@ -111,9 +134,9 @@ impl CoverageMatrix {
         for r in &self.rows {
             out.push_str(&format!(
                 "- [{}] {} → {} ({}) :: {} / {}\n",
-                dash(r.rule.as_deref()),
-                r.scenario,
-                dash(r.test_selector.as_deref()),
+                one_line(dash(r.rule.as_deref())),
+                one_line(&r.scenario),
+                one_line(dash(r.test_selector.as_deref())),
                 test_found_str(r.test_found),
                 r.verdict.map(verdict_str).unwrap_or("—"),
                 r.provenance.map(prov_str).unwrap_or("—"),
@@ -129,6 +152,19 @@ impl CoverageMatrix {
 
 fn dash(s: Option<&str>) -> &str {
     s.unwrap_or("—")
+}
+
+/// Escape a markdown table cell: collapse newlines and escape `|` so embedded
+/// content cannot split or break the row.
+fn md_cell(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('|', "\\|")
+        .replace(['\n', '\r'], " ")
+}
+
+/// Collapse newlines for single-line text output.
+fn one_line(s: &str) -> String {
+    s.replace(['\n', '\r'], " ")
 }
 
 fn test_found_str(f: TestFound) -> &'static str {
@@ -199,14 +235,41 @@ fn collect_rust_files(dir: &Path, files: &mut Vec<PathBuf>) {
 
 fn collect_from_source(src: &str, names: &mut HashSet<String>) {
     let mut saw_test_attr = false;
+    let mut in_block_comment = false;
     for line in src.lines() {
         let t = line.trim();
-        if t.starts_with("#[test]") || t.contains("tokio::test") {
+
+        // Block-comment awareness: skip everything inside /* ... */ so a
+        // commented-out `#[test] fn` is not collected.
+        if in_block_comment {
+            if t.contains("*/") {
+                in_block_comment = false;
+            }
+            continue;
+        }
+        if t.starts_with("/*") {
+            if !t.contains("*/") {
+                in_block_comment = true;
+            }
+            continue;
+        }
+
+        // A test attribute must START the line with `#[` and name `test` (or
+        // `<path>::test`) — not merely contain "tokio::test" (which matches
+        // comments and string literals).
+        if is_test_attr(t) {
             saw_test_attr = true;
+            // Single-line form: `#[test] fn foo() {}`.
+            if let Some((_, after)) = t.split_once(']')
+                && let Some(name) = fn_name(after)
+            {
+                names.insert(name);
+                saw_test_attr = false;
+            }
             continue;
         }
         if t.starts_with("#[") || t.starts_with("//") || t.is_empty() {
-            // other attributes / comments may sit between the attr and the fn
+            // other attributes / line comments may sit between the attr and the fn
             continue;
         }
         if saw_test_attr {
@@ -216,6 +279,17 @@ fn collect_from_source(src: &str, names: &mut HashSet<String>) {
             saw_test_attr = false;
         }
     }
+}
+
+/// True if a trimmed line is a test attribute: `#[test]`, `#[tokio::test]`,
+/// `#[<runtime>::test(...)]`, etc. Requires the `#[` prefix and an attribute
+/// name of `test` or `<path>::test`.
+fn is_test_attr(t: &str) -> bool {
+    let Some(rest) = t.strip_prefix("#[") else {
+        return false;
+    };
+    let name = rest.split(['(', ']']).next().unwrap_or("").trim();
+    name == "test" || name.ends_with("::test")
 }
 
 /// Extract `name` from a line like `fn name(...)` / `async fn name(...)` / `pub fn name`.
@@ -468,5 +542,120 @@ name: "x"
         assert!(rows[0].get("scenario").is_some());
         assert!(rows[0].get("test_found").is_some());
         assert!(rows[0].get("verdict").is_some());
+    }
+
+    // ---- Adversarial hunt regressions (Phase 2) ----
+
+    fn temp_code_dir(tag: &str, file: &str, content: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("agent_spec_cov_{tag}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(file), content).unwrap();
+        dir
+    }
+
+    #[test]
+    fn test_to_markdown_escapes_pipe_in_cells() {
+        // C1: a '|' in a scenario name or selector must not split the row.
+        let input = r#"spec: task
+name: "x"
+---
+
+## 完成条件
+
+场景: a | b
+  测试: sel | x
+  当 a
+  那么 b
+"#;
+        let resolved = resolved_of(input);
+        let md = build_coverage_matrix(&resolved, None, &HashSet::new()).to_markdown();
+        let data_line = md.lines().nth(2).unwrap();
+        // 6 columns => exactly 7 unescaped pipe delimiters.
+        let unescaped = data_line
+            .as_bytes()
+            .windows(1)
+            .enumerate()
+            .filter(|(i, w)| w == b"|" && (*i == 0 || data_line.as_bytes()[i - 1] != b'\\'))
+            .count();
+        assert_eq!(unescaped, 7, "row must keep 6 cells (7 delimiters): {data_line}");
+    }
+
+    #[test]
+    fn test_scanner_ignores_tokio_test_in_comment_and_string() {
+        // C2/C3: "tokio::test" in a comment or string must not mark the next fn.
+        let dir = temp_code_dir(
+            "scan_comment",
+            "lib.rs",
+            "// migrated away from tokio::test\nfn old_helper() {}\nfn build() { let s = \"tokio::test\"; let _ = s; }\nfn helper() {}\n",
+        );
+        let names = collect_test_function_names(&[dir.clone()]);
+        assert!(!names.contains("old_helper"), "comment must not mark fn");
+        assert!(!names.contains("helper"), "string literal must not mark fn");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_scanner_collects_single_line_test_fn() {
+        // C5: `#[test] fn foo() {}` on one line must be collected.
+        let dir = temp_code_dir("scan_single", "lib.rs", "#[test] fn foo() { assert!(true); }\n");
+        let names = collect_test_function_names(&[dir.clone()]);
+        assert!(names.contains("foo"), "single-line test fn must be found");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_scanner_ignores_block_commented_test() {
+        // C4: a test inside /* ... */ must not be collected.
+        let dir = temp_code_dir(
+            "scan_block",
+            "lib.rs",
+            "/*\n#[test]\nfn commented_out_test() {}\n*/\nfn real() {}\n",
+        );
+        let names = collect_test_function_names(&[dir.clone()]);
+        assert!(
+            !names.contains("commented_out_test"),
+            "block-commented test must not be collected"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_matrix_includes_orphan_report_rows() {
+        // C8: a report result with no matching spec scenario (e.g. the boundary
+        // synthetic scenario) must still appear as a matrix row.
+        let input = r#"spec: task
+name: "x"
+---
+
+## 完成条件
+
+场景: 普通
+  测试: test_x
+  当 a
+  那么 b
+"#;
+        let resolved = resolved_of(input);
+        let report = VerificationReport::from_results(
+            "x".into(),
+            vec![
+                pass_result("普通"),
+                ScenarioResult {
+                    scenario_name: "[boundaries] explicit change set respects declared paths".into(),
+                    verdict: Verdict::Fail,
+                    step_results: vec![],
+                    evidence: vec![],
+                    duration_ms: 0,
+                    provenance: Some(EvidenceProvenance::Computational),
+                },
+            ],
+        );
+        let m = build_coverage_matrix(&resolved, Some(&report), &idx(&["test_x"]));
+        let boundary = m
+            .rows
+            .iter()
+            .find(|r| r.scenario.starts_with("[boundaries]"));
+        assert!(boundary.is_some(), "boundary synthetic result must appear as a row");
+        assert_eq!(boundary.unwrap().verdict, Some(Verdict::Fail));
     }
 }
