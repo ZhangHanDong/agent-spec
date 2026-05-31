@@ -104,6 +104,21 @@ enum Commands {
         #[arg(long, default_value = "text")]
         format: String,
     },
+    /// Reverse-engineer a draft task spec from a codebase's existing tests
+    Discover {
+        /// Generate from the codebase's test functions (cold-start)
+        #[arg(long = "from-codebase")]
+        from_codebase: bool,
+        /// Code directory to scan for test functions
+        #[arg(long)]
+        code: PathBuf,
+        /// Name for the generated spec
+        #[arg(long)]
+        name: String,
+        /// Write the draft to this file instead of printing to stdout
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
     /// Mechanical structural check: forbid a reference within a file glob
     CheckStructure {
         /// Code directory to scan
@@ -349,6 +364,12 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             format,
         } => cmd_matrix(&spec, &code, &change, &change_scope, &ai_mode, &format),
         Commands::Audit { spec_dir, format } => cmd_audit(&spec_dir, &format),
+        Commands::Discover {
+            from_codebase,
+            code,
+            name,
+            out,
+        } => cmd_discover(from_codebase, &code, &name, out.as_deref()),
         Commands::CheckStructure {
             code,
             forbid,
@@ -657,6 +678,38 @@ fn cmd_audit(spec_dir: &Path, format: &str) -> Result<(), Box<dyn std::error::Er
         println!("  scenarios: {} ({} ungrouped)", report.scenario_count, report.ungrouped_scenarios);
         println!("  open questions: {}", report.open_questions);
         println!("  malformed rules: {}", report.malformed_rules);
+    }
+    Ok(())
+}
+
+// ── Discover (Phase 9: reverse-engineer a draft from tests) ─────
+
+fn cmd_discover(
+    from_codebase: bool,
+    code: &Path,
+    name: &str,
+    out: Option<&Path>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !from_codebase {
+        return Err("discover currently supports only --from-codebase".into());
+    }
+    let mut names: Vec<String> =
+        crate::spec_report::collect_test_function_names(&[code.to_path_buf()])
+            .into_iter()
+            .collect();
+    names.sort();
+    let draft = crate::spec_report::draft_spec_from_tests(&names, name);
+    match out {
+        Some(path) => {
+            std::fs::write(path, &draft)?;
+            println!(
+                "discover: drafted {} scenario(s) from {} -> {}",
+                names.len(),
+                code.display(),
+                path.display()
+            );
+        }
+        None => print!("{draft}"),
     }
     Ok(())
 }

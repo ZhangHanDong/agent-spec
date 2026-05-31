@@ -13,6 +13,9 @@ pub use structural::structural_violations;
 pub mod audit;
 pub use audit::audit_specs;
 
+pub mod discover;
+pub use discover::draft_spec_from_tests;
+
 /// Output format.
 pub enum OutputFormat {
     Text,

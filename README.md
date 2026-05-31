@@ -384,6 +384,12 @@ For consistency, `verify` and `lifecycle` use the same precedence when `--change
 | `parse` | Parse `.spec`/`.spec.md` files and show the AST |
 | `lint` | Analyze spec quality (vague verbs, missing test selectors, coverage gaps) |
 | `verify` | Verify code against a single spec |
+| `matrix` | Render the Rule→Example coverage matrix (text/json/markdown) |
+| `promote` | Promote a task-scoped Rule to a capability spec (id-stable) |
+| `gen-integrations` | Generate per-tool integration files from a single source |
+| `check-structure` | Mechanical structural check: forbid a reference within a file glob |
+| `audit` | Audit a spec library's health (unproven rules, open questions) |
+| `discover` | Reverse-engineer a draft task spec from a codebase's tests (`--from-codebase`) |
 | `contract` | Render the Task Contract view |
 | `plan` | Generate plan context: Contract + Codebase scan + Task Sketch |
 | `lifecycle` | Run lint + verify + report (the main quality gate) |
