@@ -95,6 +95,18 @@ enum Commands {
         #[arg(long, default_value = "text")]
         format: String,
     },
+    /// Mechanical structural check: forbid a reference within a file glob
+    CheckStructure {
+        /// Code directory to scan
+        #[arg(long)]
+        code: PathBuf,
+        /// Forbidden substring (e.g. `crate::services`)
+        #[arg(long)]
+        forbid: String,
+        /// File glob to scope the check (e.g. `clients/**`)
+        #[arg(long = "in")]
+        within: String,
+    },
     /// Generate per-tool integration files from a single source
     GenIntegrations {
         /// Target: agents, cursor, claude, or all
@@ -327,6 +339,11 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             ai_mode,
             format,
         } => cmd_matrix(&spec, &code, &change, &change_scope, &ai_mode, &format),
+        Commands::CheckStructure {
+            code,
+            forbid,
+            within,
+        } => cmd_check_structure(&code, &forbid, &within),
         Commands::GenIntegrations { target, out, check } => {
             cmd_gen_integrations(&target, &out, check)
         }
@@ -607,6 +624,30 @@ fn cmd_matrix(
     };
     println!("{out}");
     Ok(())
+}
+
+// ── Structural check (Phase 7: dependency-cruiser-lite) ─────────
+
+fn cmd_check_structure(
+    code: &Path,
+    forbid: &str,
+    within: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let violations =
+        crate::spec_report::structural_violations(&[code.to_path_buf()], forbid, within);
+    if violations.is_empty() {
+        println!("structural check passed: `{forbid}` not found in `{within}`");
+        Ok(())
+    } else {
+        for v in &violations {
+            println!("  violation: {v} contains `{forbid}`");
+        }
+        Err(format!(
+            "structural check failed: {} file(s) under `{within}` reference `{forbid}`",
+            violations.len()
+        )
+        .into())
+    }
 }
 
 // ── Integrations (Phase 6: single-source multi-tool generation) ──

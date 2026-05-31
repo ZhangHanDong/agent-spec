@@ -7,6 +7,9 @@ pub use coverage::{CoverageMatrix, build_coverage_matrix, collect_test_function_
 pub mod integrations;
 pub use integrations::{has_drifted, render_named};
 
+pub mod structural;
+pub use structural::structural_violations;
+
 /// Output format.
 pub enum OutputFormat {
     Text,
