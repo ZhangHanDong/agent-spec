@@ -75,6 +75,26 @@ enum Commands {
         #[arg(long, default_value = "text")]
         format: String,
     },
+    /// Render the coverage matrix (Rule × Scenario × Test × Verdict × Provenance)
+    Matrix {
+        /// Spec file
+        spec: PathBuf,
+        /// Code directory to verify and scan for test functions
+        #[arg(long)]
+        code: PathBuf,
+        /// Explicit changed file or directory (repeatable)
+        #[arg(long = "change")]
+        change: Vec<PathBuf>,
+        /// Git change scope when --change is omitted: none, staged, worktree
+        #[arg(long, default_value = "none")]
+        change_scope: String,
+        /// AI verification mode: off, stub, caller
+        #[arg(long, default_value = "off")]
+        ai_mode: String,
+        /// Output format: text, json, markdown
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
     /// Create a starter .spec.md file
     Init {
         /// Spec level: org, project, task
@@ -273,6 +293,14 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             ai_mode,
             format,
         } => cmd_verify(&spec, &code, &change, &change_scope, &ai_mode, &format),
+        Commands::Matrix {
+            spec,
+            code,
+            change,
+            change_scope,
+            ai_mode,
+            format,
+        } => cmd_matrix(&spec, &code, &change, &change_scope, &ai_mode, &format),
         Commands::Init {
             level,
             name,
@@ -483,6 +511,64 @@ fn cmd_verify(
     } else {
         Ok(())
     }
+}
+
+// ── Coverage matrix (Phase 2) ───────────────────────────────────
+
+/// Build the coverage matrix for a spec by running verification in the same
+/// default mode as `verify` (mechanical + ai-mode), scanning the code paths for
+/// test functions, and assembling the matrix. Read-only: no gating.
+fn build_matrix_for(
+    spec: &Path,
+    code: &Path,
+    change: &[PathBuf],
+    change_scope: &str,
+    ai_mode: &str,
+) -> Result<crate::spec_report::CoverageMatrix, Box<dyn std::error::Error>> {
+    let doc = crate::spec_parser::parse_spec(spec)?;
+    let resolved = crate::spec_parser::resolve_spec(doc, &[])?;
+    let scope = GitChangeScope::parse(change_scope)?;
+    let mode = parse_ai_mode(ai_mode)?;
+    let effective_changes = resolve_command_change_paths(spec, code, change, scope)?;
+
+    let ctx = crate::spec_verify::VerificationContext {
+        code_paths: vec![code.to_path_buf()],
+        change_paths: effective_changes,
+        ai_mode: mode,
+        resolved_spec: resolved.clone(),
+    };
+    let structural = crate::spec_verify::StructuralVerifier;
+    let boundaries = crate::spec_verify::BoundariesVerifier;
+    let test = crate::spec_verify::TestVerifier;
+    let ai = crate::spec_verify::AiVerifier::from_mode(mode);
+    let verifiers: Vec<&dyn crate::spec_verify::Verifier> =
+        vec![&structural, &boundaries, &test, &ai];
+    let report = crate::spec_verify::run_verification(&ctx, &verifiers)?;
+
+    let test_index = crate::spec_report::collect_test_function_names(&[code.to_path_buf()]);
+    Ok(crate::spec_report::build_coverage_matrix(
+        &resolved,
+        Some(&report),
+        &test_index,
+    ))
+}
+
+fn cmd_matrix(
+    spec: &Path,
+    code: &Path,
+    change: &[PathBuf],
+    change_scope: &str,
+    ai_mode: &str,
+    format: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let matrix = build_matrix_for(spec, code, change, change_scope, ai_mode)?;
+    let out = match format {
+        "json" => matrix.to_json(),
+        "markdown" | "md" => matrix.to_markdown(),
+        _ => matrix.to_text(),
+    };
+    println!("{out}");
+    Ok(())
 }
 
 // ── Lifecycle (full pipeline for CI/agent) ──────────────────────
@@ -1264,6 +1350,11 @@ fn parse_ai_mode(input: &str) -> Result<crate::spec_verify::AiMode, Box<dyn std:
 
 // ── Explain ─────────────────────────────────────────────────────
 
+/// Append the coverage matrix section to an explain markdown body.
+fn assemble_explain_markdown(base: &str, matrix: &crate::spec_report::CoverageMatrix) -> String {
+    format!("{base}\n## Coverage Matrix\n\n{}", matrix.to_markdown())
+}
+
 fn cmd_explain(
     spec: &Path,
     code: &Path,
@@ -1286,10 +1377,17 @@ fn cmd_explain(
     };
 
     let out_format = parse_output_format(format);
-    print!(
-        "{}",
-        crate::spec_report::format_explain(&input, &report, &out_format)
-    );
+    let base = crate::spec_report::format_explain(&input, &report, &out_format);
+
+    // Embed the coverage matrix in markdown output (PR acceptance material).
+    if matches!(out_format, crate::spec_report::OutputFormat::Markdown) {
+        let test_index = crate::spec_report::collect_test_function_names(&[code.to_path_buf()]);
+        let matrix =
+            crate::spec_report::build_coverage_matrix(gw.resolved(), Some(&report), &test_index);
+        print!("{}", assemble_explain_markdown(&base, &matrix));
+    } else {
+        print!("{base}");
+    }
 
     // Show history from run logs if requested
     if history {
@@ -2679,7 +2777,64 @@ mod tests {
         render_contract_output, resolve_command_change_paths, resolve_guard_change_paths,
         save_checkpoint, vcs, warn_duplicate_spec_extensions,
     };
-    use super::{ScenarioAiDecision, merge_ai_decisions};
+    use super::{ScenarioAiDecision, assemble_explain_markdown, build_matrix_for, merge_ai_decisions};
+
+    #[test]
+    fn test_matrix_command_runs_verification_in_default_mode() {
+        // An unbound scenario under default (--ai-mode off) must be skip, not
+        // uncertain — matrix uses verify's default semantics.
+        let dir = std::env::temp_dir().join(format!(
+            "agent_spec_matrix_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let spec_path = dir.join("m.spec.md");
+        fs::write(
+            &spec_path,
+            "spec: task\nname: \"m\"\n---\n\n## 完成条件\n\n场景: 未覆盖\n  当 a\n  那么 b\n",
+        )
+        .unwrap();
+
+        let matrix = build_matrix_for(
+            &spec_path,
+            Path::new(env!("CARGO_MANIFEST_DIR")),
+            &[],
+            "none",
+            "off",
+        )
+        .unwrap();
+        assert_eq!(matrix.rows.len(), 1);
+        assert_eq!(matrix.rows[0].verdict, Some(crate::spec_core::Verdict::Skip));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_explain_markdown_embeds_coverage_matrix() {
+        use crate::spec_report::CoverageMatrix;
+        use crate::spec_report::coverage::{CoverageRow, TestFound};
+        let base = "# Contract Acceptance: demo\n\n## Verification\nall pass\n";
+        let matrix = CoverageMatrix {
+            rows: vec![CoverageRow {
+                rule: Some("refund-idempotent".into()),
+                scenario: "首次退款".into(),
+                test_selector: Some("test_first_refund".into()),
+                test_found: TestFound::Found,
+                verdict: Some(crate::spec_core::Verdict::Pass),
+                provenance: Some(crate::spec_core::EvidenceProvenance::Computational),
+            }],
+        };
+        let out = assemble_explain_markdown(base, &matrix);
+        // Original contract/verification body preserved.
+        assert!(out.contains("# Contract Acceptance: demo"));
+        assert!(out.contains("## Verification"));
+        // Coverage matrix embedded.
+        assert!(out.contains("## Coverage Matrix"));
+        assert!(out.contains("| Rule | Scenario | Test | Found | Verdict | Provenance |"));
+        assert!(out.contains("refund-idempotent"));
+    }
 
     #[test]
     fn test_provenance_resolve_ai_is_inferential() {

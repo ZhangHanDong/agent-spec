@@ -952,6 +952,37 @@ name: "AI skeleton"
     }
 
     #[test]
+    fn test_matrix_does_not_change_is_passing() {
+        use crate::spec_core::{EvidenceProvenance, ScenarioResult, Verdict, VerificationReport};
+        let gw = SpecGateway::from_input(SAMPLE).unwrap();
+        let report = VerificationReport::from_results(
+            "x".into(),
+            vec![ScenarioResult {
+                scenario_name: "s".into(),
+                verdict: Verdict::Pass,
+                step_results: vec![],
+                evidence: vec![],
+                duration_ms: 0,
+                provenance: Some(EvidenceProvenance::Computational),
+            }],
+        );
+        let before = report.summary.clone();
+        let passing_before = gw.is_passing(&report);
+        // Build the matrix (immutable borrow of report).
+        let _ = crate::spec_report::build_coverage_matrix(
+            gw.resolved(),
+            Some(&report),
+            &std::collections::HashSet::new(),
+        );
+        assert!(passing_before);
+        assert!(gw.is_passing(&report), "is_passing unchanged after matrix build");
+        assert_eq!(before.total, report.summary.total);
+        assert_eq!(before.failed, report.summary.failed);
+        assert_eq!(before.skipped, report.summary.skipped);
+        assert_eq!(before.uncertain, report.summary.uncertain);
+    }
+
+    #[test]
     fn test_provenance_ai_stub_is_inferential() {
         let gw = SpecGateway::from_input(
             r#"spec: task

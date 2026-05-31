@@ -1,6 +1,9 @@
 use crate::spec_core::{LintReport, Severity, Verdict, VerificationReport};
 use serde::Serialize;
 
+pub mod coverage;
+pub use coverage::{CoverageMatrix, build_coverage_matrix, collect_test_function_names};
+
 /// Output format.
 pub enum OutputFormat {
     Text,
