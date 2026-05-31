@@ -102,6 +102,7 @@ impl Verifier for BoundariesVerifier {
             step_results,
             evidence,
             duration_ms: 0,
+            provenance: None,
         }])
     }
 }

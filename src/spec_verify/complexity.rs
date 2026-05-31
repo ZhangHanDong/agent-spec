@@ -215,6 +215,7 @@ fn check_line_ratio(ctx: &VerificationContext, max_ratio: f64) -> ScenarioResult
                 .collect(),
         }],
         duration_ms: 0,
+        provenance: None,
     }
 }
 

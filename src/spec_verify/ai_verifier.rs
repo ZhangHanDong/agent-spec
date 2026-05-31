@@ -93,6 +93,7 @@ impl Verifier for AiVerifier {
                     reasoning: decision.reasoning,
                 }],
                 duration_ms: 0,
+                provenance: None,
             });
         }
 

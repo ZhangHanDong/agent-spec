@@ -2283,24 +2283,15 @@ struct ScenarioAiDecision {
     pub decision: crate::spec_core::AiDecision,
 }
 
-fn cmd_resolve_ai(
-    spec: &Path,
-    code: &Path,
-    decisions_path: &Path,
-    format: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    // 1. Load spec and run mechanical verification (caller mode skips AI internally)
-    let gw = crate::spec_gateway::SpecGateway::load(spec)?;
-    let verify_report = gw.verify_with_ai_mode(code, crate::spec_verify::AiMode::Caller)?;
-
-    // 2. Read external AI decisions
-    let decisions_json = std::fs::read_to_string(decisions_path)?;
-    let decisions: Vec<ScenarioAiDecision> = serde_json::from_str(&decisions_json)?;
-
-    // 3. Merge: replace Skip verdicts with AI decisions
-    let mut merged_results = verify_report.results;
-    for decision in &decisions {
-        if let Some(result) = merged_results
+/// Merge externally-resolved AI decisions into verification results, replacing
+/// the matched scenarios' verdict/steps/evidence and stamping provenance as
+/// `Inferential` (caller-mode bypasses AiVerifier, so it must stamp here).
+fn merge_ai_decisions(
+    mut results: Vec<crate::spec_core::ScenarioResult>,
+    decisions: &[ScenarioAiDecision],
+) -> Vec<crate::spec_core::ScenarioResult> {
+    for decision in decisions {
+        if let Some(result) = results
             .iter_mut()
             .find(|r| r.scenario_name == decision.scenario_name)
         {
@@ -2319,8 +2310,28 @@ fn cmd_resolve_ai(
                 confidence: decision.decision.confidence,
                 reasoning: decision.decision.reasoning.clone(),
             }];
+            result.provenance = Some(crate::spec_core::EvidenceProvenance::Inferential);
         }
     }
+    results
+}
+
+fn cmd_resolve_ai(
+    spec: &Path,
+    code: &Path,
+    decisions_path: &Path,
+    format: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // 1. Load spec and run mechanical verification (caller mode skips AI internally)
+    let gw = crate::spec_gateway::SpecGateway::load(spec)?;
+    let verify_report = gw.verify_with_ai_mode(code, crate::spec_verify::AiMode::Caller)?;
+
+    // 2. Read external AI decisions
+    let decisions_json = std::fs::read_to_string(decisions_path)?;
+    let decisions: Vec<ScenarioAiDecision> = serde_json::from_str(&decisions_json)?;
+
+    // 3. Merge: replace Skip verdicts with AI decisions
+    let merged_results = merge_ai_decisions(verify_report.results, &decisions);
 
     let merged_report =
         crate::spec_core::VerificationReport::from_results(verify_report.spec_name, merged_results);
@@ -2668,6 +2679,49 @@ mod tests {
         render_contract_output, resolve_command_change_paths, resolve_guard_change_paths,
         save_checkpoint, vcs, warn_duplicate_spec_extensions,
     };
+    use super::{ScenarioAiDecision, merge_ai_decisions};
+
+    #[test]
+    fn test_provenance_resolve_ai_is_inferential() {
+        use crate::spec_core::{
+            AiDecision, EvidenceProvenance, Evidence, ScenarioResult, StepVerdict, Verdict,
+        };
+        let results = vec![ScenarioResult {
+            scenario_name: "未覆盖场景".into(),
+            verdict: Verdict::Skip,
+            step_results: vec![StepVerdict {
+                step_text: "等待 AI".into(),
+                verdict: Verdict::Skip,
+                reason: "no verifier".into(),
+            }],
+            evidence: vec![],
+            duration_ms: 0,
+            provenance: None,
+        }];
+        let decisions = vec![ScenarioAiDecision {
+            scenario_name: "未覆盖场景".into(),
+            decision: AiDecision {
+                model: "caller".into(),
+                confidence: 0.9,
+                verdict: Verdict::Pass,
+                reasoning: "looks correct".into(),
+            },
+        }];
+        let merged = merge_ai_decisions(results, &decisions);
+        assert_eq!(merged[0].verdict, Verdict::Pass);
+        assert_eq!(
+            merged[0].provenance,
+            Some(EvidenceProvenance::Inferential),
+            "caller-mode resolved result must be inferential"
+        );
+        assert!(
+            merged[0]
+                .evidence
+                .iter()
+                .any(|e| matches!(e, Evidence::AiAnalysis { .. })),
+            "resolved result must carry AiAnalysis evidence"
+        );
+    }
 
     const SAMPLE: &str = r#"spec: task
 name: "Contract Alias"
@@ -3290,6 +3344,7 @@ Scenario: verification metadata stays visible
                 step_results: vec![],
                 evidence: vec![],
                 duration_ms: 5,
+                provenance: None,
             }],
             summary: crate::spec_core::VerificationSummary {
                 total: 1,
@@ -3337,6 +3392,7 @@ Scenario: verification metadata stays visible
                     step_results: vec![],
                     evidence: vec![],
                     duration_ms: 3,
+                    provenance: None,
                 },
                 crate::spec_core::ScenarioResult {
                     scenario_name: "scenario B".into(),
@@ -3344,6 +3400,7 @@ Scenario: verification metadata stays visible
                     step_results: vec![],
                     evidence: vec![],
                     duration_ms: 2,
+                    provenance: None,
                 },
             ],
             summary: crate::spec_core::VerificationSummary {
@@ -3672,6 +3729,7 @@ Scenario: verification metadata stays visible
                     step_results: vec![],
                     evidence: vec![],
                     duration_ms: 1,
+                    provenance: None,
                 },
                 crate::spec_core::ScenarioResult {
                     scenario_name: "[test] happy path".into(),
@@ -3679,6 +3737,7 @@ Scenario: verification metadata stays visible
                     step_results: vec![],
                     evidence: vec![],
                     duration_ms: 2,
+                    provenance: None,
                 },
                 crate::spec_core::ScenarioResult {
                     scenario_name: "[ai] uncertain scenario".into(),
@@ -3686,6 +3745,7 @@ Scenario: verification metadata stays visible
                     step_results: vec![],
                     evidence: vec![],
                     duration_ms: 3,
+                    provenance: None,
                 },
             ],
             summary: crate::spec_core::VerificationSummary {
@@ -4158,6 +4218,7 @@ Scenario: pass
             }],
             evidence: vec![],
             duration_ms: 10,
+            provenance: None,
         }
     }
 

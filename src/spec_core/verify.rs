@@ -12,6 +12,18 @@ pub enum Verdict {
     PendingReview,
 }
 
+/// Whether a verdict came from mechanical execution or AI inference.
+/// Phase 2 (coverage matrix): makes the unified verdict channel auditable —
+/// a mechanically-proven pass is distinguishable from an AI-inferred one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EvidenceProvenance {
+    /// Produced by a mechanical verifier (test / boundaries / structural / complexity).
+    Computational,
+    /// Produced by AI inference (ai verifier or caller-mode resolved decision).
+    Inferential,
+}
+
 /// Result of verifying a single scenario.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScenarioResult {
@@ -20,6 +32,10 @@ pub struct ScenarioResult {
     pub step_results: Vec<StepVerdict>,
     pub evidence: Vec<Evidence>,
     pub duration_ms: u64,
+    /// Whether this verdict is mechanical or inferential. Additive (Phase 2);
+    /// `None` for uncovered/skip results and legacy reports.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<EvidenceProvenance>,
 }
 
 /// Verdict for a single step.
@@ -175,5 +191,34 @@ impl VerificationReport {
                 pending_review,
             },
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_json_provenance_additive_only() {
+        // provenance == None must not emit a `provenance` key (legacy shape).
+        let none = ScenarioResult {
+            scenario_name: "s".into(),
+            verdict: Verdict::Pass,
+            step_results: vec![],
+            evidence: vec![],
+            duration_ms: 0,
+            provenance: None,
+        };
+        let json = serde_json::to_string(&none).unwrap();
+        assert!(!json.contains("provenance"), "None must skip the key: {json}");
+
+        // When set, it serializes lowercased.
+        let some = ScenarioResult {
+            provenance: Some(EvidenceProvenance::Computational),
+            ..none
+        };
+        let json = serde_json::to_string(&some).unwrap();
+        assert!(json.contains("\"provenance\":\"computational\""));
     }
 }

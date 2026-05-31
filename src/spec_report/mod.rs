@@ -754,6 +754,7 @@ mod tests {
                 }],
                 evidence: vec![],
                 duration_ms: 10,
+                provenance: None,
             }],
             summary: VerificationSummary {
                 total: 1,
@@ -787,6 +788,7 @@ mod tests {
                     reasoning: "ai verifier stub enabled".into(),
                 }],
                 duration_ms: 0,
+                provenance: None,
             }],
             summary: VerificationSummary {
                 total: 1,
@@ -822,6 +824,7 @@ mod tests {
                     targets: Some("commands/update".into()),
                 }],
                 duration_ms: 5,
+                provenance: None,
             }],
             summary: VerificationSummary {
                 total: 1,
@@ -868,6 +871,7 @@ mod tests {
                     targets: Some("spec_gateway/brief".into()),
                 }],
                 duration_ms: 5,
+                provenance: None,
             }],
             summary: VerificationSummary {
                 total: 1,
@@ -951,6 +955,7 @@ mod tests {
                     step_results: vec![],
                     evidence: vec![],
                     duration_ms: 10,
+                    provenance: None,
                 },
                 ScenarioResult {
                     scenario_name: "scenario B".into(),
@@ -958,6 +963,7 @@ mod tests {
                     step_results: vec![],
                     evidence: vec![],
                     duration_ms: 20,
+                    provenance: None,
                 },
             ],
             summary: VerificationSummary {
@@ -981,6 +987,7 @@ mod tests {
                     step_results: vec![],
                     evidence: vec![],
                     duration_ms: 10,
+                    provenance: None,
                 },
                 ScenarioResult {
                     scenario_name: "fail scenario".into(),
@@ -988,6 +995,7 @@ mod tests {
                     step_results: vec![],
                     evidence: vec![],
                     duration_ms: 20,
+                    provenance: None,
                 },
                 ScenarioResult {
                     scenario_name: "skip scenario".into(),
@@ -995,6 +1003,7 @@ mod tests {
                     step_results: vec![],
                     evidence: vec![],
                     duration_ms: 0,
+                    provenance: None,
                 },
             ],
             summary: VerificationSummary {
@@ -1088,6 +1097,7 @@ mod tests {
                     targets: None,
                 }],
                 duration_ms: 42,
+                provenance: None,
             }],
             summary: VerificationSummary {
                 total: 1,

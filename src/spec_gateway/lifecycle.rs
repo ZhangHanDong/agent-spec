@@ -564,6 +564,7 @@ name: "缺少测试绑定"
                 }],
                 evidence: vec![],
                 duration_ms: 0,
+                provenance: None,
             }],
             summary: crate::spec_core::VerificationSummary {
                 total: 1,
@@ -791,6 +792,7 @@ name: "Contract fidelity"
                     }],
                     evidence: vec![],
                     duration_ms: 0,
+                    provenance: None,
                 },
                 crate::spec_core::ScenarioResult {
                     scenario_name: "未验证场景".into(),
@@ -802,6 +804,7 @@ name: "Contract fidelity"
                     }],
                     evidence: vec![],
                     duration_ms: 0,
+                    provenance: None,
                 },
             ],
             summary: crate::spec_core::VerificationSummary {
@@ -867,6 +870,7 @@ name: "lint-not-gating"
                 step_results: vec![],
                 evidence: vec![],
                 duration_ms: 0,
+                provenance: None,
             }],
             summary: crate::spec_core::VerificationSummary {
                 total: 1,
@@ -945,6 +949,31 @@ name: "AI skeleton"
         assert_eq!(report.summary.uncertain, 1);
         assert_eq!(report.summary.skipped, 0);
         assert_eq!(report.results[0].verdict, Verdict::Uncertain);
+    }
+
+    #[test]
+    fn test_provenance_ai_stub_is_inferential() {
+        let gw = SpecGateway::from_input(
+            r#"spec: task
+name: "AI provenance"
+---
+
+## 完成条件
+
+场景: 未覆盖场景
+  假设 存在一个未被机械 verifier 覆盖的场景
+  当 gateway 使用 stub 模式验证
+  那么 返回 uncertain
+"#,
+        )
+        .unwrap();
+
+        let report = gw.verify_with_ai_mode(".", AiMode::Stub).unwrap();
+        assert_eq!(
+            report.results[0].provenance,
+            Some(crate::spec_core::EvidenceProvenance::Inferential),
+            "stub AI verdict must be stamped inferential"
+        );
     }
 
     #[test]
@@ -1074,6 +1103,7 @@ name: "AI host backend"
                 step_results: vec![],
                 evidence: vec![],
                 duration_ms: 0,
+                provenance: None,
             })
             .collect();
         VerificationReport::from_results(spec_name.to_owned(), results)

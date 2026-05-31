@@ -118,6 +118,7 @@ impl Verifier for TestVerifier {
                     targets: binding.selector.targets.clone(),
                 }],
                 duration_ms,
+                provenance: None,
             });
         }
 
