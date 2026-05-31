@@ -178,6 +178,16 @@ fn build_section(
                 .collect();
             Ok(Section::OutOfScope { items, span })
         }
+        SectionKind::Questions => {
+            let items = lines
+                .iter()
+                .filter_map(|(_, l)| {
+                    let trimmed = l.trim().strip_prefix('-').map(str::trim);
+                    trimmed.filter(|s| !s.is_empty()).map(String::from)
+                })
+                .collect();
+            Ok(Section::Questions { items, span })
+        }
     }
 }
 
@@ -1557,6 +1567,74 @@ name: "鉴权"
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].key.id, "auth-must-not-leak");
         assert_eq!(scenarios_of(&doc)[0].rule.as_deref(), Some("auth-must-not-leak"));
+    }
+
+    fn questions_of(doc: &SpecDocument) -> Option<Vec<String>> {
+        doc.sections.iter().find_map(|s| match s {
+            Sec::Questions { items, .. } => Some(items.clone()),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn test_parse_questions_section() {
+        let input = r#"spec: task
+name: "x"
+---
+
+## Questions
+
+- 折扣能否叠加?
+- 退款按原价还是折后价?
+"#;
+        let doc = parse_spec_from_str(input).unwrap();
+        let q = questions_of(&doc).expect("Questions section present");
+        assert_eq!(q.len(), 2);
+        assert!(q[0].contains("折扣"));
+    }
+
+    #[test]
+    fn test_parse_questions_section_chinese() {
+        let input = r#"spec: task
+name: "x"
+---
+
+## 问题
+
+- VIP 等级怎么定义?
+"#;
+        let doc = parse_spec_from_str(input).unwrap();
+        let q = questions_of(&doc).expect("中文 Questions section present");
+        assert_eq!(q.len(), 1);
+    }
+
+    #[test]
+    fn test_spec_without_questions_unaffected() {
+        let doc = parse_spec_from_str(SAMPLE_SPEC).unwrap();
+        assert!(questions_of(&doc).is_none());
+    }
+
+    #[test]
+    fn test_questions_do_not_affect_verification() {
+        // Questions are not scenarios: all_scenarios excludes them.
+        let input = r#"spec: task
+name: "x"
+---
+
+## 完成条件
+
+场景: 唯一场景
+  测试: t
+  当 a
+  那么 b
+
+## Questions
+
+- 还没想清楚的问题
+"#;
+        let doc = parse_spec_from_str(input).unwrap();
+        let resolved = crate::spec_parser::resolve_spec(doc, &[]).unwrap();
+        assert_eq!(resolved.all_scenarios.len(), 1, "questions must not count as scenarios");
     }
 
     #[test]

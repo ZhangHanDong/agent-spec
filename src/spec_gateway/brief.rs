@@ -88,6 +88,7 @@ impl SpecBrief {
                 Section::OutOfScope { items, .. } => {
                     out_of_scope.clone_from(items);
                 }
+                Section::Questions { .. } => {}
             }
         }
 
@@ -150,6 +151,7 @@ impl SpecBrief {
                 Section::OutOfScope { items, .. } => {
                     brief.out_of_scope.clone_from(items);
                 }
+                Section::Questions { .. } => {}
                 Section::AcceptanceCriteria { .. } => {}
             }
         }
@@ -289,6 +291,7 @@ impl TaskContract {
                 Section::OutOfScope { items, .. } => {
                     contract.out_of_scope.clone_from(items);
                 }
+                Section::Questions { .. } => {}
             }
         }
 
@@ -350,6 +353,7 @@ impl TaskContract {
                 Section::OutOfScope { items, .. } => {
                     contract.out_of_scope.clone_from(items);
                 }
+                Section::Questions { .. } => {}
             }
         }
 

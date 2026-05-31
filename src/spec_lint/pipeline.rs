@@ -49,6 +49,8 @@ impl LintPipeline {
         p.add(Box::new(super::linters::BddRuleGroupingLinter));
         p.add(Box::new(super::linters::BddScenarioShapeLinter));
         p.add(Box::new(super::linters::BddImplementationDetailStepLinter));
+        // Discovery (Phase 4) — warning only, non-gating.
+        p.add(Box::new(super::linters::OpenQuestionLinter));
         p
     }
 

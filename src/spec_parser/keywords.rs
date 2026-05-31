@@ -73,6 +73,11 @@ pub fn match_section_header(line: &str) -> Option<SectionKind> {
         Some(SectionKind::AcceptanceCriteria)
     } else if lower.starts_with("排除范围") || lower.starts_with("out of scope") {
         Some(SectionKind::OutOfScope)
+    } else if lower.starts_with("问题")
+        || lower.starts_with("待澄清")
+        || lower.starts_with("questions")
+    {
+        Some(SectionKind::Questions)
     } else {
         None
     }
@@ -315,6 +320,7 @@ pub enum SectionKind {
     Boundaries,
     AcceptanceCriteria,
     OutOfScope,
+    Questions,
 }
 
 /// Extract quoted parameters from step text.

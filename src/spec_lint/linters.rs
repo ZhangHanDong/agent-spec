@@ -2258,6 +2258,53 @@ If this step genuinely must assert UI mechanics, leave it and (Phase 5) `<!-- li
     }
 }
 
+/// `open-question`: surfaces unresolved Discovery questions in a `## Questions`
+/// section (Phase 4). Warning only — never gates (strict gating is Phase 5).
+pub struct OpenQuestionLinter;
+
+/// A question is resolved iff it is checked off or marked resolved.
+fn question_is_resolved(item: &str) -> bool {
+    let t = item.trim();
+    t.starts_with("[x]")
+        || t.starts_with("[X]")
+        || t.starts_with("[已解决]")
+        || t.contains("RESOLVED")
+        || t.contains("已解决")
+}
+
+impl SpecLinter for OpenQuestionLinter {
+    fn name(&self) -> &str {
+        "open-question"
+    }
+
+    fn lint(&self, doc: &SpecDocument) -> Vec<LintDiagnostic> {
+        let mut diags = Vec::new();
+        for section in &doc.sections {
+            if let Section::Questions { items, span } = section {
+                for item in items {
+                    if !question_is_resolved(item) {
+                        diags.push(LintDiagnostic {
+                            rule: "open-question".into(),
+                            severity: Severity::Warning,
+                            message: format!(
+                                "unresolved Discovery question: {}",
+                                truncate_bdd(item, 60)
+                            ),
+                            span: *span,
+                            suggestion: Some(
+                                "Discovery questions should be resolved before implementation, because an open question is an unagreed assumption the agent will guess at. \
+Resolve it (in the Agent conversation) then mark the bullet `[x]` / `[已解决]` or add `RESOLVED:`, or split it out as a follow-up task. \
+Leaving it open is allowed — this is a non-gating signal (strict gating arrives in a later phase).".into(),
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+        diags
+    }
+}
+
 /// Truncate a string to `max` chars for diagnostic messages.
 fn truncate_bdd(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
@@ -3415,6 +3462,58 @@ name: "ui zh"
         let doc = parse_spec_from_str(zh).unwrap();
         let diags = BddImplementationDetailStepLinter.lint(&doc);
         assert!(diags.iter().any(|d| d.rule == "bdd-implementation-detail-step"));
+    }
+
+    #[test]
+    fn test_open_question_warns() {
+        let input = r#"spec: task
+name: "x"
+---
+
+## Questions
+
+- 折扣能否叠加?
+"#;
+        let doc = parse_spec_from_str(input).unwrap();
+        let diags = OpenQuestionLinter.lint(&doc);
+        assert!(diags.iter().any(|d| d.rule == "open-question"
+            && d.severity == Severity::Warning));
+    }
+
+    #[test]
+    fn test_resolved_question_not_warned() {
+        let input = r#"spec: task
+name: "x"
+---
+
+## Questions
+
+- [x] 折扣不叠加(已定)
+"#;
+        let doc = parse_spec_from_str(input).unwrap();
+        let diags = OpenQuestionLinter.lint(&doc);
+        assert!(diags.is_empty(), "resolved question must not warn");
+    }
+
+    #[test]
+    fn test_open_question_is_non_gating() {
+        let input = r#"spec: task
+name: "x"
+---
+
+## Questions
+
+- 未决问题
+"#;
+        let doc = parse_spec_from_str(input).unwrap();
+        let report = crate::spec_lint::LintPipeline::with_defaults().run(&doc);
+        let oq: Vec<_> = report
+            .diagnostics
+            .iter()
+            .filter(|d| d.rule == "open-question")
+            .collect();
+        assert!(!oq.is_empty(), "expected open-question diagnostic");
+        assert!(oq.iter().all(|d| d.severity != Severity::Error));
     }
 
     #[test]

@@ -433,6 +433,9 @@ fn cmd_parse(files: &[PathBuf], format: &str) -> Result<(), Box<dyn std::error::
                         crate::spec_core::Section::OutOfScope { items, .. } => {
                             println!("    - Out of Scope: {} items", items.len());
                         }
+                        crate::spec_core::Section::Questions { items, .. } => {
+                            println!("    - Questions: {} items", items.len());
+                        }
                     }
                 }
                 println!();

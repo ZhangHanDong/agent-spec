@@ -86,6 +86,12 @@ pub enum Section {
         items: Vec<String>,
         span: Span,
     },
+    /// Discovery questions (Phase 4): unresolved items to clarify before
+    /// implementation. Not scenarios; does not affect verification.
+    Questions {
+        items: Vec<String>,
+        span: Span,
+    },
 }
 
 /// A single constraint line.
