@@ -2,7 +2,7 @@
 name = "agent-spec"
 description = "AI-native BDD/Spec verification tool for contract-driven agent coding"
 edition = "2024"
-version = "0.2.7"
+version = "0.3.0"
 license = "MIT"
 repository = "https://github.com/ZhangHanDong/agent-spec"
 homepage = "https://github.com/ZhangHanDong/agent-spec"
