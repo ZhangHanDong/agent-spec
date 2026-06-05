@@ -589,7 +589,7 @@ name: "x"
             "lib.rs",
             "// migrated away from tokio::test\nfn old_helper() {}\nfn build() { let s = \"tokio::test\"; let _ = s; }\nfn helper() {}\n",
         );
-        let names = collect_test_function_names(&[dir.clone()]);
+        let names = collect_test_function_names(std::slice::from_ref(&dir));
         assert!(!names.contains("old_helper"), "comment must not mark fn");
         assert!(!names.contains("helper"), "string literal must not mark fn");
         let _ = std::fs::remove_dir_all(&dir);
@@ -599,7 +599,7 @@ name: "x"
     fn test_scanner_collects_single_line_test_fn() {
         // C5: `#[test] fn foo() {}` on one line must be collected.
         let dir = temp_code_dir("scan_single", "lib.rs", "#[test] fn foo() { assert!(true); }\n");
-        let names = collect_test_function_names(&[dir.clone()]);
+        let names = collect_test_function_names(std::slice::from_ref(&dir));
         assert!(names.contains("foo"), "single-line test fn must be found");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -612,7 +612,7 @@ name: "x"
             "lib.rs",
             "/*\n#[test]\nfn commented_out_test() {}\n*/\nfn real() {}\n",
         );
-        let names = collect_test_function_names(&[dir.clone()]);
+        let names = collect_test_function_names(std::slice::from_ref(&dir));
         assert!(
             !names.contains("commented_out_test"),
             "block-commented test must not be collected"

@@ -157,17 +157,12 @@ impl ScenarioMode {
 }
 
 /// Review mode for a scenario: whether it needs human review after passing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ReviewMode {
+    #[default]
     Auto,
     Human,
-}
-
-impl Default for ReviewMode {
-    fn default() -> Self {
-        Self::Auto
-    }
 }
 
 impl ReviewMode {
