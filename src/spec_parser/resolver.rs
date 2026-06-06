@@ -362,7 +362,10 @@ inherits: project
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("project"), "error should mention 'project': {err}");
+        assert!(
+            err.contains("project"),
+            "error should mention 'project': {err}"
+        );
 
         let _ = fs::remove_dir_all(root);
     }

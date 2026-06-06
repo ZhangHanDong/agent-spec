@@ -284,7 +284,9 @@ impl TaskContract {
                         }
                     }
                 }
-                Section::AcceptanceCriteria { scenarios, rules, .. } => {
+                Section::AcceptanceCriteria {
+                    scenarios, rules, ..
+                } => {
                     contract.completion_criteria = scenarios.clone();
                     contract.rules = rules.clone();
                 }
@@ -346,7 +348,9 @@ impl TaskContract {
                         }
                     }
                 }
-                Section::AcceptanceCriteria { scenarios, rules, .. } => {
+                Section::AcceptanceCriteria {
+                    scenarios, rules, ..
+                } => {
                     contract.completion_criteria = scenarios.clone();
                     contract.rules = rules.clone();
                 }

@@ -57,16 +57,28 @@ pub enum Dimension {
 /// Unknown codes fall back to `Consistency` (never panics).
 pub fn dimension_of(rule_code: &str) -> Dimension {
     match rule_code {
-        "coverage" | "decision-coverage" | "observable-decision-coverage"
-        | "output-mode-coverage" | "precedence-fallback-coverage"
-        | "flag-combination-coverage" | "error-path" | "bdd-rule-grouping" => Dimension::Coverage,
-        "vague-verb" | "unquantified" | "determinism" | "testability" | "implicit-dep"
-        | "bdd-scenario-shape" | "bdd-implementation-detail-step" | "bdd-rule-id"
+        "coverage"
+        | "decision-coverage"
+        | "observable-decision-coverage"
+        | "output-mode-coverage"
+        | "precedence-fallback-coverage"
+        | "flag-combination-coverage"
+        | "error-path"
+        | "bdd-rule-grouping" => Dimension::Coverage,
+        "vague-verb"
+        | "unquantified"
+        | "determinism"
+        | "testability"
+        | "implicit-dep"
+        | "bdd-scenario-shape"
+        | "bdd-implementation-detail-step"
+        | "bdd-rule-id"
         | "open-question" => Dimension::Clarity,
-        "boundary-entry-point" | "platform-decision-tag" | "cross-check-boundary"
-        | "external-io-error-strength" | "verification-metadata-suggestion" => {
-            Dimension::Boundary
-        }
+        "boundary-entry-point"
+        | "platform-decision-tag"
+        | "cross-check-boundary"
+        | "external-io-error-strength"
+        | "verification-metadata-suggestion" => Dimension::Boundary,
         "scenario-presence" | "universal-claim" => Dimension::Completeness,
         _ => Dimension::Consistency,
     }
@@ -131,6 +143,9 @@ mod tests {
 
     #[test]
     fn test_dimension_of_unknown_falls_back() {
-        assert_eq!(dimension_of("totally-unregistered-rule"), Dimension::Consistency);
+        assert_eq!(
+            dimension_of("totally-unregistered-rule"),
+            Dimension::Consistency
+        );
     }
 }

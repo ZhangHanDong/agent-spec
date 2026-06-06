@@ -493,7 +493,9 @@ impl SpecLinter for ScenarioPresenceLinter {
             .sections
             .iter()
             .filter_map(|section| match section {
-                Section::AcceptanceCriteria { scenarios, span, .. } => Some((scenarios, span)),
+                Section::AcceptanceCriteria {
+                    scenarios, span, ..
+                } => Some((scenarios, span)),
                 _ => None,
             })
             .collect();
@@ -573,7 +575,9 @@ impl SpecLinter for SycophancyLinter {
                 Section::Constraints { items, span } => {
                     (items.iter().map(|c| c.text.as_str()).collect(), *span)
                 }
-                Section::AcceptanceCriteria { scenarios, span, .. } => {
+                Section::AcceptanceCriteria {
+                    scenarios, span, ..
+                } => {
                     let texts: Vec<&str> = scenarios
                         .iter()
                         .flat_map(|s| s.steps.iter().map(|st| st.text.as_str()))
@@ -1201,7 +1205,10 @@ impl SpecLinter for ErrorPathLinter {
         }
 
         for section in &doc.sections {
-            if let Section::AcceptanceCriteria { scenarios, span, .. } = section {
+            if let Section::AcceptanceCriteria {
+                scenarios, span, ..
+            } = section
+            {
                 if scenarios.is_empty() {
                     continue;
                 }
@@ -1972,14 +1979,15 @@ impl SpecLinter for CircularDependencyLinter {
         for s in &scenarios {
             if !visited.contains(s.name.as_str()) {
                 let mut path = Vec::new();
-                if let Some(cycle) =
-                    dfs_find_cycle(s.name.as_str(), &adj, &mut visited, &mut on_stack, &mut path)
-                {
+                if let Some(cycle) = dfs_find_cycle(
+                    s.name.as_str(),
+                    &adj,
+                    &mut visited,
+                    &mut on_stack,
+                    &mut path,
+                ) {
                     let cycle_display = cycle.join(" -> ");
-                    let span = span_map
-                        .get(s.name.as_str())
-                        .copied()
-                        .unwrap_or_default();
+                    let span = span_map.get(s.name.as_str()).copied().unwrap_or_default();
                     diags.push(LintDiagnostic {
                         rule: "circular-dependency".into(),
                         severity: Severity::Error,
@@ -2050,7 +2058,10 @@ impl SpecLinter for BddRuleIdLinter {
     fn lint(&self, doc: &SpecDocument) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
         for section in &doc.sections {
-            if let Section::AcceptanceCriteria { malformed_rules, .. } = section {
+            if let Section::AcceptanceCriteria {
+                malformed_rules, ..
+            } = section
+            {
                 for m in malformed_rules {
                     diags.push(LintDiagnostic {
                         rule: "bdd-rule-id".into(),
@@ -2181,10 +2192,7 @@ To keep it as-is for now, leave `<!-- lint-ack: bdd-scenario-shape — <reason> 
                             ),
                         });
                     }
-                    if matches!(
-                        sc.steps[0].kind,
-                        StepKind::And | StepKind::But
-                    ) {
+                    if matches!(sc.steps[0].kind, StepKind::And | StepKind::But) {
                         diags.push(LintDiagnostic {
                             rule: "bdd-scenario-shape".into(),
                             severity: Severity::Warning,
@@ -2212,12 +2220,26 @@ If the leading And/But is deliberate, leave `<!-- lint-ack: bdd-scenario-shape �
 pub struct BddImplementationDetailStepLinter;
 
 const BDD_IMPL_DETAIL_EN: &[&str] = &[
-    "click", "type ", "visit", "press ", "data-testid", "css selector", ".class", "#id",
+    "click",
+    "type ",
+    "visit",
+    "press ",
+    "data-testid",
+    "css selector",
+    ".class",
+    "#id",
     "navigate to",
 ];
 
 const BDD_IMPL_DETAIL_ZH: &[&str] = &[
-    "点击", "输入", "访问", "填写", "选择", "打开页面", "查看页面", "拖拽",
+    "点击",
+    "输入",
+    "访问",
+    "填写",
+    "选择",
+    "打开页面",
+    "查看页面",
+    "拖拽",
 ];
 
 impl SpecLinter for BddImplementationDetailStepLinter {
@@ -3295,7 +3317,6 @@ Scenario: C
 
     // ---- BDD semantics v1 lints ----
 
-
     fn guidance_has_four_elements(s: &str) -> bool {
         // (1) why exists  (2) how to fix  (3) when exception ok  (4) lint-ack trace
         let l = s.to_lowercase();
@@ -3306,8 +3327,7 @@ Scenario: C
             || l.contains("cannot");
         let how =
             l.contains("fix") || l.contains("add") || l.contains("prefer") || l.contains("start");
-        let exception =
-            l.contains("if ") || l.contains("ignore") || l.contains("reconsider");
+        let exception = l.contains("if ") || l.contains("ignore") || l.contains("reconsider");
         let ack = l.contains("lint-ack");
         why && how && exception && ack
     }
@@ -3367,8 +3387,11 @@ name: "无分组"
 "#;
         let doc = parse_spec_from_str(input).unwrap();
         let diags = BddRuleGroupingLinter.lint(&doc);
-        assert!(diags.iter().any(|d| d.rule == "bdd-rule-grouping"
-            && d.severity == Severity::Info));
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.rule == "bdd-rule-grouping" && d.severity == Severity::Info)
+        );
     }
 
     #[test]
@@ -3404,8 +3427,11 @@ name: "缺步骤"
 "#;
         let doc = parse_spec_from_str(input).unwrap();
         let diags = BddScenarioShapeLinter.lint(&doc);
-        assert!(diags.iter().any(|d| d.rule == "bdd-scenario-shape"
-            && d.severity == Severity::Warning));
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.rule == "bdd-scenario-shape" && d.severity == Severity::Warning)
+        );
     }
 
     #[test]
@@ -3424,8 +3450,11 @@ name: "首步And"
 "#;
         let doc = parse_spec_from_str(input).unwrap();
         let diags = BddScenarioShapeLinter.lint(&doc);
-        assert!(diags.iter().any(|d| d.rule == "bdd-scenario-shape"
-            && d.message.contains("And/But")));
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.rule == "bdd-scenario-shape" && d.message.contains("And/But"))
+        );
     }
 
     #[test]
@@ -3461,7 +3490,11 @@ name: "ui zh"
 "#;
         let doc = parse_spec_from_str(zh).unwrap();
         let diags = BddImplementationDetailStepLinter.lint(&doc);
-        assert!(diags.iter().any(|d| d.rule == "bdd-implementation-detail-step"));
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.rule == "bdd-implementation-detail-step")
+        );
     }
 
     #[test]
@@ -3476,8 +3509,11 @@ name: "x"
 "#;
         let doc = parse_spec_from_str(input).unwrap();
         let diags = OpenQuestionLinter.lint(&doc);
-        assert!(diags.iter().any(|d| d.rule == "open-question"
-            && d.severity == Severity::Warning));
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.rule == "open-question" && d.severity == Severity::Warning)
+        );
     }
 
     #[test]

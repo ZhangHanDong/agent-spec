@@ -636,18 +636,15 @@ fn format_verification_compact(report: &VerificationReport) -> String {
     let mut parts: Vec<String> = Vec::new();
     for r in &report.results {
         let icon = match r.verdict {
-            Verdict::Pass => "\u{2713}",  // ✓
-            Verdict::Fail => "\u{2717}",  // ✗
-            Verdict::Skip => "\u{2298}",  // ⊘
+            Verdict::Pass => "\u{2713}", // ✓
+            Verdict::Fail => "\u{2717}", // ✗
+            Verdict::Skip => "\u{2298}", // ⊘
             Verdict::Uncertain => "?",
-            Verdict::PendingReview => "\u{2299}",  // ⊙
+            Verdict::PendingReview => "\u{2299}", // ⊙
         };
         parts.push(format!("{icon} {}", r.scenario_name));
     }
-    let summary = format!(
-        "{}/{} pass",
-        report.summary.passed, report.summary.total,
-    );
+    let summary = format!("{}/{} pass", report.summary.passed, report.summary.total,);
     format!("{}  | {}", parts.join("  "), summary)
 }
 
@@ -1085,7 +1082,10 @@ mod tests {
         assert!(output.contains('\u{2717}'), "should contain ✗ for fail");
         assert!(output.contains('\u{2298}'), "should contain ⊘ for skip");
         // Should contain pass count
-        assert!(output.contains("1/3 pass"), "should contain pass count summary");
+        assert!(
+            output.contains("1/3 pass"),
+            "should contain pass count summary"
+        );
         // Should be a single line
         let line_count = output.lines().count();
         assert!(

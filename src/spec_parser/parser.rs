@@ -1371,7 +1371,10 @@ name: "鉴权"
         assert_eq!(rules[0].key.id, "auth-must-not-leak");
         assert_eq!(rules[0].key.scope, RuleScope::Task("task-auth".into()));
         assert_eq!(rules[0].name, "鉴权失败不得泄漏内部错误");
-        assert_eq!(rules[0].scenario_names, vec!["失败返回稳定错误".to_string()]);
+        assert_eq!(
+            rules[0].scenario_names,
+            vec!["失败返回稳定错误".to_string()]
+        );
 
         let scenarios = scenarios_of(&doc);
         assert_eq!(scenarios[0].rule.as_deref(), Some("auth-must-not-leak"));
@@ -1573,7 +1576,11 @@ name: "鉴权"
         let doc = parse_spec_from_str_with_stem(input, "task-x").unwrap();
         let scenarios = scenarios_of(&doc);
         let a = scenarios.iter().find(|s| s.name == "A").unwrap();
-        assert_eq!(a.steps.len(), 2, "scenario A must keep exactly its own steps");
+        assert_eq!(
+            a.steps.len(),
+            2,
+            "scenario A must keep exactly its own steps"
+        );
         assert_eq!(a.rule.as_deref(), Some("rule-one"));
         let b = scenarios.iter().find(|s| s.name == "B").unwrap();
         assert_eq!(b.rule.as_deref(), Some("rule-two"));
@@ -1588,7 +1595,11 @@ name: "鉴权"
         let scenarios = scenarios_of(&doc);
         assert_eq!(scenarios.len(), 2, "both scenarios must be recognized");
         assert_eq!(scenarios[0].name, "A");
-        assert_eq!(scenarios[0].steps.len(), 3, "A's steps must not bleed into B");
+        assert_eq!(
+            scenarios[0].steps.len(),
+            3,
+            "A's steps must not bleed into B"
+        );
         assert_eq!(scenarios[1].steps.len(), 3);
     }
 
@@ -1600,7 +1611,10 @@ name: "鉴权"
         let rules = rules_of(&doc);
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].key.id, "auth-must-not-leak");
-        assert_eq!(scenarios_of(&doc)[0].rule.as_deref(), Some("auth-must-not-leak"));
+        assert_eq!(
+            scenarios_of(&doc)[0].rule.as_deref(),
+            Some("auth-must-not-leak")
+        );
     }
 
     #[test]
@@ -1650,7 +1664,10 @@ name: "x"
         let doc = parse_spec_from_str(SAMPLE_SPEC).unwrap();
         for sc in scenarios_of(&doc) {
             // No panic; derivation is consistent with test_selector presence.
-            assert_eq!(Probe::from_scenario(&sc).is_some(), sc.test_selector.is_some());
+            assert_eq!(
+                Probe::from_scenario(&sc).is_some(),
+                sc.test_selector.is_some()
+            );
         }
     }
 
@@ -1751,7 +1768,11 @@ name: "x"
 "#;
         let doc = parse_spec_from_str(input).unwrap();
         let resolved = crate::spec_parser::resolve_spec(doc, &[]).unwrap();
-        assert_eq!(resolved.all_scenarios.len(), 1, "questions must not count as scenarios");
+        assert_eq!(
+            resolved.all_scenarios.len(),
+            1,
+            "questions must not count as scenarios"
+        );
     }
 
     #[test]

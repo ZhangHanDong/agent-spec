@@ -47,9 +47,9 @@ pub fn audit_specs(docs: &[SpecDocument]) -> AuditReport {
                 } => {
                     r.scenario_count += scenarios.len();
                     r.rule_count += rules.len();
-                    r.unproven_rules += rules.iter().filter(|x| x.scenario_names.is_empty()).count();
-                    r.ungrouped_scenarios +=
-                        scenarios.iter().filter(|s| s.rule.is_none()).count();
+                    r.unproven_rules +=
+                        rules.iter().filter(|x| x.scenario_names.is_empty()).count();
+                    r.ungrouped_scenarios += scenarios.iter().filter(|s| s.rule.is_none()).count();
                     r.malformed_rules += malformed_rules.len();
                 }
                 Section::Questions { items, .. } => {
@@ -127,7 +127,9 @@ mod tests {
 
     #[test]
     fn test_audit_json_serializes() {
-        let a = doc("spec: task\nname: \"a\"\n---\n\n## 完成条件\n\n场景: s\n  测试: t\n  当 a\n  那么 b\n");
+        let a = doc(
+            "spec: task\nname: \"a\"\n---\n\n## 完成条件\n\n场景: s\n  测试: t\n  当 a\n  那么 b\n",
+        );
         let json = serde_json::to_string(&audit_specs(&[a])).unwrap();
         assert!(json.contains("spec_count"));
         assert!(json.contains("unproven_rules"));

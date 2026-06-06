@@ -179,21 +179,13 @@ fn parse_first_number(s: &str) -> Option<f64> {
 fn check_line_ratio(ctx: &VerificationContext, max_ratio: f64) -> ScenarioResult {
     let (added, deleted) = compute_diff_stats(&ctx.change_paths);
     let actual_ratio = if deleted == 0 {
-        if added == 0 {
-            0.0
-        } else {
-            f64::INFINITY
-        }
+        if added == 0 { 0.0 } else { f64::INFINITY }
     } else {
         added as f64 / deleted as f64
     };
 
     let passed = actual_ratio <= max_ratio;
-    let verdict = if passed {
-        Verdict::Pass
-    } else {
-        Verdict::Fail
-    };
+    let verdict = if passed { Verdict::Pass } else { Verdict::Fail };
 
     ScenarioResult {
         scenario_name: "[complexity] code quality gate".to_string(),
@@ -288,8 +280,8 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::spec_core::{
-        Constraint, ConstraintCategory, ResolvedSpec, Section, Span, SpecDocument,
-        SpecLevel, SpecMeta, Verdict,
+        Constraint, ConstraintCategory, ResolvedSpec, Section, Span, SpecDocument, SpecLevel,
+        SpecMeta, Verdict,
     };
     use crate::spec_verify::{AiMode, VerificationContext, Verifier};
 
@@ -384,10 +376,7 @@ mod tests {
         // With nonexistent files, git diff returns (0,0), ratio is 0.0, which passes.
         // The important thing is the verifier runs without error and produces a result.
         assert!(!results.is_empty());
-        assert_eq!(
-            results[0].scenario_name,
-            "[complexity] code quality gate"
-        );
+        assert_eq!(results[0].scenario_name, "[complexity] code quality gate");
     }
 
     #[test]

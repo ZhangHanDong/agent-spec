@@ -95,7 +95,10 @@ mod tests {
             IntegrationTarget::Claude,
         ] {
             let out = render_target(t, &body);
-            assert!(out.contains("lifecycle"), "{t:?} must carry the shared body");
+            assert!(
+                out.contains("lifecycle"),
+                "{t:?} must carry the shared body"
+            );
             assert!(out.contains("guard"), "{t:?} must carry the shared body");
         }
     }
@@ -111,14 +114,20 @@ mod tests {
     #[test]
     fn test_claude_target_has_frontmatter() {
         let out = render_target(IntegrationTarget::Claude, &integration_body());
-        assert!(out.starts_with("---"), "claude target must start with frontmatter");
+        assert!(
+            out.starts_with("---"),
+            "claude target must start with frontmatter"
+        );
         assert!(out.contains("name:"));
     }
 
     #[test]
     fn test_agents_target_is_plain_markdown() {
         let out = render_target(IntegrationTarget::Agents, &integration_body());
-        assert!(!out.starts_with("---"), "agents target must not be frontmatter");
+        assert!(
+            !out.starts_with("---"),
+            "agents target must not be frontmatter"
+        );
         assert!(out.contains("# "));
     }
 
@@ -131,7 +140,10 @@ mod tests {
     #[test]
     fn test_check_passes_when_content_matches() {
         let rendered = render_named("agents").unwrap();
-        assert!(!has_drifted(&rendered, &rendered), "identical content must not drift");
+        assert!(
+            !has_drifted(&rendered, &rendered),
+            "identical content must not drift"
+        );
     }
 
     #[test]

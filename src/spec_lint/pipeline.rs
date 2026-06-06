@@ -339,7 +339,10 @@ name: "x"
 
     #[test]
     fn test_lint_ack_moves_warning_to_acknowledged() {
-        let input = with_ack(OPEN_Q_SPEC, "<!-- lint-ack: open-question — 原型阶段不需要 -->");
+        let input = with_ack(
+            OPEN_Q_SPEC,
+            "<!-- lint-ack: open-question — 原型阶段不需要 -->",
+        );
         let doc = parse_spec_from_str(&input).unwrap();
         let report = LintPipeline::with_defaults().run(&doc);
         assert!(
@@ -347,7 +350,10 @@ name: "x"
             "acked open-question must leave main diagnostics"
         );
         assert!(
-            report.acknowledged.iter().any(|d| d.rule == "open-question"),
+            report
+                .acknowledged
+                .iter()
+                .any(|d| d.rule == "open-question"),
             "acked open-question must appear in acknowledged"
         );
     }
@@ -359,7 +365,10 @@ name: "x"
         let doc = parse_spec_from_str(&input).unwrap();
         let report = LintPipeline::with_defaults().run(&doc);
         assert!(
-            report.diagnostics.iter().any(|d| d.rule == "bdd-rule-grouping"),
+            report
+                .diagnostics
+                .iter()
+                .any(|d| d.rule == "bdd-rule-grouping"),
             "non-acked rule must remain"
         );
     }

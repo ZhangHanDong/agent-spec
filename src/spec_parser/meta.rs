@@ -184,12 +184,8 @@ mod tests {
 
     #[test]
     fn test_parse_task_capability_field() {
-        let meta = parse_meta(&[
-            "spec: task",
-            r#"name: "t""#,
-            "capability: ecosystem-import",
-        ])
-        .unwrap();
+        let meta =
+            parse_meta(&["spec: task", r#"name: "t""#, "capability: ecosystem-import"]).unwrap();
         assert_eq!(meta.capability, Some("ecosystem-import".to_string()));
     }
 }

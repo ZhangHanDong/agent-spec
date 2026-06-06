@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use crate::spec_core::{EvidenceProvenance, Evidence, ResolvedSpec, Verdict, VerificationReport};
+use crate::spec_core::{Evidence, EvidenceProvenance, ResolvedSpec, Verdict, VerificationReport};
 
 /// Whether a scenario's `Test:` selector resolves to a real test function.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -323,10 +323,8 @@ fn provenance_of(result: &crate::spec_core::ScenarioResult) -> Option<EvidencePr
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::spec_core::{ResolvedSpec, ScenarioResult, StepVerdict, VerificationReport};
     use crate::spec_parser::parse_spec_from_str;
-    use crate::spec_core::{
-        ResolvedSpec, ScenarioResult, StepVerdict, VerificationReport,
-    };
 
     fn resolved_of(input: &str) -> ResolvedSpec {
         let doc = parse_spec_from_str(input).unwrap();
@@ -360,15 +358,15 @@ name: "x"
         let index = idx(&["test_first_refund", "test_dup_refund"]);
         let report = VerificationReport::from_results(
             "x".into(),
-            vec![
-                pass_result("首次退款"),
-                pass_result("重复退款"),
-            ],
+            vec![pass_result("首次退款"), pass_result("重复退款")],
         );
         let m = build_coverage_matrix(&resolved, Some(&report), &index);
         assert_eq!(m.rows.len(), 2);
         assert_eq!(m.rows[0].rule.as_deref(), Some("refund-idempotent"));
-        assert_eq!(m.rows[0].test_selector.as_deref(), Some("test_first_refund"));
+        assert_eq!(
+            m.rows[0].test_selector.as_deref(),
+            Some("test_first_refund")
+        );
         assert_eq!(m.rows[0].test_found, TestFound::Found);
         assert_eq!(m.rows[0].verdict, Some(Verdict::Pass));
     }
@@ -430,10 +428,7 @@ name: "x"
   那么 b
 "#;
         let resolved = resolved_of(input);
-        let report = VerificationReport::from_results(
-            "x".into(),
-            vec![skip_result("无绑定")],
-        );
+        let report = VerificationReport::from_results("x".into(), vec![skip_result("无绑定")]);
         let m = build_coverage_matrix(&resolved, Some(&report), &HashSet::new());
         assert_eq!(m.rows[0].test_selector, None);
         assert_eq!(m.rows[0].test_found, TestFound::None);
@@ -578,7 +573,10 @@ name: "x"
             .enumerate()
             .filter(|(i, w)| w == b"|" && (*i == 0 || data_line.as_bytes()[i - 1] != b'\\'))
             .count();
-        assert_eq!(unescaped, 7, "row must keep 6 cells (7 delimiters): {data_line}");
+        assert_eq!(
+            unescaped, 7,
+            "row must keep 6 cells (7 delimiters): {data_line}"
+        );
     }
 
     #[test]
@@ -598,7 +596,11 @@ name: "x"
     #[test]
     fn test_scanner_collects_single_line_test_fn() {
         // C5: `#[test] fn foo() {}` on one line must be collected.
-        let dir = temp_code_dir("scan_single", "lib.rs", "#[test] fn foo() { assert!(true); }\n");
+        let dir = temp_code_dir(
+            "scan_single",
+            "lib.rs",
+            "#[test] fn foo() { assert!(true); }\n",
+        );
         let names = collect_test_function_names(std::slice::from_ref(&dir));
         assert!(names.contains("foo"), "single-line test fn must be found");
         let _ = std::fs::remove_dir_all(&dir);
@@ -641,7 +643,8 @@ name: "x"
             vec![
                 pass_result("普通"),
                 ScenarioResult {
-                    scenario_name: "[boundaries] explicit change set respects declared paths".into(),
+                    scenario_name: "[boundaries] explicit change set respects declared paths"
+                        .into(),
                     verdict: Verdict::Fail,
                     step_results: vec![],
                     evidence: vec![],
@@ -655,7 +658,10 @@ name: "x"
             .rows
             .iter()
             .find(|r| r.scenario.starts_with("[boundaries]"));
-        assert!(boundary.is_some(), "boundary synthetic result must appear as a row");
+        assert!(
+            boundary.is_some(),
+            "boundary synthetic result must appear as a row"
+        );
         assert_eq!(boundary.unwrap().verdict, Some(Verdict::Fail));
     }
 }

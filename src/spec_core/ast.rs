@@ -265,10 +265,7 @@ impl Scenario {
     /// Returns `true` if this scenario is marked as critical — either via a
     /// `critical` tag or a `(critical)` / `（critical）` name suffix (case-insensitive).
     pub fn is_critical(&self) -> bool {
-        let has_tag = self
-            .tags
-            .iter()
-            .any(|t| t.eq_ignore_ascii_case("critical"));
+        let has_tag = self.tags.iter().any(|t| t.eq_ignore_ascii_case("critical"));
         if has_tag {
             return true;
         }
@@ -347,7 +344,10 @@ pub enum Probe {
         threshold: String,
     },
     /// An external probe invoked via a runner with args (Phase 7).
-    External { runner: String, args: Vec<String> },
+    External {
+        runner: String,
+        args: Vec<String>,
+    },
     /// An inferential (AI) probe (Phase 7).
     Inferential,
 }

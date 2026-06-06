@@ -211,7 +211,10 @@ mod tests {
             provenance: None,
         };
         let json = serde_json::to_string(&none).unwrap();
-        assert!(!json.contains("provenance"), "None must skip the key: {json}");
+        assert!(
+            !json.contains("provenance"),
+            "None must skip the key: {json}"
+        );
 
         // When set, it serializes lowercased.
         let some = ScenarioResult {
@@ -238,7 +241,10 @@ mod tests {
             span: Span::line(1),
         };
         let json = serde_json::to_string(&rule).unwrap();
-        assert!(!json.contains("\"events\""), "empty events must skip key: {json}");
+        assert!(
+            !json.contains("\"events\""),
+            "empty events must skip key: {json}"
+        );
     }
 
     #[test]

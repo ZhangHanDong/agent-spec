@@ -671,11 +671,24 @@ fn cmd_audit(spec_dir: &Path, format: &str) -> Result<(), Box<dyn std::error::Er
     }
     let report = crate::spec_report::audit_specs(&docs);
     if format == "json" {
-        println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).unwrap_or_default()
+        );
     } else {
-        println!("agent-spec audit ({} specs in {})", report.spec_count, spec_dir.display());
-        println!("  rules: {} ({} unproven)", report.rule_count, report.unproven_rules);
-        println!("  scenarios: {} ({} ungrouped)", report.scenario_count, report.ungrouped_scenarios);
+        println!(
+            "agent-spec audit ({} specs in {})",
+            report.spec_count,
+            spec_dir.display()
+        );
+        println!(
+            "  rules: {} ({} unproven)",
+            report.rule_count, report.unproven_rules
+        );
+        println!(
+            "  scenarios: {} ({} ungrouped)",
+            report.scenario_count, report.ungrouped_scenarios
+        );
         println!("  open questions: {}", report.open_questions);
         println!("  malformed rules: {}", report.malformed_rules);
     }
@@ -827,7 +840,9 @@ fn promote_gate_ok(
     report: &crate::spec_core::VerificationReport,
 ) -> Result<(), String> {
     if scenario_names.is_empty() {
-        return Err("rule has no examples to prove it (an unproven rule cannot be promoted)".into());
+        return Err(
+            "rule has no examples to prove it (an unproven rule cannot be promoted)".into(),
+        );
     }
     if !examples_all_pass(scenario_names, report) {
         return Err("not all examples pass (need all `pass`)".into());
@@ -935,9 +950,10 @@ fn cmd_promote(
         .sections
         .iter()
         .find_map(|s| match s {
-            crate::spec_core::Section::AcceptanceCriteria { rules, .. } => {
-                rules.iter().find(|r| r.key.id == rule_id).map(|r| r.name.clone())
-            }
+            crate::spec_core::Section::AcceptanceCriteria { rules, .. } => rules
+                .iter()
+                .find(|r| r.key.id == rule_id)
+                .map(|r| r.name.clone()),
             _ => None,
         })
         .unwrap_or_default();
@@ -1070,19 +1086,18 @@ fn cmd_lifecycle(
     let passing = gw.is_passing_with_review_mode(&verify_report, review_mode);
 
     // Collect optimization candidates: optimize-mode scenarios that passed
-    let optimization_candidates: Vec<String> = gw
-        .resolved()
-        .all_scenarios
-        .iter()
-        .filter(|s| s.mode == crate::spec_core::ScenarioMode::Optimize)
-        .filter(|s| {
-            verify_report
-                .results
-                .iter()
-                .any(|r| r.scenario_name == s.name && r.verdict == crate::spec_core::Verdict::Pass)
-        })
-        .map(|s| s.name.clone())
-        .collect();
+    let optimization_candidates: Vec<String> =
+        gw.resolved()
+            .all_scenarios
+            .iter()
+            .filter(|s| s.mode == crate::spec_core::ScenarioMode::Optimize)
+            .filter(|s| {
+                verify_report.results.iter().any(|r| {
+                    r.scenario_name == s.name && r.verdict == crate::spec_core::Verdict::Pass
+                })
+            })
+            .map(|s| s.name.clone())
+            .collect();
 
     // Stage 2b: If caller mode, emit pending AI requests for skipped scenarios
     let ai_pending = if ai_mode == crate::spec_verify::AiMode::Caller {
@@ -1146,8 +1161,7 @@ fn cmd_lifecycle(
             json_out["layers"] = serde_json::json!(layer_list);
         }
         if !optimization_candidates.is_empty() {
-            json_out["optimization_candidates"] =
-                serde_json::json!(optimization_candidates);
+            json_out["optimization_candidates"] = serde_json::json!(optimization_candidates);
         }
         println!("{}", serde_json::to_string_pretty(&json_out)?);
     } else {
@@ -1503,7 +1517,11 @@ fn warn_duplicate_spec_extensions(spec_files: &[PathBuf]) {
                 stem,
                 paths
                     .iter()
-                    .map(|p| p.file_name().unwrap_or_default().to_string_lossy().to_string())
+                    .map(|p| p
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string())
                     .collect::<Vec<_>>()
                     .join(", ")
             );
@@ -2022,9 +2040,7 @@ fn merge_checkpoint_results(
                             result.evidence.push(spec_core::Evidence::PatternMatch {
                                 pattern: "checkpoint:incremental".into(),
                                 matched: true,
-                                locations: vec![
-                                    "verdict carried forward from checkpoint".into(),
-                                ],
+                                locations: vec!["verdict carried forward from checkpoint".into()],
                             });
                             result.duration_ms = 0;
                         }
@@ -2877,12 +2893,8 @@ fn cmd_plan(
     let contract = gw.plan();
     let scan_depth = crate::spec_gateway::plan::ScanDepth::parse(depth);
 
-    let ctx = crate::spec_gateway::plan::build_plan_context(
-        &contract,
-        gw.resolved(),
-        code,
-        scan_depth,
-    );
+    let ctx =
+        crate::spec_gateway::plan::build_plan_context(&contract, gw.resolved(), code, scan_depth);
 
     // Print warnings to stderr
     for warning in &ctx.warnings {
@@ -3170,19 +3182,22 @@ mod tests {
 
     use super::{
         GitChangeScope, ResumeMode, RunLogEntry, build_stamp_trailers, checkpoint_path,
-        cmd_init_at, generate_rewrite_parity_template_both,
-        generate_rewrite_parity_template_en, generate_rewrite_parity_template_zh,
-        generate_template_both, generate_template_en, generate_template_zh, is_spec_file,
-        load_checkpoint, merge_checkpoint_results, parse_ai_mode, render_brief_output,
-        render_contract_output, resolve_command_change_paths, resolve_guard_change_paths,
-        save_checkpoint, vcs, warn_duplicate_spec_extensions,
+        cmd_init_at, generate_rewrite_parity_template_both, generate_rewrite_parity_template_en,
+        generate_rewrite_parity_template_zh, generate_template_both, generate_template_en,
+        generate_template_zh, is_spec_file, load_checkpoint, merge_checkpoint_results,
+        parse_ai_mode, render_brief_output, render_contract_output, resolve_command_change_paths,
+        resolve_guard_change_paths, save_checkpoint, vcs, warn_duplicate_spec_extensions,
     };
-    use super::{ScenarioAiDecision, assemble_explain_markdown, build_matrix_for, merge_ai_decisions};
+    use super::{
+        ScenarioAiDecision, assemble_explain_markdown, build_matrix_for, merge_ai_decisions,
+    };
     use super::{examples_all_pass, rule_scenarios, upsert_capability_rule};
 
     // ---- Phase 3: promote ----
 
-    fn report_with(verdicts: &[(&str, crate::spec_core::Verdict)]) -> crate::spec_core::VerificationReport {
+    fn report_with(
+        verdicts: &[(&str, crate::spec_core::Verdict)],
+    ) -> crate::spec_core::VerificationReport {
         let results = verdicts
             .iter()
             .map(|(name, v)| crate::spec_core::ScenarioResult {
@@ -3220,7 +3235,10 @@ name: "退款"
     fn test_promote_refuses_rule_with_no_examples() {
         // C1/C6/C9: a rule with zero examples must NOT pass the gate (vacuous).
         let report = report_with(&[]);
-        assert!(promote_gate_ok(&[], &report).is_err(), "empty examples must fail the gate");
+        assert!(
+            promote_gate_ok(&[], &report).is_err(),
+            "empty examples must fail the gate"
+        );
         let ok = report_with(&[("a", crate::spec_core::Verdict::Pass)]);
         assert!(promote_gate_ok(&["a".to_string()], &ok).is_ok());
     }
@@ -3230,13 +3248,21 @@ name: "退款"
         // C2/C8: the promoted rule, re-parsed, must not carry the HTML comment in its name.
         let content = upsert_capability_rule(None, "billing", "r-bare", "r-bare", "task-x");
         let doc = crate::spec_parser::parse_spec_from_str(&content).unwrap();
-        let rule = doc.sections.iter().find_map(|s| match s {
-            crate::spec_core::Section::AcceptanceCriteria { rules, .. } => {
-                rules.iter().find(|r| r.key.id == "r-bare").cloned()
-            }
-            _ => None,
-        }).expect("r-bare present");
-        assert!(!rule.name.contains("<!--"), "rule name must not contain the provenance comment: {}", rule.name);
+        let rule = doc
+            .sections
+            .iter()
+            .find_map(|s| match s {
+                crate::spec_core::Section::AcceptanceCriteria { rules, .. } => {
+                    rules.iter().find(|r| r.key.id == "r-bare").cloned()
+                }
+                _ => None,
+            })
+            .expect("r-bare present");
+        assert!(
+            !rule.name.contains("<!--"),
+            "rule name must not contain the provenance comment: {}",
+            rule.name
+        );
         assert_eq!(rule.name, "r-bare");
     }
 
@@ -3267,10 +3293,15 @@ name: "退款"
         let hand = "spec: capability\nname: \"billing\"\n---\n\n## 意图\n\n手写的能力文件,没有完成条件段。\n";
         let updated = upsert_capability_rule(Some(hand), "billing", "r-ok", "退款幂等", "task-x");
         let doc = crate::spec_parser::parse_spec_from_str(&updated).unwrap();
-        let has_rule = doc.sections.iter().any(|s| matches!(s,
+        let has_rule = doc.sections.iter().any(|s| {
+            matches!(s,
             crate::spec_core::Section::AcceptanceCriteria { rules, .. }
-                if rules.iter().any(|r| r.key.id == "r-ok")));
-        assert!(has_rule, "promoted rule must parse as a rule (under Completion Criteria)");
+                if rules.iter().any(|r| r.key.id == "r-ok"))
+        });
+        assert!(
+            has_rule,
+            "promoted rule must parse as a rule (under Completion Criteria)"
+        );
     }
 
     #[test]
@@ -3288,7 +3319,10 @@ name: "退款"
             ("首次退款", crate::spec_core::Verdict::Pass),
             ("重复退款", crate::spec_core::Verdict::Fail),
         ]);
-        assert!(!examples_all_pass(&names, &report), "a failing example must block promote");
+        assert!(
+            !examples_all_pass(&names, &report),
+            "a failing example must block promote"
+        );
     }
 
     #[test]
@@ -3308,13 +3342,17 @@ name: "退款"
             rule.key.scope,
             crate::spec_core::RuleScope::Capability("billing".into())
         );
-        assert!(content.contains("promoted from task-refund"), "must record promotion provenance");
+        assert!(
+            content.contains("promoted from task-refund"),
+            "must record promotion provenance"
+        );
     }
 
     #[test]
     fn test_promote_is_idempotent_for_same_rule() {
         let first = upsert_capability_rule(None, "billing", "r-ok", "退款幂等", "task-refund");
-        let second = upsert_capability_rule(Some(&first), "billing", "r-ok", "退款幂等", "task-refund");
+        let second =
+            upsert_capability_rule(Some(&first), "billing", "r-ok", "退款幂等", "task-refund");
         assert_eq!(first, second, "re-promoting the same rule must be a no-op");
         // r-ok appears exactly once.
         assert_eq!(second.matches("Rule: r-ok").count(), 1);
@@ -3362,7 +3400,10 @@ name: "退款"
         )
         .unwrap();
         assert_eq!(matrix.rows.len(), 1);
-        assert_eq!(matrix.rows[0].verdict, Some(crate::spec_core::Verdict::Skip));
+        assert_eq!(
+            matrix.rows[0].verdict,
+            Some(crate::spec_core::Verdict::Skip)
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -3457,7 +3498,7 @@ name: "退款"
     #[test]
     fn test_provenance_resolve_ai_is_inferential() {
         use crate::spec_core::{
-            AiDecision, EvidenceProvenance, Evidence, ScenarioResult, StepVerdict, Verdict,
+            AiDecision, Evidence, EvidenceProvenance, ScenarioResult, StepVerdict, Verdict,
         };
         let results = vec![ScenarioResult {
             scenario_name: "未覆盖场景".into(),
@@ -4053,9 +4094,10 @@ Scenario: verification metadata stays visible
             repo_root().join("specs/roadmap/task-phase2-run-history-and-vcs-context.spec.md"),
         )
         .unwrap();
-        let phase3 =
-            fs::read_to_string(repo_root().join("specs/roadmap/task-phase3-spec-governance.spec.md"))
-                .unwrap();
+        let phase3 = fs::read_to_string(
+            repo_root().join("specs/roadmap/task-phase3-spec-governance.spec.md"),
+        )
+        .unwrap();
         let phase4 = fs::read_to_string(
             repo_root().join("specs/roadmap/task-phase4-ai-verification-expansion.spec.md"),
         )
@@ -5243,7 +5285,11 @@ Scenario: pass
 
         let estimates: Vec<f64> = nodes
             .iter()
-            .map(|n| n.estimate.as_deref().map_or(0.0, super::parse_estimate_days))
+            .map(|n| {
+                n.estimate
+                    .as_deref()
+                    .map_or(0.0, super::parse_estimate_days)
+            })
             .collect();
         let critical = super::compute_critical_path(nodes.len(), &edges, &estimates);
         let dot = super::generate_dot(&nodes, &edges, &critical);
@@ -5282,7 +5328,10 @@ Scenario: pass
         }];
 
         let dot = super::generate_dot(&nodes, &[], &[]);
-        assert!(dot.contains("2d"), "DOT node label should contain estimate '2d'");
+        assert!(
+            dot.contains("2d"),
+            "DOT node label should contain estimate '2d'"
+        );
 
         let _ = fs::remove_dir_all(dir);
     }
@@ -5389,13 +5438,20 @@ Scenario: pass
 
         let estimates: Vec<f64> = nodes
             .iter()
-            .map(|n| n.estimate.as_deref().map_or(0.0, super::parse_estimate_days))
+            .map(|n| {
+                n.estimate
+                    .as_deref()
+                    .map_or(0.0, super::parse_estimate_days)
+            })
             .collect();
         let critical = super::compute_critical_path(nodes.len(), &edges, &estimates);
         let dot = super::generate_dot(&nodes, &edges, &critical);
 
         // Critical path A -> B -> C should be marked red
-        assert!(dot.contains("color=red"), "Critical path edges should be colored red");
+        assert!(
+            dot.contains("color=red"),
+            "Critical path edges should be colored red"
+        );
 
         let _ = fs::remove_dir_all(dir);
     }

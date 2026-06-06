@@ -388,10 +388,16 @@ mod tests {
 
     #[test]
     fn test_scenario_header_accepts_example_aliases() {
-        assert_eq!(match_scenario_header("Example: Full refund"), Some("Full refund"));
+        assert_eq!(
+            match_scenario_header("Example: Full refund"),
+            Some("Full refund")
+        );
         assert_eq!(match_scenario_header("示例: 余额不足"), Some("余额不足"));
         assert_eq!(match_scenario_header("例子: 余额充足"), Some("余额充足"));
-        assert_eq!(match_scenario_header("### Example: Happy path"), Some("Happy path"));
+        assert_eq!(
+            match_scenario_header("### Example: Happy path"),
+            Some("Happy path")
+        );
     }
 
     #[test]
