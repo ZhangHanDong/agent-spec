@@ -111,6 +111,7 @@ fn check_must_not(constraint: &Constraint, sources: &[(String, String)]) -> Opti
         }],
         evidence,
         duration_ms: 0,
+        provenance: None,
     })
 }
 

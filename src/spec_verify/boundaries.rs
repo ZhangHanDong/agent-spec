@@ -102,6 +102,7 @@ impl Verifier for BoundariesVerifier {
             step_results,
             evidence,
             duration_ms: 0,
+            provenance: None,
         }])
     }
 }
@@ -417,8 +418,10 @@ name: "边界"
                     tags: vec![],
                     depends: vec![],
                     estimate: None,
+                    capability: None,
                 },
                 sections: vec![],
+                lint_acks: vec![],
                 source_path: PathBuf::new(),
             },
             inherited_constraints: Vec::new(),

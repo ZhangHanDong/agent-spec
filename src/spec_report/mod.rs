@@ -1,6 +1,21 @@
 use crate::spec_core::{LintReport, Severity, Verdict, VerificationReport};
 use serde::Serialize;
 
+pub mod coverage;
+pub use coverage::{CoverageMatrix, build_coverage_matrix, collect_test_function_names};
+
+pub mod integrations;
+pub use integrations::{has_drifted, render_named};
+
+pub mod structural;
+pub use structural::structural_violations;
+
+pub mod audit;
+pub use audit::audit_specs;
+
+pub mod discover;
+pub use discover::draft_spec_from_tests;
+
 /// Output format.
 pub enum OutputFormat {
     Text,
@@ -621,18 +636,15 @@ fn format_verification_compact(report: &VerificationReport) -> String {
     let mut parts: Vec<String> = Vec::new();
     for r in &report.results {
         let icon = match r.verdict {
-            Verdict::Pass => "\u{2713}",  // ✓
-            Verdict::Fail => "\u{2717}",  // ✗
-            Verdict::Skip => "\u{2298}",  // ⊘
+            Verdict::Pass => "\u{2713}", // ✓
+            Verdict::Fail => "\u{2717}", // ✗
+            Verdict::Skip => "\u{2298}", // ⊘
             Verdict::Uncertain => "?",
-            Verdict::PendingReview => "\u{2299}",  // ⊙
+            Verdict::PendingReview => "\u{2299}", // ⊙
         };
         parts.push(format!("{icon} {}", r.scenario_name));
     }
-    let summary = format!(
-        "{}/{} pass",
-        report.summary.passed, report.summary.total,
-    );
+    let summary = format!("{}/{} pass", report.summary.passed, report.summary.total,);
     format!("{}  | {}", parts.join("  "), summary)
 }
 
@@ -754,6 +766,7 @@ mod tests {
                 }],
                 evidence: vec![],
                 duration_ms: 10,
+                provenance: None,
             }],
             summary: VerificationSummary {
                 total: 1,
@@ -787,6 +800,7 @@ mod tests {
                     reasoning: "ai verifier stub enabled".into(),
                 }],
                 duration_ms: 0,
+                provenance: None,
             }],
             summary: VerificationSummary {
                 total: 1,
@@ -822,6 +836,7 @@ mod tests {
                     targets: Some("commands/update".into()),
                 }],
                 duration_ms: 5,
+                provenance: None,
             }],
             summary: VerificationSummary {
                 total: 1,
@@ -868,6 +883,7 @@ mod tests {
                     targets: Some("spec_gateway/brief".into()),
                 }],
                 duration_ms: 5,
+                provenance: None,
             }],
             summary: VerificationSummary {
                 total: 1,
@@ -951,6 +967,7 @@ mod tests {
                     step_results: vec![],
                     evidence: vec![],
                     duration_ms: 10,
+                    provenance: None,
                 },
                 ScenarioResult {
                     scenario_name: "scenario B".into(),
@@ -958,6 +975,7 @@ mod tests {
                     step_results: vec![],
                     evidence: vec![],
                     duration_ms: 20,
+                    provenance: None,
                 },
             ],
             summary: VerificationSummary {
@@ -981,6 +999,7 @@ mod tests {
                     step_results: vec![],
                     evidence: vec![],
                     duration_ms: 10,
+                    provenance: None,
                 },
                 ScenarioResult {
                     scenario_name: "fail scenario".into(),
@@ -988,6 +1007,7 @@ mod tests {
                     step_results: vec![],
                     evidence: vec![],
                     duration_ms: 20,
+                    provenance: None,
                 },
                 ScenarioResult {
                     scenario_name: "skip scenario".into(),
@@ -995,6 +1015,7 @@ mod tests {
                     step_results: vec![],
                     evidence: vec![],
                     duration_ms: 0,
+                    provenance: None,
                 },
             ],
             summary: VerificationSummary {
@@ -1061,7 +1082,10 @@ mod tests {
         assert!(output.contains('\u{2717}'), "should contain ✗ for fail");
         assert!(output.contains('\u{2298}'), "should contain ⊘ for skip");
         // Should contain pass count
-        assert!(output.contains("1/3 pass"), "should contain pass count summary");
+        assert!(
+            output.contains("1/3 pass"),
+            "should contain pass count summary"
+        );
         // Should be a single line
         let line_count = output.lines().count();
         assert!(
@@ -1088,6 +1112,7 @@ mod tests {
                     targets: None,
                 }],
                 duration_ms: 42,
+                provenance: None,
             }],
             summary: VerificationSummary {
                 total: 1,

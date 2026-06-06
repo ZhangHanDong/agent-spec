@@ -50,11 +50,20 @@ pub fn run_verification(
     let mut covered_scenarios = HashSet::new();
 
     for verifier in verifiers {
+        // Stamp provenance by producing verifier: the `ai` verifier is
+        // inferential, every mechanical verifier is computational. This is the
+        // single place mechanical results are distinguished from AI ones.
+        let provenance = if verifier.name() == "ai" {
+            crate::spec_core::EvidenceProvenance::Inferential
+        } else {
+            crate::spec_core::EvidenceProvenance::Computational
+        };
         let results = verifier.verify(ctx)?;
-        for result in results {
+        for mut result in results {
             if !covered_scenarios.insert(result.scenario_name.clone()) {
                 continue;
             }
+            result.provenance = Some(provenance);
             all_results.push(result);
         }
     }
@@ -80,6 +89,7 @@ pub fn run_verification(
             step_results,
             evidence: Vec::new(),
             duration_ms: 0,
+            provenance: None,
         });
     }
 
@@ -119,6 +129,7 @@ mod tests {
                 step_results: vec![],
                 evidence: vec![],
                 duration_ms: 0,
+                provenance: None,
             }])
         }
     }
@@ -138,6 +149,7 @@ mod tests {
                 step_results: vec![],
                 evidence: vec![],
                 duration_ms: 0,
+                provenance: None,
             }])
         }
     }
@@ -158,6 +170,7 @@ mod tests {
             review: Default::default(),
             mode: Default::default(),
             depends_on: vec![],
+            rule: None,
             span: Span::line(1),
         };
         let ctx = VerificationContext {
@@ -174,11 +187,15 @@ mod tests {
                         tags: vec![],
                         depends: vec![],
                         estimate: None,
+                        capability: None,
                     },
                     sections: vec![Section::AcceptanceCriteria {
                         scenarios: vec![scenario.clone()],
+                        rules: vec![],
+                        malformed_rules: vec![],
                         span: Span::line(1),
                     }],
+                    lint_acks: vec![],
                     source_path: PathBuf::new(),
                 },
                 inherited_constraints: vec![],
@@ -193,5 +210,96 @@ mod tests {
 
         assert_eq!(report.results.len(), 1);
         assert_eq!(report.results[0].verdict, Verdict::Pass);
+    }
+
+    // ---- Phase 2: provenance stamping ----
+
+    struct MechVerifier;
+    struct AiNamedVerifier;
+
+    impl Verifier for MechVerifier {
+        fn name(&self) -> &str {
+            "test"
+        }
+        fn verify(
+            &self,
+            _ctx: &VerificationContext,
+        ) -> crate::spec_core::SpecResult<Vec<ScenarioResult>> {
+            Ok(vec![ScenarioResult {
+                scenario_name: "机械场景".into(),
+                verdict: Verdict::Pass,
+                step_results: vec![],
+                evidence: vec![],
+                duration_ms: 0,
+                provenance: None,
+            }])
+        }
+    }
+
+    impl Verifier for AiNamedVerifier {
+        fn name(&self) -> &str {
+            "ai"
+        }
+        fn verify(
+            &self,
+            _ctx: &VerificationContext,
+        ) -> crate::spec_core::SpecResult<Vec<ScenarioResult>> {
+            Ok(vec![ScenarioResult {
+                scenario_name: "推理场景".into(),
+                verdict: Verdict::Uncertain,
+                step_results: vec![],
+                evidence: vec![],
+                duration_ms: 0,
+                provenance: None,
+            }])
+        }
+    }
+
+    fn empty_ctx() -> VerificationContext {
+        VerificationContext {
+            code_paths: vec![PathBuf::from(".")],
+            change_paths: vec![],
+            ai_mode: AiMode::Off,
+            resolved_spec: ResolvedSpec {
+                task: SpecDocument {
+                    meta: SpecMeta {
+                        level: SpecLevel::Task,
+                        name: "t".into(),
+                        inherits: None,
+                        lang: vec![],
+                        tags: vec![],
+                        depends: vec![],
+                        estimate: None,
+                        capability: None,
+                    },
+                    sections: vec![],
+                    lint_acks: vec![],
+                    source_path: PathBuf::new(),
+                },
+                inherited_constraints: vec![],
+                inherited_decisions: vec![],
+                all_scenarios: vec![],
+            },
+        }
+    }
+
+    #[test]
+    fn test_provenance_test_verifier_is_computational() {
+        use crate::spec_core::EvidenceProvenance;
+        let report = run_verification(&empty_ctx(), &[&MechVerifier]).unwrap();
+        assert_eq!(
+            report.results[0].provenance,
+            Some(EvidenceProvenance::Computational)
+        );
+    }
+
+    #[test]
+    fn test_provenance_ai_verifier_is_inferential() {
+        use crate::spec_core::EvidenceProvenance;
+        let report = run_verification(&empty_ctx(), &[&AiNamedVerifier]).unwrap();
+        assert_eq!(
+            report.results[0].provenance,
+            Some(EvidenceProvenance::Inferential)
+        );
     }
 }

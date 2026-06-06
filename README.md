@@ -15,6 +15,18 @@ The core idea is simple:
 
 The primary planning surface is the **Task Contract**. The older `brief` view remains available as a compatibility alias, but new workflows should use `contract`.
 
+## What agent-spec doesn't solve
+
+We want you to know up-front. These are real limits, not roadmap stubs:
+
+- **Cold-start product judgment.** `agent-spec` verifies whether code satisfies a contract; it does not tell you whether the contract describes the right product. You still need product sense to write good Rules and Scenarios. A planned `agent-spec discover --from-codebase` (Phase 9) will help bootstrap a spec library from existing code + tests, but not from a blank page.
+- **Architectural taste at the line where it matters.** Lint catches what's expressible in the DSL — boundaries, vague verbs, missing test bindings, dangling selectors. Naming clarity, abstraction choice, the line between "appropriate" and "inappropriate" coupling — these need human review or inferential AI review (Phase 5+).
+- **NFR ceiling.** Functional behavior bound to `cargo test` is fully verifiable today. Performance, reliability, scalability — these need specialized runners (criterion, k6, external probes; planned Phase 7) and even then the honest verdict is often `uncertain` or `pending_review`, not `pass`.
+- **Test selector maintenance.** The mechanical coverage matrix is the moat, but it comes with a cost: renaming a test function breaks the contract until you update the spec. Tooling can detect dangling selectors, it cannot rename them for you.
+- **False sense of security.** A passing `lifecycle` means the contract was satisfied. It does not mean the contract was comprehensive. We recommend coupling `agent-spec lifecycle` with periodic human + AI architectural reviews (Phase 8 `agent-spec audit` will automate part of this).
+
+`docs/comparison-openspec-speckit.md` §9.4 expands these in context; `docs/bdd-spine-end-state.md` shows where each is addressed across Phases 1–9.
+
 ## Task Contract
 
 A task contract is a structured spec with four core parts:
@@ -372,6 +384,12 @@ For consistency, `verify` and `lifecycle` use the same precedence when `--change
 | `parse` | Parse `.spec`/`.spec.md` files and show the AST |
 | `lint` | Analyze spec quality (vague verbs, missing test selectors, coverage gaps) |
 | `verify` | Verify code against a single spec |
+| `matrix` | Render the Rule→Example coverage matrix (text/json/markdown) |
+| `promote` | Promote a task-scoped Rule to a capability spec (id-stable) |
+| `gen-integrations` | Generate per-tool integration files from a single source |
+| `check-structure` | Mechanical structural check: forbid a reference within a file glob |
+| `audit` | Audit a spec library's health (unproven rules, open questions) |
+| `discover` | Reverse-engineer a draft task spec from a codebase's tests (`--from-codebase`) |
 | `contract` | Render the Task Contract view |
 | `plan` | Generate plan context: Contract + Codebase scan + Task Sketch |
 | `lifecycle` | Run lint + verify + report (the main quality gate) |

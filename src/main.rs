@@ -75,6 +75,88 @@ enum Commands {
         #[arg(long, default_value = "text")]
         format: String,
     },
+    /// Render the coverage matrix (Rule × Scenario × Test × Verdict × Provenance)
+    Matrix {
+        /// Spec file
+        spec: PathBuf,
+        /// Code directory to verify and scan for test functions
+        #[arg(long)]
+        code: PathBuf,
+        /// Explicit changed file or directory (repeatable)
+        #[arg(long = "change")]
+        change: Vec<PathBuf>,
+        /// Git change scope when --change is omitted: none, staged, worktree
+        #[arg(long, default_value = "none")]
+        change_scope: String,
+        /// AI verification mode: off, stub, caller
+        #[arg(long, default_value = "off")]
+        ai_mode: String,
+        /// Output format: text, json, markdown
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// Audit a spec library's health (counts, unproven rules, open questions)
+    Audit {
+        /// Directory of specs to audit
+        #[arg(long = "spec-dir", default_value = "specs")]
+        spec_dir: PathBuf,
+        /// Output format: text, json
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// Reverse-engineer a draft task spec from a codebase's existing tests
+    Discover {
+        /// Generate from the codebase's test functions (cold-start)
+        #[arg(long = "from-codebase")]
+        from_codebase: bool,
+        /// Code directory to scan for test functions
+        #[arg(long)]
+        code: PathBuf,
+        /// Name for the generated spec
+        #[arg(long)]
+        name: String,
+        /// Write the draft to this file instead of printing to stdout
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Mechanical structural check: forbid a reference within a file glob
+    CheckStructure {
+        /// Code directory to scan
+        #[arg(long)]
+        code: PathBuf,
+        /// Forbidden substring (e.g. `crate::services`)
+        #[arg(long)]
+        forbid: String,
+        /// File glob to scope the check (e.g. `clients/**`)
+        #[arg(long = "in")]
+        within: String,
+    },
+    /// Generate per-tool integration files from a single source
+    GenIntegrations {
+        /// Target: agents, cursor, claude, or all
+        #[arg(long, default_value = "all")]
+        target: String,
+        /// Output directory
+        #[arg(long, default_value = ".")]
+        out: PathBuf,
+        /// Check for drift instead of writing (non-zero exit if drifted)
+        #[arg(long)]
+        check: bool,
+    },
+    /// Promote a passing task Rule into a capability spec (living-spec library)
+    Promote {
+        /// Task spec file containing the Rule
+        spec: PathBuf,
+        /// Rule id to promote
+        #[arg(long)]
+        rule: String,
+        /// Target capability name (-> specs/capabilities/<name>.spec.md)
+        #[arg(long = "to")]
+        to: String,
+        /// Code directory to verify against (the promote gate)
+        #[arg(long)]
+        code: PathBuf,
+    },
     /// Create a starter .spec.md file
     Init {
         /// Spec level: org, project, task
@@ -273,6 +355,35 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             ai_mode,
             format,
         } => cmd_verify(&spec, &code, &change, &change_scope, &ai_mode, &format),
+        Commands::Matrix {
+            spec,
+            code,
+            change,
+            change_scope,
+            ai_mode,
+            format,
+        } => cmd_matrix(&spec, &code, &change, &change_scope, &ai_mode, &format),
+        Commands::Audit { spec_dir, format } => cmd_audit(&spec_dir, &format),
+        Commands::Discover {
+            from_codebase,
+            code,
+            name,
+            out,
+        } => cmd_discover(from_codebase, &code, &name, out.as_deref()),
+        Commands::CheckStructure {
+            code,
+            forbid,
+            within,
+        } => cmd_check_structure(&code, &forbid, &within),
+        Commands::GenIntegrations { target, out, check } => {
+            cmd_gen_integrations(&target, &out, check)
+        }
+        Commands::Promote {
+            spec,
+            rule,
+            to,
+            code,
+        } => cmd_promote(&spec, &rule, &to, &code),
         Commands::Init {
             level,
             name,
@@ -385,6 +496,9 @@ fn cmd_parse(files: &[PathBuf], format: &str) -> Result<(), Box<dyn std::error::
                         crate::spec_core::Section::OutOfScope { items, .. } => {
                             println!("    - Out of Scope: {} items", items.len());
                         }
+                        crate::spec_core::Section::Questions { items, .. } => {
+                            println!("    - Questions: {} items", items.len());
+                        }
                     }
                 }
                 println!();
@@ -483,6 +597,388 @@ fn cmd_verify(
     } else {
         Ok(())
     }
+}
+
+// ── Coverage matrix (Phase 2) ───────────────────────────────────
+
+/// Build the coverage matrix for a spec by running verification in the same
+/// default mode as `verify` (mechanical + ai-mode), scanning the code paths for
+/// test functions, and assembling the matrix. Read-only: no gating.
+fn build_matrix_for(
+    spec: &Path,
+    code: &Path,
+    change: &[PathBuf],
+    change_scope: &str,
+    ai_mode: &str,
+) -> Result<crate::spec_report::CoverageMatrix, Box<dyn std::error::Error>> {
+    let doc = crate::spec_parser::parse_spec(spec)?;
+    let resolved = crate::spec_parser::resolve_spec(doc, &[])?;
+    let scope = GitChangeScope::parse(change_scope)?;
+    let mode = parse_ai_mode(ai_mode)?;
+    let effective_changes = resolve_command_change_paths(spec, code, change, scope)?;
+
+    let ctx = crate::spec_verify::VerificationContext {
+        code_paths: vec![code.to_path_buf()],
+        change_paths: effective_changes,
+        ai_mode: mode,
+        resolved_spec: resolved.clone(),
+    };
+    let structural = crate::spec_verify::StructuralVerifier;
+    let boundaries = crate::spec_verify::BoundariesVerifier;
+    let test = crate::spec_verify::TestVerifier;
+    let ai = crate::spec_verify::AiVerifier::from_mode(mode);
+    let verifiers: Vec<&dyn crate::spec_verify::Verifier> =
+        vec![&structural, &boundaries, &test, &ai];
+    let report = crate::spec_verify::run_verification(&ctx, &verifiers)?;
+
+    let test_index = crate::spec_report::collect_test_function_names(&[code.to_path_buf()]);
+    Ok(crate::spec_report::build_coverage_matrix(
+        &resolved,
+        Some(&report),
+        &test_index,
+    ))
+}
+
+fn cmd_matrix(
+    spec: &Path,
+    code: &Path,
+    change: &[PathBuf],
+    change_scope: &str,
+    ai_mode: &str,
+    format: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let matrix = build_matrix_for(spec, code, change, change_scope, ai_mode)?;
+    let out = match format {
+        "json" => matrix.to_json(),
+        "markdown" | "md" => matrix.to_markdown(),
+        _ => matrix.to_text(),
+    };
+    println!("{out}");
+    Ok(())
+}
+
+// ── Audit (Phase 8: spec-library health) ───────────────────────
+
+fn cmd_audit(spec_dir: &Path, format: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let mut files = Vec::new();
+    collect_spec_files(spec_dir, &mut files)?;
+    files.sort();
+    let mut docs = Vec::new();
+    for f in &files {
+        if let Ok(doc) = crate::spec_parser::parse_spec(f) {
+            docs.push(doc);
+        }
+    }
+    let report = crate::spec_report::audit_specs(&docs);
+    if format == "json" {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).unwrap_or_default()
+        );
+    } else {
+        println!(
+            "agent-spec audit ({} specs in {})",
+            report.spec_count,
+            spec_dir.display()
+        );
+        println!(
+            "  rules: {} ({} unproven)",
+            report.rule_count, report.unproven_rules
+        );
+        println!(
+            "  scenarios: {} ({} ungrouped)",
+            report.scenario_count, report.ungrouped_scenarios
+        );
+        println!("  open questions: {}", report.open_questions);
+        println!("  malformed rules: {}", report.malformed_rules);
+    }
+    Ok(())
+}
+
+// ── Discover (Phase 9: reverse-engineer a draft from tests) ─────
+
+fn cmd_discover(
+    from_codebase: bool,
+    code: &Path,
+    name: &str,
+    out: Option<&Path>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !from_codebase {
+        return Err("discover currently supports only --from-codebase".into());
+    }
+    let mut names: Vec<String> =
+        crate::spec_report::collect_test_function_names(&[code.to_path_buf()])
+            .into_iter()
+            .collect();
+    names.sort();
+    let draft = crate::spec_report::draft_spec_from_tests(&names, name);
+    match out {
+        Some(path) => {
+            std::fs::write(path, &draft)?;
+            println!(
+                "discover: drafted {} scenario(s) from {} -> {}",
+                names.len(),
+                code.display(),
+                path.display()
+            );
+        }
+        None => print!("{draft}"),
+    }
+    Ok(())
+}
+
+// ── Structural check (Phase 7: dependency-cruiser-lite) ─────────
+
+fn cmd_check_structure(
+    code: &Path,
+    forbid: &str,
+    within: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let violations =
+        crate::spec_report::structural_violations(&[code.to_path_buf()], forbid, within);
+    if violations.is_empty() {
+        println!("structural check passed: `{forbid}` not found in `{within}`");
+        Ok(())
+    } else {
+        for v in &violations {
+            println!("  violation: {v} contains `{forbid}`");
+        }
+        Err(format!(
+            "structural check failed: {} file(s) under `{within}` reference `{forbid}`",
+            violations.len()
+        )
+        .into())
+    }
+}
+
+// ── Integrations (Phase 6: single-source multi-tool generation) ──
+
+fn cmd_gen_integrations(
+    target: &str,
+    out: &Path,
+    check: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let targets: Vec<&str> = if target == "all" {
+        vec!["agents", "cursor", "claude"]
+    } else {
+        vec![target]
+    };
+    let filename = |t: &str| match t {
+        "agents" => "AGENTS.md",
+        "cursor" => ".cursorrules",
+        _ => "agent-spec-tool-first.md",
+    };
+
+    let mut drifted = Vec::new();
+    for t in &targets {
+        let rendered = crate::spec_report::render_named(t)?;
+        let path = out.join(filename(t));
+        if check {
+            let existing = std::fs::read_to_string(&path).unwrap_or_default();
+            if crate::spec_report::has_drifted(&existing, &rendered) {
+                drifted.push(path.display().to_string());
+            }
+        } else {
+            std::fs::write(&path, &rendered)?;
+            println!("wrote {}", path.display());
+        }
+    }
+
+    if check {
+        if drifted.is_empty() {
+            println!("integrations up to date (no drift)");
+        } else {
+            return Err(format!("integration drift detected: {}", drifted.join(", ")).into());
+        }
+    }
+    Ok(())
+}
+
+// ── Promote (Phase 3: capability living-spec library) ───────────
+
+/// Scenario names grouped under a rule id within a parsed spec, or None if the
+/// rule id is not declared.
+fn rule_scenarios(doc: &crate::spec_core::SpecDocument, rule_id: &str) -> Option<Vec<String>> {
+    for section in &doc.sections {
+        if let crate::spec_core::Section::AcceptanceCriteria { rules, .. } = section
+            && let Some(r) = rules.iter().find(|r| r.key.id == rule_id)
+        {
+            return Some(r.scenario_names.clone());
+        }
+    }
+    None
+}
+
+/// The promote gate: every Example proving the rule must have a `pass` verdict.
+fn examples_all_pass(
+    scenario_names: &[String],
+    report: &crate::spec_core::VerificationReport,
+) -> bool {
+    scenario_names.iter().all(|name| {
+        report
+            .results
+            .iter()
+            .find(|r| &r.scenario_name == name)
+            .is_some_and(|r| r.verdict == crate::spec_core::Verdict::Pass)
+    })
+}
+
+/// True if a capability name is safe to interpolate into a file path:
+/// non-empty, no path separators, no `..`, not absolute.
+fn is_safe_capability_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.contains('/')
+        && !name.contains('\\')
+        && !name.contains("..")
+        && !name.starts_with('.')
+}
+
+/// The promote gate: the rule must have at least one Example, and every Example
+/// must have a `pass` verdict (an empty example set is NOT vacuously promotable).
+fn promote_gate_ok(
+    scenario_names: &[String],
+    report: &crate::spec_core::VerificationReport,
+) -> Result<(), String> {
+    if scenario_names.is_empty() {
+        return Err(
+            "rule has no examples to prove it (an unproven rule cannot be promoted)".into(),
+        );
+    }
+    if !examples_all_pass(scenario_names, report) {
+        return Err("not all examples pass (need all `pass`)".into());
+    }
+    Ok(())
+}
+
+/// Whether a capability spec already declares a Completion Criteria section.
+fn has_completion_section(content: &str) -> bool {
+    content.lines().any(|l| {
+        let t = l.trim().trim_start_matches('#').trim().to_lowercase();
+        t.starts_with("完成条件")
+            || t.starts_with("验收标准")
+            || t.starts_with("completion criter")
+            || t.starts_with("acceptance criter")
+    })
+}
+
+/// Produce the capability spec content with `rule_id` present (idempotent).
+/// If `existing` already declares the rule, it is returned unchanged. The
+/// promotion provenance is recorded on its OWN comment line (never inline on the
+/// Rule header, so it cannot leak into the parsed rule name).
+fn upsert_capability_rule(
+    existing: Option<&str>,
+    cap_name: &str,
+    rule_id: &str,
+    rule_name: &str,
+    from_task: &str,
+) -> String {
+    let rule_line = if rule_name.is_empty() || rule_name == rule_id {
+        format!("### Rule: {rule_id}\n")
+    } else {
+        format!("### Rule: {rule_id} — {rule_name}\n")
+    };
+    let block = format!("<!-- promoted from {from_task} -->\n{rule_line}");
+
+    match existing {
+        Some(content) if rule_already_present(content, rule_id) => content.to_string(),
+        Some(content) => {
+            let mut out = content.trim_end().to_string();
+            if !has_completion_section(content) {
+                out.push_str("\n\n## 完成条件\n");
+            }
+            out.push('\n');
+            out.push_str(&block);
+            out.push('\n');
+            out
+        }
+        None => {
+            format!(
+                "spec: capability\nname: \"{cap_name}\"\ntags: [capability]\n---\n\n## 意图\n\n{cap_name} 能力的长寿命行为真相库(由 promote 累积)。\n\n## 完成条件\n\n{block}\n"
+            )
+        }
+    }
+}
+
+/// True if a capability spec already declares a rule with this id.
+fn rule_already_present(content: &str, rule_id: &str) -> bool {
+    content.lines().any(|line| {
+        crate::spec_parser::match_rule_header(line)
+            .map(|raw| rule_id_of(raw) == rule_id)
+            .unwrap_or(false)
+    })
+}
+
+/// Extract the leading kebab id token from a Rule header's raw content.
+/// Uses the LEFTMOST separator (em dash or double space) to match the parser's
+/// `parse_rule_header_content` exactly.
+fn rule_id_of(raw: &str) -> &str {
+    let raw = raw.trim();
+    let em = raw.find('—');
+    let ds = raw.find("  ");
+    let cut = match (em, ds) {
+        (Some(e), Some(d)) => e.min(d),
+        (Some(e), None) => e,
+        (None, Some(d)) => d,
+        (None, None) => raw.len(),
+    };
+    raw[..cut].trim()
+}
+
+fn cmd_promote(
+    spec: &Path,
+    rule_id: &str,
+    capability: &str,
+    code: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !is_safe_capability_name(capability) {
+        return Err(format!(
+            "unsafe capability name `{capability}` (no path separators, `..`, or leading `.`)"
+        )
+        .into());
+    }
+    let doc = crate::spec_parser::parse_spec(spec)?;
+    let scenario_names = rule_scenarios(&doc, rule_id)
+        .ok_or_else(|| format!("rule id `{rule_id}` not found in {}", spec.display()))?;
+
+    let gw = crate::spec_gateway::SpecGateway::load(spec)?;
+    let report = gw.verify(code)?;
+    promote_gate_ok(&scenario_names, &report)
+        .map_err(|e| format!("promote gate failed for rule `{rule_id}`: {e}"))?;
+
+    // Rule display name from the task doc.
+    let rule_name = doc
+        .sections
+        .iter()
+        .find_map(|s| match s {
+            crate::spec_core::Section::AcceptanceCriteria { rules, .. } => rules
+                .iter()
+                .find(|r| r.key.id == rule_id)
+                .map(|r| r.name.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
+
+    let from_task = crate::spec_parser::task_stem_from_path(spec);
+    let cap_dir = spec
+        .parent()
+        .unwrap_or(Path::new("specs"))
+        .join("capabilities");
+    std::fs::create_dir_all(&cap_dir)?;
+    let cap_path = cap_dir.join(format!("{capability}.spec.md"));
+    let existing = std::fs::read_to_string(&cap_path).ok();
+    let updated = upsert_capability_rule(
+        existing.as_deref(),
+        capability,
+        rule_id,
+        &rule_name,
+        &from_task,
+    );
+    std::fs::write(&cap_path, updated)?;
+    println!(
+        "promoted rule `{rule_id}` -> {} (capability `{capability}`)",
+        cap_path.display()
+    );
+    Ok(())
 }
 
 // ── Lifecycle (full pipeline for CI/agent) ──────────────────────
@@ -590,19 +1086,18 @@ fn cmd_lifecycle(
     let passing = gw.is_passing_with_review_mode(&verify_report, review_mode);
 
     // Collect optimization candidates: optimize-mode scenarios that passed
-    let optimization_candidates: Vec<String> = gw
-        .resolved()
-        .all_scenarios
-        .iter()
-        .filter(|s| s.mode == crate::spec_core::ScenarioMode::Optimize)
-        .filter(|s| {
-            verify_report
-                .results
-                .iter()
-                .any(|r| r.scenario_name == s.name && r.verdict == crate::spec_core::Verdict::Pass)
-        })
-        .map(|s| s.name.clone())
-        .collect();
+    let optimization_candidates: Vec<String> =
+        gw.resolved()
+            .all_scenarios
+            .iter()
+            .filter(|s| s.mode == crate::spec_core::ScenarioMode::Optimize)
+            .filter(|s| {
+                verify_report.results.iter().any(|r| {
+                    r.scenario_name == s.name && r.verdict == crate::spec_core::Verdict::Pass
+                })
+            })
+            .map(|s| s.name.clone())
+            .collect();
 
     // Stage 2b: If caller mode, emit pending AI requests for skipped scenarios
     let ai_pending = if ai_mode == crate::spec_verify::AiMode::Caller {
@@ -666,8 +1161,7 @@ fn cmd_lifecycle(
             json_out["layers"] = serde_json::json!(layer_list);
         }
         if !optimization_candidates.is_empty() {
-            json_out["optimization_candidates"] =
-                serde_json::json!(optimization_candidates);
+            json_out["optimization_candidates"] = serde_json::json!(optimization_candidates);
         }
         println!("{}", serde_json::to_string_pretty(&json_out)?);
     } else {
@@ -1023,7 +1517,11 @@ fn warn_duplicate_spec_extensions(spec_files: &[PathBuf]) {
                 stem,
                 paths
                     .iter()
-                    .map(|p| p.file_name().unwrap_or_default().to_string_lossy().to_string())
+                    .map(|p| p
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string())
                     .collect::<Vec<_>>()
                     .join(", ")
             );
@@ -1264,6 +1762,11 @@ fn parse_ai_mode(input: &str) -> Result<crate::spec_verify::AiMode, Box<dyn std:
 
 // ── Explain ─────────────────────────────────────────────────────
 
+/// Append the coverage matrix section to an explain markdown body.
+fn assemble_explain_markdown(base: &str, matrix: &crate::spec_report::CoverageMatrix) -> String {
+    format!("{base}\n## Coverage Matrix\n\n{}", matrix.to_markdown())
+}
+
 fn cmd_explain(
     spec: &Path,
     code: &Path,
@@ -1286,10 +1789,17 @@ fn cmd_explain(
     };
 
     let out_format = parse_output_format(format);
-    print!(
-        "{}",
-        crate::spec_report::format_explain(&input, &report, &out_format)
-    );
+    let base = crate::spec_report::format_explain(&input, &report, &out_format);
+
+    // Embed the coverage matrix in markdown output (PR acceptance material).
+    if matches!(out_format, crate::spec_report::OutputFormat::Markdown) {
+        let test_index = crate::spec_report::collect_test_function_names(&[code.to_path_buf()]);
+        let matrix =
+            crate::spec_report::build_coverage_matrix(gw.resolved(), Some(&report), &test_index);
+        print!("{}", assemble_explain_markdown(&base, &matrix));
+    } else {
+        print!("{base}");
+    }
 
     // Show history from run logs if requested
     if history {
@@ -1530,9 +2040,7 @@ fn merge_checkpoint_results(
                             result.evidence.push(spec_core::Evidence::PatternMatch {
                                 pattern: "checkpoint:incremental".into(),
                                 matched: true,
-                                locations: vec![
-                                    "verdict carried forward from checkpoint".into(),
-                                ],
+                                locations: vec!["verdict carried forward from checkpoint".into()],
                             });
                             result.duration_ms = 0;
                         }
@@ -2241,6 +2749,7 @@ fn format_level(level: crate::spec_core::SpecLevel) -> &'static str {
     match level {
         crate::spec_core::SpecLevel::Org => "org",
         crate::spec_core::SpecLevel::Project => "project",
+        crate::spec_core::SpecLevel::Capability => "capability",
         crate::spec_core::SpecLevel::Task => "task",
     }
 }
@@ -2283,27 +2792,23 @@ struct ScenarioAiDecision {
     pub decision: crate::spec_core::AiDecision,
 }
 
-fn cmd_resolve_ai(
-    spec: &Path,
-    code: &Path,
-    decisions_path: &Path,
-    format: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    // 1. Load spec and run mechanical verification (caller mode skips AI internally)
-    let gw = crate::spec_gateway::SpecGateway::load(spec)?;
-    let verify_report = gw.verify_with_ai_mode(code, crate::spec_verify::AiMode::Caller)?;
-
-    // 2. Read external AI decisions
-    let decisions_json = std::fs::read_to_string(decisions_path)?;
-    let decisions: Vec<ScenarioAiDecision> = serde_json::from_str(&decisions_json)?;
-
-    // 3. Merge: replace Skip verdicts with AI decisions
-    let mut merged_results = verify_report.results;
-    for decision in &decisions {
-        if let Some(result) = merged_results
+/// Merge externally-resolved AI decisions into verification results, replacing
+/// the matched scenarios' verdict/steps/evidence and stamping provenance as
+/// `Inferential` (caller-mode bypasses AiVerifier, so it must stamp here).
+fn merge_ai_decisions(
+    mut results: Vec<crate::spec_core::ScenarioResult>,
+    decisions: &[ScenarioAiDecision],
+) -> Vec<crate::spec_core::ScenarioResult> {
+    for decision in decisions {
+        if let Some(result) = results
             .iter_mut()
             .find(|r| r.scenario_name == decision.scenario_name)
         {
+            // Only resolve Skip verdicts: a mechanically-proven pass/fail must
+            // never be overridden by a caller AI decision (mechanical is the moat).
+            if result.verdict != crate::spec_core::Verdict::Skip {
+                continue;
+            }
             result.verdict = decision.decision.verdict;
             result.step_results = result
                 .step_results
@@ -2319,8 +2824,28 @@ fn cmd_resolve_ai(
                 confidence: decision.decision.confidence,
                 reasoning: decision.decision.reasoning.clone(),
             }];
+            result.provenance = Some(crate::spec_core::EvidenceProvenance::Inferential);
         }
     }
+    results
+}
+
+fn cmd_resolve_ai(
+    spec: &Path,
+    code: &Path,
+    decisions_path: &Path,
+    format: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // 1. Load spec and run mechanical verification (caller mode skips AI internally)
+    let gw = crate::spec_gateway::SpecGateway::load(spec)?;
+    let verify_report = gw.verify_with_ai_mode(code, crate::spec_verify::AiMode::Caller)?;
+
+    // 2. Read external AI decisions
+    let decisions_json = std::fs::read_to_string(decisions_path)?;
+    let decisions: Vec<ScenarioAiDecision> = serde_json::from_str(&decisions_json)?;
+
+    // 3. Merge: replace Skip verdicts with AI decisions
+    let merged_results = merge_ai_decisions(verify_report.results, &decisions);
 
     let merged_report =
         crate::spec_core::VerificationReport::from_results(verify_report.spec_name, merged_results);
@@ -2368,12 +2893,8 @@ fn cmd_plan(
     let contract = gw.plan();
     let scan_depth = crate::spec_gateway::plan::ScanDepth::parse(depth);
 
-    let ctx = crate::spec_gateway::plan::build_plan_context(
-        &contract,
-        gw.resolved(),
-        code,
-        scan_depth,
-    );
+    let ctx =
+        crate::spec_gateway::plan::build_plan_context(&contract, gw.resolved(), code, scan_depth);
 
     // Print warnings to stderr
     for warning in &ctx.warnings {
@@ -2661,13 +3182,360 @@ mod tests {
 
     use super::{
         GitChangeScope, ResumeMode, RunLogEntry, build_stamp_trailers, checkpoint_path,
-        cmd_init_at, generate_rewrite_parity_template_both,
-        generate_rewrite_parity_template_en, generate_rewrite_parity_template_zh,
-        generate_template_both, generate_template_en, generate_template_zh, is_spec_file,
-        load_checkpoint, merge_checkpoint_results, parse_ai_mode, render_brief_output,
-        render_contract_output, resolve_command_change_paths, resolve_guard_change_paths,
-        save_checkpoint, vcs, warn_duplicate_spec_extensions,
+        cmd_init_at, generate_rewrite_parity_template_both, generate_rewrite_parity_template_en,
+        generate_rewrite_parity_template_zh, generate_template_both, generate_template_en,
+        generate_template_zh, is_spec_file, load_checkpoint, merge_checkpoint_results,
+        parse_ai_mode, render_brief_output, render_contract_output, resolve_command_change_paths,
+        resolve_guard_change_paths, save_checkpoint, vcs, warn_duplicate_spec_extensions,
     };
+    use super::{
+        ScenarioAiDecision, assemble_explain_markdown, build_matrix_for, merge_ai_decisions,
+    };
+    use super::{examples_all_pass, rule_scenarios, upsert_capability_rule};
+
+    // ---- Phase 3: promote ----
+
+    fn report_with(
+        verdicts: &[(&str, crate::spec_core::Verdict)],
+    ) -> crate::spec_core::VerificationReport {
+        let results = verdicts
+            .iter()
+            .map(|(name, v)| crate::spec_core::ScenarioResult {
+                scenario_name: (*name).into(),
+                verdict: *v,
+                step_results: vec![],
+                evidence: vec![],
+                duration_ms: 0,
+                provenance: None,
+            })
+            .collect();
+        crate::spec_core::VerificationReport::from_results("t".into(), results)
+    }
+
+    const PROMOTE_SPEC: &str = r#"spec: task
+name: "退款"
+---
+
+## 完成条件
+
+### Rule: r-ok — 退款幂等
+场景: 首次退款
+  测试: t1
+  当 a
+  那么 b
+场景: 重复退款
+  测试: t2
+  当 a
+  那么 b
+"#;
+
+    use super::{is_safe_capability_name, promote_gate_ok, rule_id_of};
+
+    #[test]
+    fn test_promote_refuses_rule_with_no_examples() {
+        // C1/C6/C9: a rule with zero examples must NOT pass the gate (vacuous).
+        let report = report_with(&[]);
+        assert!(
+            promote_gate_ok(&[], &report).is_err(),
+            "empty examples must fail the gate"
+        );
+        let ok = report_with(&[("a", crate::spec_core::Verdict::Pass)]);
+        assert!(promote_gate_ok(&["a".to_string()], &ok).is_ok());
+    }
+
+    #[test]
+    fn test_promote_rule_name_excludes_provenance_comment() {
+        // C2/C8: the promoted rule, re-parsed, must not carry the HTML comment in its name.
+        let content = upsert_capability_rule(None, "billing", "r-bare", "r-bare", "task-x");
+        let doc = crate::spec_parser::parse_spec_from_str(&content).unwrap();
+        let rule = doc
+            .sections
+            .iter()
+            .find_map(|s| match s {
+                crate::spec_core::Section::AcceptanceCriteria { rules, .. } => {
+                    rules.iter().find(|r| r.key.id == "r-bare").cloned()
+                }
+                _ => None,
+            })
+            .expect("r-bare present");
+        assert!(
+            !rule.name.contains("<!--"),
+            "rule name must not contain the provenance comment: {}",
+            rule.name
+        );
+        assert_eq!(rule.name, "r-bare");
+    }
+
+    #[test]
+    fn test_promote_rejects_unsafe_capability_name() {
+        // C5/C7: path traversal / absolute / separators must be rejected.
+        assert!(!is_safe_capability_name("../evil"));
+        assert!(!is_safe_capability_name("/etc/passwd"));
+        assert!(!is_safe_capability_name("a/b"));
+        assert!(!is_safe_capability_name("a\\b"));
+        assert!(!is_safe_capability_name(""));
+        assert!(is_safe_capability_name("billing"));
+        assert!(is_safe_capability_name("ecosystem-import"));
+    }
+
+    #[test]
+    fn test_rule_id_of_matches_parser_on_double_space_before_em_dash() {
+        // C3: leftmost separator wins (double space before em dash).
+        assert_eq!(rule_id_of("id  desc — more"), "id");
+        assert_eq!(rule_id_of("id — desc"), "id");
+        assert_eq!(rule_id_of("id"), "id");
+    }
+
+    #[test]
+    fn test_promote_appends_under_completion_criteria() {
+        // C4: appending to a capability file lacking a Completion Criteria
+        // section must still place the rule where it parses as a rule.
+        let hand = "spec: capability\nname: \"billing\"\n---\n\n## 意图\n\n手写的能力文件,没有完成条件段。\n";
+        let updated = upsert_capability_rule(Some(hand), "billing", "r-ok", "退款幂等", "task-x");
+        let doc = crate::spec_parser::parse_spec_from_str(&updated).unwrap();
+        let has_rule = doc.sections.iter().any(|s| {
+            matches!(s,
+            crate::spec_core::Section::AcceptanceCriteria { rules, .. }
+                if rules.iter().any(|r| r.key.id == "r-ok"))
+        });
+        assert!(
+            has_rule,
+            "promoted rule must parse as a rule (under Completion Criteria)"
+        );
+    }
+
+    #[test]
+    fn test_promote_unknown_rule_id_errors() {
+        let doc = crate::spec_parser::parse_spec_from_str(PROMOTE_SPEC).unwrap();
+        assert!(rule_scenarios(&doc, "r-missing").is_none());
+        assert!(rule_scenarios(&doc, "r-ok").is_some());
+    }
+
+    #[test]
+    fn test_promote_refuses_when_an_example_fails() {
+        let doc = crate::spec_parser::parse_spec_from_str(PROMOTE_SPEC).unwrap();
+        let names = rule_scenarios(&doc, "r-ok").unwrap();
+        let report = report_with(&[
+            ("首次退款", crate::spec_core::Verdict::Pass),
+            ("重复退款", crate::spec_core::Verdict::Fail),
+        ]);
+        assert!(
+            !examples_all_pass(&names, &report),
+            "a failing example must block promote"
+        );
+    }
+
+    #[test]
+    fn test_promote_appends_rule_when_examples_pass() {
+        let content = upsert_capability_rule(None, "billing", "r-ok", "退款幂等", "task-refund");
+        // Re-parse the generated capability spec: rule present with Capability scope.
+        let doc = crate::spec_parser::parse_spec_from_str(&content).unwrap();
+        assert_eq!(doc.meta.level, crate::spec_core::SpecLevel::Capability);
+        let rule = doc.sections.iter().find_map(|s| match s {
+            crate::spec_core::Section::AcceptanceCriteria { rules, .. } => {
+                rules.iter().find(|r| r.key.id == "r-ok").cloned()
+            }
+            _ => None,
+        });
+        let rule = rule.expect("r-ok must be present");
+        assert_eq!(
+            rule.key.scope,
+            crate::spec_core::RuleScope::Capability("billing".into())
+        );
+        assert!(
+            content.contains("promoted from task-refund"),
+            "must record promotion provenance"
+        );
+    }
+
+    #[test]
+    fn test_promote_is_idempotent_for_same_rule() {
+        let first = upsert_capability_rule(None, "billing", "r-ok", "退款幂等", "task-refund");
+        let second =
+            upsert_capability_rule(Some(&first), "billing", "r-ok", "退款幂等", "task-refund");
+        assert_eq!(first, second, "re-promoting the same rule must be a no-op");
+        // r-ok appears exactly once.
+        assert_eq!(second.matches("Rule: r-ok").count(), 1);
+    }
+
+    #[test]
+    fn test_promote_does_not_change_is_passing() {
+        let gw = crate::spec_gateway::SpecGateway::from_input(PROMOTE_SPEC).unwrap();
+        let report = report_with(&[
+            ("首次退款", crate::spec_core::Verdict::Pass),
+            ("重复退款", crate::spec_core::Verdict::Pass),
+        ]);
+        let before = report.summary.clone();
+        let passing_before = gw.is_passing(&report);
+        let _ = upsert_capability_rule(None, "billing", "r-ok", "退款幂等", "task-refund");
+        assert_eq!(passing_before, gw.is_passing(&report));
+        assert_eq!(before.total, report.summary.total);
+    }
+
+    #[test]
+    fn test_matrix_command_runs_verification_in_default_mode() {
+        // An unbound scenario under default (--ai-mode off) must be skip, not
+        // uncertain — matrix uses verify's default semantics.
+        let dir = std::env::temp_dir().join(format!(
+            "agent_spec_matrix_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let spec_path = dir.join("m.spec.md");
+        fs::write(
+            &spec_path,
+            "spec: task\nname: \"m\"\n---\n\n## 完成条件\n\n场景: 未覆盖\n  当 a\n  那么 b\n",
+        )
+        .unwrap();
+
+        let matrix = build_matrix_for(
+            &spec_path,
+            Path::new(env!("CARGO_MANIFEST_DIR")),
+            &[],
+            "none",
+            "off",
+        )
+        .unwrap();
+        assert_eq!(matrix.rows.len(), 1);
+        assert_eq!(
+            matrix.rows[0].verdict,
+            Some(crate::spec_core::Verdict::Skip)
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_explain_markdown_embeds_coverage_matrix() {
+        use crate::spec_report::CoverageMatrix;
+        use crate::spec_report::coverage::{CoverageRow, TestFound};
+        let base = "# Contract Acceptance: demo\n\n## Verification\nall pass\n";
+        let matrix = CoverageMatrix {
+            rows: vec![CoverageRow {
+                rule: Some("refund-idempotent".into()),
+                scenario: "首次退款".into(),
+                test_selector: Some("test_first_refund".into()),
+                test_found: TestFound::Found,
+                verdict: Some(crate::spec_core::Verdict::Pass),
+                provenance: Some(crate::spec_core::EvidenceProvenance::Computational),
+            }],
+        };
+        let out = assemble_explain_markdown(base, &matrix);
+        // Original contract/verification body preserved.
+        assert!(out.contains("# Contract Acceptance: demo"));
+        assert!(out.contains("## Verification"));
+        // Coverage matrix embedded.
+        assert!(out.contains("## Coverage Matrix"));
+        assert!(out.contains("| Rule | Scenario | Test | Found | Verdict | Provenance |"));
+        assert!(out.contains("refund-idempotent"));
+    }
+
+    #[test]
+    fn test_merge_ai_decisions_only_replaces_skip() {
+        // C7: a caller AI decision must NOT override a mechanically-proven
+        // pass/fail — only Skip verdicts may be resolved.
+        use crate::spec_core::{AiDecision, ScenarioResult, Verdict};
+        let results = vec![
+            ScenarioResult {
+                scenario_name: "已通过".into(),
+                verdict: Verdict::Pass,
+                step_results: vec![],
+                evidence: vec![],
+                duration_ms: 0,
+                provenance: Some(crate::spec_core::EvidenceProvenance::Computational),
+            },
+            ScenarioResult {
+                scenario_name: "未覆盖".into(),
+                verdict: Verdict::Skip,
+                step_results: vec![],
+                evidence: vec![],
+                duration_ms: 0,
+                provenance: None,
+            },
+        ];
+        let decisions = vec![
+            ScenarioAiDecision {
+                scenario_name: "已通过".into(),
+                decision: AiDecision {
+                    model: "caller".into(),
+                    confidence: 0.1,
+                    verdict: Verdict::Fail,
+                    reasoning: "ai disagrees".into(),
+                },
+            },
+            ScenarioAiDecision {
+                scenario_name: "未覆盖".into(),
+                decision: AiDecision {
+                    model: "caller".into(),
+                    confidence: 0.9,
+                    verdict: Verdict::Pass,
+                    reasoning: "ai approves".into(),
+                },
+            },
+        ];
+        let merged = merge_ai_decisions(results, &decisions);
+        let passed = merged.iter().find(|r| r.scenario_name == "已通过").unwrap();
+        assert_eq!(
+            passed.verdict,
+            Verdict::Pass,
+            "mechanical pass must NOT be overridden by AI"
+        );
+        assert_eq!(
+            passed.provenance,
+            Some(crate::spec_core::EvidenceProvenance::Computational),
+            "mechanical provenance must be preserved"
+        );
+        let skip = merged.iter().find(|r| r.scenario_name == "未覆盖").unwrap();
+        assert_eq!(skip.verdict, Verdict::Pass, "skip must be resolved by AI");
+        assert_eq!(
+            skip.provenance,
+            Some(crate::spec_core::EvidenceProvenance::Inferential)
+        );
+    }
+
+    #[test]
+    fn test_provenance_resolve_ai_is_inferential() {
+        use crate::spec_core::{
+            AiDecision, Evidence, EvidenceProvenance, ScenarioResult, StepVerdict, Verdict,
+        };
+        let results = vec![ScenarioResult {
+            scenario_name: "未覆盖场景".into(),
+            verdict: Verdict::Skip,
+            step_results: vec![StepVerdict {
+                step_text: "等待 AI".into(),
+                verdict: Verdict::Skip,
+                reason: "no verifier".into(),
+            }],
+            evidence: vec![],
+            duration_ms: 0,
+            provenance: None,
+        }];
+        let decisions = vec![ScenarioAiDecision {
+            scenario_name: "未覆盖场景".into(),
+            decision: AiDecision {
+                model: "caller".into(),
+                confidence: 0.9,
+                verdict: Verdict::Pass,
+                reasoning: "looks correct".into(),
+            },
+        }];
+        let merged = merge_ai_decisions(results, &decisions);
+        assert_eq!(merged[0].verdict, Verdict::Pass);
+        assert_eq!(
+            merged[0].provenance,
+            Some(EvidenceProvenance::Inferential),
+            "caller-mode resolved result must be inferential"
+        );
+        assert!(
+            merged[0]
+                .evidence
+                .iter()
+                .any(|e| matches!(e, Evidence::AiAnalysis { .. })),
+            "resolved result must carry AiAnalysis evidence"
+        );
+    }
 
     const SAMPLE: &str = r#"spec: task
 name: "Contract Alias"
@@ -3226,9 +4094,10 @@ Scenario: verification metadata stays visible
             repo_root().join("specs/roadmap/task-phase2-run-history-and-vcs-context.spec.md"),
         )
         .unwrap();
-        let phase3 =
-            fs::read_to_string(repo_root().join("specs/roadmap/task-phase3-spec-governance.spec.md"))
-                .unwrap();
+        let phase3 = fs::read_to_string(
+            repo_root().join("specs/roadmap/task-phase3-spec-governance.spec.md"),
+        )
+        .unwrap();
         let phase4 = fs::read_to_string(
             repo_root().join("specs/roadmap/task-phase4-ai-verification-expansion.spec.md"),
         )
@@ -3290,6 +4159,7 @@ Scenario: verification metadata stays visible
                 step_results: vec![],
                 evidence: vec![],
                 duration_ms: 5,
+                provenance: None,
             }],
             summary: crate::spec_core::VerificationSummary {
                 total: 1,
@@ -3337,6 +4207,7 @@ Scenario: verification metadata stays visible
                     step_results: vec![],
                     evidence: vec![],
                     duration_ms: 3,
+                    provenance: None,
                 },
                 crate::spec_core::ScenarioResult {
                     scenario_name: "scenario B".into(),
@@ -3344,6 +4215,7 @@ Scenario: verification metadata stays visible
                     step_results: vec![],
                     evidence: vec![],
                     duration_ms: 2,
+                    provenance: None,
                 },
             ],
             summary: crate::spec_core::VerificationSummary {
@@ -3672,6 +4544,7 @@ Scenario: verification metadata stays visible
                     step_results: vec![],
                     evidence: vec![],
                     duration_ms: 1,
+                    provenance: None,
                 },
                 crate::spec_core::ScenarioResult {
                     scenario_name: "[test] happy path".into(),
@@ -3679,6 +4552,7 @@ Scenario: verification metadata stays visible
                     step_results: vec![],
                     evidence: vec![],
                     duration_ms: 2,
+                    provenance: None,
                 },
                 crate::spec_core::ScenarioResult {
                     scenario_name: "[ai] uncertain scenario".into(),
@@ -3686,6 +4560,7 @@ Scenario: verification metadata stays visible
                     step_results: vec![],
                     evidence: vec![],
                     duration_ms: 3,
+                    provenance: None,
                 },
             ],
             summary: crate::spec_core::VerificationSummary {
@@ -4158,6 +5033,7 @@ Scenario: pass
             }],
             evidence: vec![],
             duration_ms: 10,
+            provenance: None,
         }
     }
 
@@ -4409,7 +5285,11 @@ Scenario: pass
 
         let estimates: Vec<f64> = nodes
             .iter()
-            .map(|n| n.estimate.as_deref().map_or(0.0, super::parse_estimate_days))
+            .map(|n| {
+                n.estimate
+                    .as_deref()
+                    .map_or(0.0, super::parse_estimate_days)
+            })
             .collect();
         let critical = super::compute_critical_path(nodes.len(), &edges, &estimates);
         let dot = super::generate_dot(&nodes, &edges, &critical);
@@ -4448,7 +5328,10 @@ Scenario: pass
         }];
 
         let dot = super::generate_dot(&nodes, &[], &[]);
-        assert!(dot.contains("2d"), "DOT node label should contain estimate '2d'");
+        assert!(
+            dot.contains("2d"),
+            "DOT node label should contain estimate '2d'"
+        );
 
         let _ = fs::remove_dir_all(dir);
     }
@@ -4555,13 +5438,20 @@ Scenario: pass
 
         let estimates: Vec<f64> = nodes
             .iter()
-            .map(|n| n.estimate.as_deref().map_or(0.0, super::parse_estimate_days))
+            .map(|n| {
+                n.estimate
+                    .as_deref()
+                    .map_or(0.0, super::parse_estimate_days)
+            })
             .collect();
         let critical = super::compute_critical_path(nodes.len(), &edges, &estimates);
         let dot = super::generate_dot(&nodes, &edges, &critical);
 
         // Critical path A -> B -> C should be marked red
-        assert!(dot.contains("color=red"), "Critical path edges should be colored red");
+        assert!(
+            dot.contains("color=red"),
+            "Critical path edges should be colored red"
+        );
 
         let _ = fs::remove_dir_all(dir);
     }

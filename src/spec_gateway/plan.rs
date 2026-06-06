@@ -289,10 +289,7 @@ fn extract_summary(lines: &[&str]) -> String {
     for line in lines.iter().take(5) {
         let trimmed = line.trim();
         if trimmed.starts_with("//!") {
-            return trimmed
-                .trim_start_matches("//!")
-                .trim()
-                .to_string();
+            return trimmed.trim_start_matches("//!").trim().to_string();
         }
     }
 
@@ -481,9 +478,7 @@ fn segment_matches(pattern: &str, segment: &str) -> bool {
         }
     }
 
-    if anchored_end
-        && let Some(last_part) = parts.iter().rev().find(|part| !part.is_empty())
-    {
+    if anchored_end && let Some(last_part) = parts.iter().rev().find(|part| !part.is_empty()) {
         return segment.ends_with(last_part);
     }
 
@@ -491,14 +486,9 @@ fn segment_matches(pattern: &str, segment: &str) -> bool {
 }
 
 /// Build a task sketch from scenario dependencies using topological sort.
-fn build_task_sketch(
-    scenarios: &[crate::spec_core::Scenario],
-    sections: &[Section],
-) -> TaskSketch {
+fn build_task_sketch(scenarios: &[crate::spec_core::Scenario], sections: &[Section]) -> TaskSketch {
     if scenarios.is_empty() {
-        return TaskSketch {
-            groups: Vec::new(),
-        };
+        return TaskSketch { groups: Vec::new() };
     }
 
     let n = scenarios.len();
@@ -556,11 +546,8 @@ fn build_task_sketch(
                 .collect();
 
             // Collect boundary paths from scenario step text
-            let boundary_paths = collect_boundary_paths_for_scenarios(
-                &layer_scenarios,
-                scenarios,
-                sections,
-            );
+            let boundary_paths =
+                collect_boundary_paths_for_scenarios(&layer_scenarios, scenarios, sections);
 
             // Collect test selectors
             let test_selectors: Vec<String> = layer_scenarios
@@ -601,8 +588,7 @@ fn collect_boundary_paths_for_scenarios(
         let scenario = &scenarios[idx];
         for step in &scenario.steps {
             for pattern in &allowed {
-                if (step.text.contains(pattern)
-                    || pattern_base_mentioned(&step.text, pattern))
+                if (step.text.contains(pattern) || pattern_base_mentioned(&step.text, pattern))
                     && !paths.contains(pattern)
                 {
                     paths.push(pattern.clone());
@@ -643,10 +629,7 @@ pub fn format_plan_text(ctx: &PlanContext) -> String {
     if ctx.codebase_context.files.is_empty() {
         out.push_str("(no matching files found)\n");
     } else {
-        out.push_str(&format!(
-            "Files ({}):\n",
-            ctx.codebase_context.files.len()
-        ));
+        out.push_str(&format!("Files ({}):\n", ctx.codebase_context.files.len()));
         for file in &ctx.codebase_context.files {
             if file.summary.is_empty() {
                 out.push_str(&format!("  - {}\n", file.path));
@@ -761,6 +744,28 @@ pub fn format_plan_prompt(ctx: &PlanContext) -> String {
 
     // Task sketch
     out.push_str("# Suggested Implementation Order\n\n");
+
+    // Behavior rules: which examples prove which rule (Phase 1 BDD grouping).
+    if !ctx.contract.rules.is_empty() {
+        out.push_str("## Behavior Rules\n\n");
+        for rule in &ctx.contract.rules {
+            if rule.name == rule.key.id {
+                out.push_str(&format!("- Rule `{}`\n", rule.key.id));
+            } else {
+                out.push_str(&format!("- Rule `{}` — {}\n", rule.key.id, rule.name));
+            }
+            for scenario in ctx
+                .contract
+                .completion_criteria
+                .iter()
+                .filter(|s| s.rule.as_deref() == Some(rule.key.id.as_str()))
+            {
+                out.push_str(&format!("  - {}\n", scenario.name));
+            }
+        }
+        out.push('\n');
+    }
+
     if ctx.task_sketch.groups.is_empty() {
         out.push_str("No scenario dependencies detected.\n\n");
     } else {
@@ -805,15 +810,21 @@ pub fn format_plan_prompt(ctx: &PlanContext) -> String {
     out.push_str("After implementing each scenario group:\n");
     out.push_str("1. **Spec compliance**: Execute `agent-spec lifecycle` with that group's test selectors. All must show `pass`.\n");
     out.push_str("2. **Code quality**: Review for dead code, `.unwrap()` in production paths, boundary violations, unnecessary complexity.\n\n");
-    out.push_str("Do NOT proceed to the next group until both stages pass for the current group.\n\n");
+    out.push_str(
+        "Do NOT proceed to the next group until both stages pass for the current group.\n\n",
+    );
 
     out.push_str("### Status Reporting\n");
     out.push_str("After each scenario group, report your status:\n");
     out.push_str("- **DONE** — All scenarios in this group pass lifecycle verification\n");
-    out.push_str("- **DONE_WITH_CONCERNS** — Scenarios pass but you have doubts (explain what and why)\n");
+    out.push_str(
+        "- **DONE_WITH_CONCERNS** — Scenarios pass but you have doubts (explain what and why)\n",
+    );
     out.push_str("- **NEEDS_CONTEXT** — You need information not provided in the contract or codebase context\n");
     out.push_str("- **BLOCKED** — You cannot complete this group (explain the blocker)\n\n");
-    out.push_str("If BLOCKED: do not attempt workarounds. Report the blocker and wait for guidance.\n");
+    out.push_str(
+        "If BLOCKED: do not attempt workarounds. Report the blocker and wait for guidance.\n",
+    );
 
     out
 }
@@ -823,8 +834,8 @@ pub fn format_plan_prompt(ctx: &PlanContext) -> String {
 mod tests {
     use super::*;
     use crate::spec_core::{
-        Boundary, BoundaryCategory, ResolvedSpec, Scenario, Section, Span, SpecDocument,
-        SpecLevel, SpecMeta, Step, StepKind, TestSelector,
+        Boundary, BoundaryCategory, ResolvedSpec, Scenario, Section, Span, SpecDocument, SpecLevel,
+        SpecMeta, Step, StepKind, TestSelector,
     };
 
     fn make_test_contract() -> TaskContract {
@@ -838,6 +849,7 @@ mod tests {
             forbidden: vec!["src/spec_parser/**".into()],
             out_of_scope: vec!["AI generation".into()],
             completion_criteria: Vec::new(),
+            rules: vec![],
         }
     }
 
@@ -863,6 +875,7 @@ mod tests {
                 review: crate::spec_core::ReviewMode::Auto,
                 mode: crate::spec_core::ScenarioMode::Standard,
                 depends_on: Vec::new(),
+                rule: None,
                 span: Span::default(),
             },
             Scenario {
@@ -873,6 +886,7 @@ mod tests {
                 review: crate::spec_core::ReviewMode::Auto,
                 mode: crate::spec_core::ScenarioMode::Standard,
                 depends_on: Vec::new(),
+                rule: None,
                 span: Span::default(),
             },
             Scenario {
@@ -889,6 +903,7 @@ mod tests {
                 review: crate::spec_core::ReviewMode::Auto,
                 mode: crate::spec_core::ScenarioMode::Standard,
                 depends_on: vec!["scenario A".into()],
+                rule: None,
                 span: Span::default(),
             },
             Scenario {
@@ -899,6 +914,7 @@ mod tests {
                 review: crate::spec_core::ReviewMode::Auto,
                 mode: crate::spec_core::ScenarioMode::Standard,
                 depends_on: Vec::new(),
+                rule: None,
                 span: Span::default(),
             },
         ];
@@ -913,19 +929,17 @@ mod tests {
                     tags: vec![],
                     depends: vec![],
                     estimate: None,
+                    capability: None,
                 },
-                sections: vec![
-                    Section::Boundaries {
-                        items: vec![
-                            Boundary {
-                                category: BoundaryCategory::Allow,
-                                text: "src/spec_gateway/**".into(),
-                                span: Span::default(),
-                            },
-                        ],
+                sections: vec![Section::Boundaries {
+                    items: vec![Boundary {
+                        category: BoundaryCategory::Allow,
+                        text: "src/spec_gateway/**".into(),
                         span: Span::default(),
-                    },
-                ],
+                    }],
+                    span: Span::default(),
+                }],
+                lint_acks: vec![],
                 source_path: std::path::PathBuf::new(),
             },
             inherited_constraints: Vec::new(),
@@ -1027,6 +1041,7 @@ mod tests {
             forbidden: Vec::new(),
             out_of_scope: Vec::new(),
             completion_criteria: Vec::new(),
+            rules: vec![],
         };
 
         let resolved = ResolvedSpec {
@@ -1039,6 +1054,7 @@ mod tests {
                     tags: vec![],
                     depends: vec![],
                     estimate: None,
+                    capability: None,
                 },
                 sections: vec![Section::Boundaries {
                     items: vec![Boundary {
@@ -1048,6 +1064,7 @@ mod tests {
                     }],
                     span: Span::default(),
                 }],
+                lint_acks: vec![],
                 source_path: PathBuf::new(),
             },
             inherited_constraints: Vec::new(),
@@ -1090,7 +1107,9 @@ mod tests {
     #[test]
     fn test_plan_prompt_format_is_self_contained() {
         let mut contract = make_test_contract();
-        contract.must.push("inherited constraint from project".into());
+        contract
+            .must
+            .push("inherited constraint from project".into());
 
         let resolved = make_test_resolved();
         let ctx = build_plan_context(
@@ -1123,6 +1142,45 @@ mod tests {
     }
 
     #[test]
+    fn test_plan_prompt_includes_rule_grouping() {
+        let doc = crate::spec_parser::parse_spec_from_str(
+            r#"spec: task
+name: "退款"
+---
+
+## 完成条件
+
+### Rule: refund-must-be-idempotent — 退款幂等
+场景: 首次退款成功
+  测试: t1
+  当 退款
+  那么 成功
+场景: 重复退款不重复扣减
+  测试: t2
+  当 再次退款
+  那么 不重复
+"#,
+        )
+        .unwrap();
+        let contract = crate::spec_gateway::TaskContract::from_doc(&doc);
+        let resolved = make_test_resolved();
+        let ctx = build_plan_context(
+            &contract,
+            &resolved,
+            std::path::Path::new("."),
+            ScanDepth::Shallow,
+        );
+        let prompt = format_plan_prompt(&ctx);
+
+        assert!(prompt.contains("## Behavior Rules"));
+        assert!(prompt.contains("Rule `refund-must-be-idempotent` — 退款幂等"));
+        // The two examples proving the rule are listed under it.
+        let rule_pos = prompt.find("refund-must-be-idempotent").unwrap();
+        let ex_pos = prompt.find("首次退款成功").unwrap();
+        assert!(rule_pos < ex_pos, "examples listed under their rule");
+    }
+
+    #[test]
     fn test_plan_full_depth_includes_pub_signatures() {
         let contract = make_test_contract();
         let resolved = make_test_resolved();
@@ -1150,6 +1208,7 @@ mod tests {
             forbidden: Vec::new(),
             out_of_scope: Vec::new(),
             completion_criteria: Vec::new(),
+            rules: vec![],
         };
 
         let resolved = ResolvedSpec {
@@ -1162,6 +1221,7 @@ mod tests {
                     tags: vec![],
                     depends: vec![],
                     estimate: None,
+                    capability: None,
                 },
                 sections: vec![Section::Boundaries {
                     items: vec![Boundary {
@@ -1171,6 +1231,7 @@ mod tests {
                     }],
                     span: Span::default(),
                 }],
+                lint_acks: vec![],
                 source_path: PathBuf::new(),
             },
             inherited_constraints: Vec::new(),
@@ -1181,10 +1242,7 @@ mod tests {
         let code_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let ctx = build_plan_context(&contract, &resolved, code_dir, ScanDepth::Shallow);
 
-        assert!(
-            !ctx.warnings.is_empty(),
-            "should warn about missing path"
-        );
+        assert!(!ctx.warnings.is_empty(), "should warn about missing path");
         assert!(
             ctx.warnings.iter().any(|w| w.contains("nonexistent")),
             "warning should mention the missing path"

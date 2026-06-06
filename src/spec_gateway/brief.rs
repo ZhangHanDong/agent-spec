@@ -1,5 +1,6 @@
 use crate::spec_core::{
-    BoundaryCategory, Constraint, ConstraintCategory, ResolvedSpec, Scenario, Section, SpecDocument,
+    BehaviorRule, BoundaryCategory, Constraint, ConstraintCategory, ResolvedSpec, Scenario,
+    Section, SpecDocument,
 };
 use serde::{Deserialize, Serialize};
 
@@ -15,6 +16,10 @@ pub struct TaskContract {
     pub forbidden: Vec<String>,
     pub out_of_scope: Vec<String>,
     pub completion_criteria: Vec<Scenario>,
+    /// BDD behavior rules grouping the completion criteria (Phase 1).
+    /// Additive; empty for specs without `Rule:` lines (render stays flat).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rules: Vec<BehaviorRule>,
 }
 
 /// Legacy compatibility summary for older brief-based integrations.
@@ -83,6 +88,7 @@ impl SpecBrief {
                 Section::OutOfScope { items, .. } => {
                     out_of_scope.clone_from(items);
                 }
+                Section::Questions { .. } => {}
             }
         }
 
@@ -145,6 +151,7 @@ impl SpecBrief {
                 Section::OutOfScope { items, .. } => {
                     brief.out_of_scope.clone_from(items);
                 }
+                Section::Questions { .. } => {}
                 Section::AcceptanceCriteria { .. } => {}
             }
         }
@@ -244,6 +251,7 @@ impl TaskContract {
             forbidden: Vec::new(),
             out_of_scope: Vec::new(),
             completion_criteria: Vec::new(),
+            rules: Vec::new(),
         };
 
         for section in &doc.sections {
@@ -276,12 +284,16 @@ impl TaskContract {
                         }
                     }
                 }
-                Section::AcceptanceCriteria { scenarios, .. } => {
+                Section::AcceptanceCriteria {
+                    scenarios, rules, ..
+                } => {
                     contract.completion_criteria = scenarios.clone();
+                    contract.rules = rules.clone();
                 }
                 Section::OutOfScope { items, .. } => {
                     contract.out_of_scope.clone_from(items);
                 }
+                Section::Questions { .. } => {}
             }
         }
 
@@ -299,6 +311,7 @@ impl TaskContract {
             forbidden: Vec::new(),
             out_of_scope: Vec::new(),
             completion_criteria: Vec::new(),
+            rules: Vec::new(),
         };
 
         for constraint in &resolved.inherited_constraints {
@@ -335,12 +348,16 @@ impl TaskContract {
                         }
                     }
                 }
-                Section::AcceptanceCriteria { scenarios, .. } => {
+                Section::AcceptanceCriteria {
+                    scenarios, rules, ..
+                } => {
                     contract.completion_criteria = scenarios.clone();
+                    contract.rules = rules.clone();
                 }
                 Section::OutOfScope { items, .. } => {
                     contract.out_of_scope.clone_from(items);
                 }
+                Section::Questions { .. } => {}
             }
         }
 
@@ -404,8 +421,13 @@ impl TaskContract {
 
         if !self.completion_criteria.is_empty() {
             out.push_str("## Completion Criteria\n");
-            for scenario in &self.completion_criteria {
-                render_scenario(&mut out, scenario);
+            if self.rules.is_empty() {
+                // Legacy / ungrouped: flat scenario list (unchanged behavior).
+                for scenario in &self.completion_criteria {
+                    render_scenario(&mut out, scenario);
+                }
+            } else {
+                render_grouped_scenarios(&mut out, &self.completion_criteria, &self.rules);
             }
         }
 
@@ -423,6 +445,32 @@ fn push_constraint_into_contract(contract: &mut TaskContract, constraint: &Const
         ConstraintCategory::MustNot => push_unique(&mut contract.must_not, &constraint.text),
         ConstraintCategory::Decided => push_unique(&mut contract.decisions, &constraint.text),
         ConstraintCategory::General => push_unique(&mut contract.must, &constraint.text),
+    }
+}
+
+/// Render scenarios grouped under their behavior rules. Rules print in order
+/// with a `Rule: <id> — <name>` header followed by their scenarios; any
+/// ungrouped scenarios print last under no header.
+fn render_grouped_scenarios(out: &mut String, scenarios: &[Scenario], rules: &[BehaviorRule]) {
+    for rule in rules {
+        if rule.name == rule.key.id {
+            out.push_str(&format!("\nRule: {}\n", rule.key.id));
+        } else {
+            out.push_str(&format!("\nRule: {} — {}\n", rule.key.id, rule.name));
+        }
+        for scenario in scenarios
+            .iter()
+            .filter(|s| s.rule.as_deref() == Some(rule.key.id.as_str()))
+        {
+            render_scenario(out, scenario);
+        }
+    }
+    let ungrouped: Vec<&Scenario> = scenarios.iter().filter(|s| s.rule.is_none()).collect();
+    if !ungrouped.is_empty() {
+        out.push('\n');
+        for scenario in ungrouped {
+            render_scenario(out, scenario);
+        }
     }
 }
 
@@ -488,5 +536,79 @@ fn push_constraint_into_brief(brief: &mut SpecBrief, constraint: &Constraint) {
         ConstraintCategory::MustNot => push_unique(&mut brief.must_not, &constraint.text),
         ConstraintCategory::Decided => push_unique(&mut brief.decided, &constraint.text),
         ConstraintCategory::General => push_unique(&mut brief.must, &constraint.text),
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use crate::spec_parser::parse_spec_from_str;
+
+    use super::TaskContract;
+
+    #[test]
+    fn test_contract_renders_scenarios_grouped_by_rule() {
+        let input = r#"spec: task
+name: "分组渲染"
+---
+
+## 完成条件
+
+### Rule: refund-must-be-idempotent — 退款幂等
+场景: 首次退款成功
+  测试: t1
+  当 退款
+  那么 成功
+场景: 重复退款不重复扣减
+  测试: t2
+  当 再次退款
+  那么 不重复
+
+### Rule: refund-amount-cap — 退款不超原额
+场景: 超额退款被拒
+  测试: t3
+  当 超额退款
+  那么 拒绝
+"#;
+        let doc = parse_spec_from_str(input).unwrap();
+        let contract = TaskContract::from_doc(&doc);
+        let out = contract.to_prompt();
+
+        // Grouped: each Rule header precedes its own scenarios.
+        assert!(out.contains("Rule: refund-must-be-idempotent — 退款幂等"));
+        assert!(out.contains("Rule: refund-amount-cap — 退款不超原额"));
+        let idem_pos = out.find("refund-must-be-idempotent").unwrap();
+        let cap_pos = out.find("refund-amount-cap").unwrap();
+        let s_first = out.find("首次退款成功").unwrap();
+        let s_third = out.find("超额退款被拒").unwrap();
+        // First rule's scenarios appear after its header and before the 2nd rule.
+        assert!(idem_pos < s_first && s_first < cap_pos);
+        assert!(cap_pos < s_third);
+    }
+
+    #[test]
+    fn test_legacy_contract_without_rule_stays_flat() {
+        let input = r#"spec: task
+name: "扁平"
+---
+
+## 完成条件
+
+场景: 一
+  测试: t1
+  当 a
+  那么 b
+场景: 二
+  测试: t2
+  当 a
+  那么 b
+"#;
+        let doc = parse_spec_from_str(input).unwrap();
+        let contract = TaskContract::from_doc(&doc);
+        let out = contract.to_prompt();
+        // No Rule headers when there are no rules.
+        assert!(!out.contains("Rule:"));
+        assert!(out.contains("Scenario: 一"));
+        assert!(out.contains("Scenario: 二"));
     }
 }

@@ -7,6 +7,8 @@ use std::path::PathBuf;
 pub enum SpecLevel {
     Org,
     Project,
+    /// Capability scope: a long-lived living-spec holding Rules proven by tasks (Phase 3).
+    Capability,
     Task,
 }
 
@@ -32,6 +34,19 @@ pub struct SpecMeta {
     /// Estimated effort (e.g., "0.5d", "2d", "1w").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub estimate: Option<String>,
+    /// Capability this task contributes to (Phase 3). Additive; `None` for
+    /// specs that declare no `capability:`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability: Option<String>,
+}
+
+/// An author's deliberate waiver of a lint rule, recorded inline as
+/// `<!-- lint-ack: <code> — <reason> -->` (Phase 5).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LintAck {
+    pub code: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub reason: String,
 }
 
 /// A parsed .spec document.
@@ -39,6 +54,9 @@ pub struct SpecMeta {
 pub struct SpecDocument {
     pub meta: SpecMeta,
     pub sections: Vec<Section>,
+    /// Inline lint-ack waivers (Phase 5). Additive; empty for specs with none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lint_acks: Vec<LintAck>,
     #[serde(skip)]
     pub source_path: PathBuf,
 }
@@ -65,9 +83,24 @@ pub enum Section {
     },
     AcceptanceCriteria {
         scenarios: Vec<Scenario>,
+        /// BDD behavior rules grouping scenarios under this section.
+        /// Additive (Phase 1 BDD semantics); empty for specs without `Rule:` lines.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        rules: Vec<BehaviorRule>,
+        /// `Rule:` lines whose id was not a valid kebab-case identifier.
+        /// Retained (not promoted to a [`BehaviorRule`]) so the `bdd-rule-id`
+        /// lint can flag them. Additive.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        malformed_rules: Vec<MalformedRule>,
         span: Span,
     },
     OutOfScope {
+        items: Vec<String>,
+        span: Span,
+    },
+    /// Discovery questions (Phase 4): unresolved items to clarify before
+    /// implementation. Not scenarios; does not affect verification.
+    Questions {
         items: Vec<String>,
         span: Span,
     },
@@ -124,23 +157,87 @@ impl ScenarioMode {
 }
 
 /// Review mode for a scenario: whether it needs human review after passing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ReviewMode {
+    #[default]
     Auto,
     Human,
-}
-
-impl Default for ReviewMode {
-    fn default() -> Self {
-        Self::Auto
-    }
 }
 
 impl ReviewMode {
     pub fn is_auto(&self) -> bool {
         *self == Self::Auto
     }
+}
+
+/// Scope of a BDD behavior rule. The keystone of the BDD-spine roadmap:
+/// the same Rule primitive lifts across task/capability/project scope by
+/// changing only this field, never the stable `id`.
+///
+/// Phase 1 only produces `Task`; `Capability` and `Project` are reserved
+/// variants written into the AST but not parsed/loaded/promoted yet.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuleScope {
+    /// Task scope, namespaced by the spec file stem (not the human display name).
+    Task(String),
+    /// Capability scope (reserved; Phase 3).
+    Capability(String),
+    /// Project scope (reserved; Phase 3).
+    Project,
+}
+
+/// Stable identity of a behavior rule: `{ scope, id }`.
+/// `id` is the stable kebab-case identifier; the human display text lives in
+/// `BehaviorRule.name` and may change freely without breaking references.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuleKey {
+    pub scope: RuleScope,
+    pub id: String,
+}
+
+/// Lifecycle event in a behavior rule's provenance log (Phase 3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RuleEventKind {
+    Created,
+    Promoted,
+    Affirmed,
+    Deprecated,
+}
+
+/// A single provenance event on a behavior rule.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuleEvent {
+    pub kind: RuleEventKind,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub note: String,
+}
+
+/// A BDD behavior rule: a promise the system should keep, proven by one or
+/// more scenarios (examples). Formulation-layer primitive (Phase 1).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BehaviorRule {
+    pub key: RuleKey,
+    /// Human-readable display text. Defaults to `key.id` when no display name given.
+    pub name: String,
+    /// Names of scenarios grouped under this rule, in document order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scenario_names: Vec<String>,
+    /// Provenance event log (Phase 3). Additive; empty for freshly-parsed rules.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub events: Vec<RuleEvent>,
+    pub span: Span,
+}
+
+/// A `Rule:` header whose leading token was not a valid kebab-case id, so it
+/// was not promoted to a [`BehaviorRule`]. Carries the raw content for the
+/// `bdd-rule-id` lint to report.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MalformedRule {
+    pub raw: String,
+    pub span: Span,
 }
 
 /// A BDD scenario.
@@ -157,6 +254,10 @@ pub struct Scenario {
     pub mode: ScenarioMode,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub depends_on: Vec<String>,
+    /// `id` of the owning [`BehaviorRule`], if this scenario is grouped under one.
+    /// Additive (Phase 1 BDD semantics); `None` for ungrouped/legacy scenarios.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule: Option<String>,
     pub span: Span,
 }
 
@@ -164,10 +265,7 @@ impl Scenario {
     /// Returns `true` if this scenario is marked as critical — either via a
     /// `critical` tag or a `(critical)` / `（critical）` name suffix (case-insensitive).
     pub fn is_critical(&self) -> bool {
-        let has_tag = self
-            .tags
-            .iter()
-            .any(|t| t.eq_ignore_ascii_case("critical"));
+        let has_tag = self.tags.iter().any(|t| t.eq_ignore_ascii_case("critical"));
         if has_tag {
             return true;
         }
@@ -230,6 +328,49 @@ impl TestSelector {
     }
 }
 
+/// A verifiable binding for a scenario (Phase 6.5). `Test` is the binding that
+/// exists today; the other variants are reserved mounting points for Phase 7
+/// runners (structural checks, benchmarks, external probes, AI inference).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum Probe {
+    Test(TestSelector),
+    /// A structural/static check expression (Phase 7).
+    Static(String),
+    /// A benchmark probe with a runner, filter, and threshold (Phase 7).
+    Benchmark {
+        runner: String,
+        filter: String,
+        threshold: String,
+    },
+    /// An external probe invoked via a runner with args (Phase 7).
+    External {
+        runner: String,
+        args: Vec<String>,
+    },
+    /// An inferential (AI) probe (Phase 7).
+    Inferential,
+}
+
+impl Probe {
+    /// Derive a scenario's probe. Back-compat shim: a scenario with a
+    /// `test_selector` derives `Probe::Test`; `Test:` remains sugar for it.
+    pub fn from_scenario(scenario: &Scenario) -> Option<Probe> {
+        scenario.test_selector.clone().map(Probe::Test)
+    }
+
+    /// Stable kind label for reporting.
+    pub fn kind_label(&self) -> &'static str {
+        match self {
+            Probe::Test(_) => "test",
+            Probe::Static(_) => "static",
+            Probe::Benchmark { .. } => "benchmark",
+            Probe::External { .. } => "external",
+            Probe::Inferential => "inferential",
+        }
+    }
+}
+
 /// BDD step keyword.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -288,4 +429,51 @@ pub struct ResolvedSpec {
     pub inherited_constraints: Vec<Constraint>,
     pub inherited_decisions: Vec<String>,
     pub all_scenarios: Vec<Scenario>,
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod probe_tests {
+    use super::*;
+
+    #[test]
+    fn test_probe_kind_label_test() {
+        let p = Probe::Test(TestSelector::filter_only("test_x"));
+        assert_eq!(p.kind_label(), "test");
+    }
+
+    #[test]
+    fn test_probe_kind_label_reserved_variants() {
+        assert_eq!(Probe::Static("x".into()).kind_label(), "static");
+        assert_eq!(
+            Probe::Benchmark {
+                runner: "criterion".into(),
+                filter: "b".into(),
+                threshold: "p95<2s".into()
+            }
+            .kind_label(),
+            "benchmark"
+        );
+        assert_eq!(
+            Probe::External {
+                runner: "curl".into(),
+                args: vec![]
+            }
+            .kind_label(),
+            "external"
+        );
+        assert_eq!(Probe::Inferential.kind_label(), "inferential");
+    }
+
+    #[test]
+    fn test_probe_roundtrips() {
+        let p = Probe::Benchmark {
+            runner: "criterion".into(),
+            filter: "bench_x".into(),
+            threshold: "p95<2000ms".into(),
+        };
+        let json = serde_json::to_string(&p).unwrap();
+        let back: Probe = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, p);
+    }
 }

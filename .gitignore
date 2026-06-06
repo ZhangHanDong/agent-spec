@@ -30,3 +30,4 @@ Thumbs.db
 
 # agent-spec run logs
 .agent-spec/
+books/harness-spec-ai/

@@ -212,8 +212,7 @@ impl SpecGateway {
         let boundaries = BoundariesVerifier;
         let test = TestVerifier;
         let complexity = ComplexityVerifier;
-        let verifiers: Vec<&dyn Verifier> =
-            vec![&structural, &boundaries, &test, &ai, &complexity];
+        let verifiers: Vec<&dyn Verifier> = vec![&structural, &boundaries, &test, &ai, &complexity];
         run_verification(&ctx, &verifiers)
     }
 
@@ -564,6 +563,7 @@ name: "缺少测试绑定"
                 }],
                 evidence: vec![],
                 duration_ms: 0,
+                provenance: None,
             }],
             summary: crate::spec_core::VerificationSummary {
                 total: 1,
@@ -791,6 +791,7 @@ name: "Contract fidelity"
                     }],
                     evidence: vec![],
                     duration_ms: 0,
+                    provenance: None,
                 },
                 crate::spec_core::ScenarioResult {
                     scenario_name: "未验证场景".into(),
@@ -802,6 +803,7 @@ name: "Contract fidelity"
                     }],
                     evidence: vec![],
                     duration_ms: 0,
+                    provenance: None,
                 },
             ],
             summary: crate::spec_core::VerificationSummary {
@@ -817,6 +819,112 @@ name: "Contract fidelity"
         assert!(!gw.is_passing(&report));
         let summary = gw.failure_summary(&report);
         assert!(summary.contains("verdict: Skip"));
+    }
+
+    #[test]
+    fn test_new_bdd_lints_do_not_affect_lifecycle_verdict() {
+        // Triggers bdd-rule-grouping (3 ungrouped scenarios) and
+        // bdd-implementation-detail-step (点击), all warning/info.
+        let input = r#"spec: task
+name: "lint-not-gating"
+---
+
+## 完成条件
+
+场景: 一
+  测试: t1
+  当 用户点击按钮
+  那么 成功
+场景: 二
+  测试: t2
+  当 a
+  那么 b
+场景: 三
+  测试: t3
+  当 a
+  那么 b
+"#;
+        let doc = crate::spec_parser::parse_spec_from_str(input).unwrap();
+        let report = crate::spec_lint::LintPipeline::with_defaults().run(&doc);
+        let bdd: Vec<_> = report
+            .diagnostics
+            .iter()
+            .filter(|d| d.rule.starts_with("bdd-"))
+            .collect();
+        assert!(!bdd.is_empty(), "expected bdd-* diagnostics to fire");
+        assert!(
+            bdd.iter()
+                .all(|d| d.severity != crate::spec_core::Severity::Error),
+            "bdd-* lints must never be Error (would gate lifecycle)"
+        );
+
+        // is_passing reads only the verification summary — never lint — so an
+        // all-pass report passes regardless of the bdd diagnostics above.
+        let gw = SpecGateway::from_input(input).unwrap();
+        let all_pass = VerificationReport {
+            spec_name: "lint-not-gating".into(),
+            results: vec![crate::spec_core::ScenarioResult {
+                scenario_name: "一".into(),
+                verdict: Verdict::Pass,
+                step_results: vec![],
+                evidence: vec![],
+                duration_ms: 0,
+                provenance: None,
+            }],
+            summary: crate::spec_core::VerificationSummary {
+                total: 1,
+                passed: 1,
+                failed: 0,
+                skipped: 0,
+                uncertain: 0,
+                pending_review: 0,
+            },
+        };
+        assert!(gw.is_passing(&all_pass));
+    }
+
+    #[test]
+    fn test_existing_specs_pass_lifecycle_after_v1_changes() {
+        // Every existing spec/example must still parse, and the new bdd-* lints
+        // must never gate them (no Error severity from v1 rules).
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut checked = 0usize;
+        for dir in ["specs", "examples"] {
+            let base = root.join(dir);
+            let mut stack = vec![base];
+            while let Some(d) = stack.pop() {
+                let Ok(entries) = fs::read_dir(&d) else {
+                    continue;
+                };
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        stack.push(path);
+                        continue;
+                    }
+                    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    if !(name.ends_with(".spec") || name.ends_with(".spec.md")) {
+                        continue;
+                    }
+                    let doc = crate::spec_parser::parse_spec(&path)
+                        .unwrap_or_else(|e| panic!("failed to parse {}: {e:?}", path.display()));
+                    let report = crate::spec_lint::LintPipeline::with_defaults().run(&doc);
+                    for d in &report.diagnostics {
+                        if d.rule.starts_with("bdd-") {
+                            assert_ne!(
+                                d.severity,
+                                crate::spec_core::Severity::Error,
+                                "bdd lint gated {}: {}",
+                                path.display(),
+                                d.message
+                            );
+                        }
+                    }
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked > 0, "expected to check existing specs");
     }
 
     #[test]
@@ -840,6 +948,65 @@ name: "AI skeleton"
         assert_eq!(report.summary.uncertain, 1);
         assert_eq!(report.summary.skipped, 0);
         assert_eq!(report.results[0].verdict, Verdict::Uncertain);
+    }
+
+    #[test]
+    fn test_matrix_does_not_change_is_passing() {
+        use crate::spec_core::{EvidenceProvenance, ScenarioResult, Verdict, VerificationReport};
+        let gw = SpecGateway::from_input(SAMPLE).unwrap();
+        let report = VerificationReport::from_results(
+            "x".into(),
+            vec![ScenarioResult {
+                scenario_name: "s".into(),
+                verdict: Verdict::Pass,
+                step_results: vec![],
+                evidence: vec![],
+                duration_ms: 0,
+                provenance: Some(EvidenceProvenance::Computational),
+            }],
+        );
+        let before = report.summary.clone();
+        let passing_before = gw.is_passing(&report);
+        // Build the matrix (immutable borrow of report).
+        let _ = crate::spec_report::build_coverage_matrix(
+            gw.resolved(),
+            Some(&report),
+            &std::collections::HashSet::new(),
+        );
+        assert!(passing_before);
+        assert!(
+            gw.is_passing(&report),
+            "is_passing unchanged after matrix build"
+        );
+        assert_eq!(before.total, report.summary.total);
+        assert_eq!(before.failed, report.summary.failed);
+        assert_eq!(before.skipped, report.summary.skipped);
+        assert_eq!(before.uncertain, report.summary.uncertain);
+    }
+
+    #[test]
+    fn test_provenance_ai_stub_is_inferential() {
+        let gw = SpecGateway::from_input(
+            r#"spec: task
+name: "AI provenance"
+---
+
+## 完成条件
+
+场景: 未覆盖场景
+  假设 存在一个未被机械 verifier 覆盖的场景
+  当 gateway 使用 stub 模式验证
+  那么 返回 uncertain
+"#,
+        )
+        .unwrap();
+
+        let report = gw.verify_with_ai_mode(".", AiMode::Stub).unwrap();
+        assert_eq!(
+            report.results[0].provenance,
+            Some(crate::spec_core::EvidenceProvenance::Inferential),
+            "stub AI verdict must be stamped inferential"
+        );
     }
 
     #[test]
@@ -969,6 +1136,7 @@ name: "AI host backend"
                 step_results: vec![],
                 evidence: vec![],
                 duration_ms: 0,
+                provenance: None,
             })
             .collect();
         VerificationReport::from_results(spec_name.to_owned(), results)
@@ -1004,10 +1172,7 @@ tags: [test]
         let gw = SpecGateway::from_input(CRITICAL_SAMPLE).unwrap();
         let report = make_report(
             "门禁测试",
-            &[
-                ("普通场景", Verdict::Pass),
-                ("关键场景", Verdict::Fail),
-            ],
+            &[("普通场景", Verdict::Pass), ("关键场景", Verdict::Fail)],
         );
 
         let gate = gw.gate_status(&report);
@@ -1020,10 +1185,7 @@ tags: [test]
         let gw = SpecGateway::from_input(CRITICAL_SAMPLE).unwrap();
         let report = make_report(
             "门禁测试",
-            &[
-                ("普通场景", Verdict::Pass),
-                ("关键场景", Verdict::Pass),
-            ],
+            &[("普通场景", Verdict::Pass), ("关键场景", Verdict::Pass)],
         );
 
         let gate = gw.gate_status(&report);
@@ -1036,10 +1198,7 @@ tags: [test]
         let gw = SpecGateway::from_input(SAMPLE).unwrap();
         let report = make_report(
             "测试任务",
-            &[
-                ("正常路径", Verdict::Pass),
-                ("错误路径", Verdict::Fail),
-            ],
+            &[("正常路径", Verdict::Pass), ("错误路径", Verdict::Fail)],
         );
 
         let gate = gw.gate_status(&report);
@@ -1077,10 +1236,7 @@ tags: [test]
         assert_eq!(scenario.display_name(), "用户注册成功");
 
         // Verify gate_status works with the display name
-        let report = make_report(
-            "后缀测试",
-            &[("用户注册成功（critical）", Verdict::Fail)],
-        );
+        let report = make_report("后缀测试", &[("用户注册成功（critical）", Verdict::Fail)]);
         let gate = gw.gate_status(&report);
         assert!(gate.gate_blocked);
         assert_eq!(gate.blocked_gates, vec!["用户注册成功"]);
@@ -1092,10 +1248,7 @@ tags: [test]
         let gw = SpecGateway::from_input(CRITICAL_SAMPLE).unwrap();
         let report = make_report(
             "门禁测试",
-            &[
-                ("普通场景", Verdict::Fail),
-                ("关键场景", Verdict::Fail),
-            ],
+            &[("普通场景", Verdict::Fail), ("关键场景", Verdict::Fail)],
         );
 
         let passing = gw.is_passing(&report);
@@ -1129,10 +1282,7 @@ name: "人类审核"
         .unwrap();
 
         // Simulate a PendingReview result (test verifier would produce this)
-        let report = make_report(
-            "人类审核",
-            &[("需要人类审核", Verdict::PendingReview)],
-        );
+        let report = make_report("人类审核", &[("需要人类审核", Verdict::PendingReview)]);
 
         assert_eq!(report.summary.pending_review, 1);
         assert_eq!(report.results[0].verdict, Verdict::PendingReview);
@@ -1160,10 +1310,7 @@ name: "审核模式"
         )
         .unwrap();
 
-        let report = make_report(
-            "审核模式",
-            &[("审核场景", Verdict::PendingReview)],
-        );
+        let report = make_report("审核模式", &[("审核场景", Verdict::PendingReview)]);
 
         // Auto mode: PendingReview counts as pass
         assert!(gw.is_passing_with_review_mode(&report, "auto"));
@@ -1190,10 +1337,7 @@ name: "严格模式"
         )
         .unwrap();
 
-        let report = make_report(
-            "严格模式",
-            &[("严格审核", Verdict::PendingReview)],
-        );
+        let report = make_report("严格模式", &[("严格审核", Verdict::PendingReview)]);
 
         // Strict mode: PendingReview counts as NOT passing
         assert!(!gw.is_passing_with_review_mode(&report, "strict"));
@@ -1242,10 +1386,7 @@ tags: [test]
         // Build a report where optimize scenario passes
         let report = make_report(
             "优化模式测试",
-            &[
-                ("普通场景", Verdict::Pass),
-                ("优化场景", Verdict::Pass),
-            ],
+            &[("普通场景", Verdict::Pass), ("优化场景", Verdict::Pass)],
         );
 
         // is_passing should be true (all pass)
@@ -1274,10 +1415,7 @@ tags: [test]
         let gw = SpecGateway::from_input(OPTIMIZE_SAMPLE).unwrap();
         let report = make_report(
             "优化模式测试",
-            &[
-                ("普通场景", Verdict::Pass),
-                ("优化场景", Verdict::Fail),
-            ],
+            &[("普通场景", Verdict::Pass), ("优化场景", Verdict::Fail)],
         );
 
         // Optimize scenario failing should cause is_passing to be false
@@ -1327,10 +1465,7 @@ tags: [test]
         // Build report where A fails
         let mut report = make_report(
             "依赖测试",
-            &[
-                ("场景 A", Verdict::Fail),
-                ("场景 B", Verdict::Pass),
-            ],
+            &[("场景 A", Verdict::Fail), ("场景 B", Verdict::Pass)],
         );
 
         // Apply dependency skips

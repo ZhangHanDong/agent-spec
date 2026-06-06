@@ -1,26 +1,51 @@
 use crate::spec_core::{
-    Boundary, BoundaryCategory, Constraint, ConstraintCategory, ReviewMode, Scenario,
-    ScenarioMode, Section, Span, SpecDocument, SpecError, SpecResult, Step, TestSelector,
+    BehaviorRule, Boundary, BoundaryCategory, Constraint, ConstraintCategory, MalformedRule,
+    ReviewMode, RuleKey, RuleScope, Scenario, ScenarioMode, Section, Span, SpecDocument, SpecError,
+    SpecResult, Step, TestSelector,
 };
 use std::path::{Path, PathBuf};
 
 use super::keywords::{
     SectionKind, TestSelectorField, extract_params, match_depends_field, match_mode_field,
-    match_review_field, match_scenario_header, match_scenario_tags, match_section_header,
-    match_step_keyword, match_test_selector, match_test_selector_field,
+    match_review_field, match_rule_header, match_scenario_header, match_scenario_tags,
+    match_section_header, match_step_keyword, match_test_selector, match_test_selector_field,
 };
 use super::meta::parse_meta;
 
 /// Parse a .spec/.spec.md file from disk.
 pub fn parse_spec(path: &Path) -> SpecResult<SpecDocument> {
     let content = std::fs::read_to_string(path)?;
-    let mut doc = parse_spec_from_str(&content)?;
+    let stem = task_stem_from_path(path);
+    let mut doc = parse_spec_from_str_with_stem(&content, &stem)?;
     doc.source_path = path.to_path_buf();
     Ok(doc)
 }
 
+/// Derive the task scope namespace from a spec path: the file stem with any
+/// `.spec.md` / `.spec` suffix removed (e.g. `task-foo.spec.md` -> `task-foo`).
+pub fn task_stem_from_path(path: &Path) -> String {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default();
+    name.strip_suffix(".spec.md")
+        .or_else(|| name.strip_suffix(".spec"))
+        .unwrap_or(name)
+        .to_string()
+}
+
 /// Parse a .spec/.spec.md string into a SpecDocument.
+///
+/// Task-scope behavior rules are namespaced by an empty stem; use
+/// [`parse_spec`] (from a path) or [`parse_spec_from_str_with_stem`] when the
+/// task stem matters.
 pub fn parse_spec_from_str(input: &str) -> SpecResult<SpecDocument> {
+    parse_spec_from_str_with_stem(input, "")
+}
+
+/// Parse a .spec/.spec.md string with an explicit task-scope namespace
+/// (the spec file stem), used to build `RuleScope::Task(stem)`.
+pub fn parse_spec_from_str_with_stem(input: &str, task_stem: &str) -> SpecResult<SpecDocument> {
     let lines: Vec<&str> = input.lines().collect();
 
     // Split on front-matter separator `---`
@@ -38,17 +63,56 @@ pub fn parse_spec_from_str(input: &str) -> SpecResult<SpecDocument> {
 
     let meta = parse_meta(meta_lines).map_err(SpecError::FrontMatter)?;
 
-    let sections = parse_body(body_lines, body_offset)?;
+    // Rules parsed from a capability spec take Capability scope (the spec's
+    // name); everything else takes Task scope (the file stem).
+    let rule_scope = match meta.level {
+        crate::spec_core::SpecLevel::Capability => RuleScope::Capability(meta.name.clone()),
+        _ => RuleScope::Task(task_stem.to_string()),
+    };
+
+    let sections = parse_body(body_lines, body_offset, &rule_scope)?;
+    let lint_acks = scan_lint_acks(body_lines);
 
     Ok(SpecDocument {
         meta,
         sections,
+        lint_acks,
         source_path: PathBuf::new(),
     })
 }
 
+/// Scan body lines for `<!-- lint-ack: <code> — <reason> -->` markers (Phase 5).
+fn scan_lint_acks(lines: &[&str]) -> Vec<crate::spec_core::LintAck> {
+    let mut acks = Vec::new();
+    for line in lines {
+        let t = line.trim();
+        let Some(rest) = t.strip_prefix("<!-- lint-ack:") else {
+            continue;
+        };
+        let Some(body) = rest.strip_suffix("-->") else {
+            continue;
+        };
+        let body = body.trim();
+        // Separator: em dash or colon.
+        let (code, reason) = if let Some(idx) = body.find('—') {
+            (body[..idx].trim(), body[idx + '—'.len_utf8()..].trim())
+        } else if let Some(idx) = body.find(':') {
+            (body[..idx].trim(), body[idx + 1..].trim())
+        } else {
+            (body, "")
+        };
+        if !code.is_empty() {
+            acks.push(crate::spec_core::LintAck {
+                code: code.to_string(),
+                reason: reason.to_string(),
+            });
+        }
+    }
+    acks
+}
+
 /// Parse the body of a spec (after `---`) into sections.
-fn parse_body(lines: &[&str], offset: usize) -> SpecResult<Vec<Section>> {
+fn parse_body(lines: &[&str], offset: usize, rule_scope: &RuleScope) -> SpecResult<Vec<Section>> {
     let mut sections = Vec::new();
     let mut current_section: Option<(SectionKind, usize)> = None; // (kind, start_line)
     let mut section_lines: Vec<(usize, &str)> = Vec::new(); // (absolute_line, text)
@@ -59,7 +123,7 @@ fn parse_body(lines: &[&str], offset: usize) -> SpecResult<Vec<Section>> {
         if let Some(kind) = match_section_header(line) {
             // Flush previous section
             if let Some((prev_kind, start)) = current_section.take() {
-                let section = build_section(prev_kind, &section_lines, start)?;
+                let section = build_section(prev_kind, &section_lines, start, rule_scope)?;
                 sections.push(section);
                 section_lines.clear();
             }
@@ -79,7 +143,7 @@ fn parse_body(lines: &[&str], offset: usize) -> SpecResult<Vec<Section>> {
 
     // Flush last section
     if let Some((kind, start)) = current_section {
-        let section = build_section(kind, &section_lines, start)?;
+        let section = build_section(kind, &section_lines, start, rule_scope)?;
         sections.push(section);
     }
 
@@ -99,6 +163,7 @@ fn build_section(
     kind: SectionKind,
     lines: &[(usize, &str)],
     start_line: usize,
+    rule_scope: &RuleScope,
 ) -> SpecResult<Section> {
     let end_line = lines.last().map_or(start_line, |(ln, _)| *ln);
     let span = Span::new(start_line, 0, end_line, 0);
@@ -127,8 +192,13 @@ fn build_section(
             Ok(Section::Boundaries { items, span })
         }
         SectionKind::AcceptanceCriteria => {
-            let scenarios = parse_scenarios(lines)?;
-            Ok(Section::AcceptanceCriteria { scenarios, span })
+            let (scenarios, rules, malformed_rules) = parse_scenarios(lines, rule_scope)?;
+            Ok(Section::AcceptanceCriteria {
+                scenarios,
+                rules,
+                malformed_rules,
+                span,
+            })
         }
         SectionKind::OutOfScope => {
             let items = lines
@@ -139,6 +209,16 @@ fn build_section(
                 })
                 .collect();
             Ok(Section::OutOfScope { items, span })
+        }
+        SectionKind::Questions => {
+            let items = lines
+                .iter()
+                .filter_map(|(_, l)| {
+                    let trimmed = l.trim().strip_prefix('-').map(str::trim);
+                    trimmed.filter(|s| !s.is_empty()).map(String::from)
+                })
+                .collect();
+            Ok(Section::Questions { items, span })
         }
     }
 }
@@ -225,8 +305,12 @@ fn parse_boundaries(lines: &[(usize, &str)]) -> Vec<Boundary> {
     items
 }
 
-fn parse_scenarios(lines: &[(usize, &str)]) -> SpecResult<Vec<Scenario>> {
+type ParsedScenarios = (Vec<Scenario>, Vec<BehaviorRule>, Vec<MalformedRule>);
+
+fn parse_scenarios(lines: &[(usize, &str)], rule_scope: &RuleScope) -> SpecResult<ParsedScenarios> {
     let mut scenarios = Vec::new();
+    let mut rules: Vec<BehaviorRule> = Vec::new();
+    let mut malformed_rules: Vec<MalformedRule> = Vec::new();
     let mut current_name: Option<(String, usize)> = None;
     let mut current_steps: Vec<Step> = Vec::new();
     let mut current_test_selector: Option<TestSelectorDraft> = None;
@@ -235,28 +319,106 @@ fn parse_scenarios(lines: &[(usize, &str)]) -> SpecResult<Vec<Scenario>> {
     let mut current_mode: ScenarioMode = ScenarioMode::Standard;
     let mut current_depends_on: Vec<String> = Vec::new();
     let mut reading_test_selector_block = false;
+    // The active behavior rule id for scenarios that follow a `Rule:` header.
+    let mut current_rule_id: Option<String> = None;
+    // The rule the in-progress scenario belongs to, captured at its start so
+    // a later `Rule:` header does not retroactively re-group it.
+    let mut current_scenario_rule: Option<String> = None;
+
+    // Flush helper assigns the scenario's rule and links it back to the rule.
+    macro_rules! push_scenario {
+        ($name:expr, $start:expr, $end:expr, $steps:expr, $selector:expr,
+         $tags:expr, $review:expr, $mode:expr, $depends:expr, $rule:expr) => {{
+            let rule_id: Option<String> = $rule;
+            if let Some(id) = &rule_id
+                && let Some(r) = rules.iter_mut().find(|r| &r.key.id == id)
+            {
+                r.scenario_names.push($name.clone());
+            }
+            scenarios.push(Scenario {
+                name: $name,
+                steps: $steps,
+                test_selector: $selector,
+                tags: $tags,
+                review: $review,
+                mode: $mode,
+                depends_on: $depends,
+                rule: rule_id,
+                span: Span::new($start, 0, $end, 0),
+            });
+        }};
+    }
 
     for &(line_num, line) in lines {
+        if let Some(raw) = match_rule_header(line) {
+            // A `Rule:` header closes any in-progress scenario (so stray steps
+            // after the header do not leak into the prior scenario across the
+            // rule boundary) and sets the active rule for subsequent scenarios.
+            if let Some((prev_name, start)) = current_name.take() {
+                let end = current_steps.last().map_or(start, |s| s.span.end_line);
+                push_scenario!(
+                    prev_name,
+                    start,
+                    end,
+                    std::mem::take(&mut current_steps),
+                    finalize_test_selector(current_test_selector.take(), end)?,
+                    std::mem::take(&mut current_tags),
+                    std::mem::take(&mut current_review),
+                    std::mem::take(&mut current_mode),
+                    std::mem::take(&mut current_depends_on),
+                    current_scenario_rule.take()
+                );
+            }
+            // Invalid (non-kebab) ids are dropped here; the `bdd-rule-id` lint
+            // reports them from the raw source.
+            let (id, name) = parse_rule_header_content(raw);
+            match id {
+                Some(id) => {
+                    rules.push(BehaviorRule {
+                        key: RuleKey {
+                            scope: rule_scope.clone(),
+                            id: id.clone(),
+                        },
+                        name,
+                        scenario_names: Vec::new(),
+                        events: Vec::new(),
+                        span: Span::line(line_num),
+                    });
+                    current_rule_id = Some(id);
+                }
+                None => {
+                    current_rule_id = None;
+                    malformed_rules.push(MalformedRule {
+                        raw: raw.to_string(),
+                        span: Span::line(line_num),
+                    });
+                }
+            }
+            continue;
+        }
         if let Some(name) = match_scenario_header(line) {
             // Flush previous scenario
             if let Some((prev_name, start)) = current_name.take() {
                 let end = current_steps.last().map_or(start, |s| s.span.end_line);
-                scenarios.push(Scenario {
-                    name: prev_name,
-                    steps: std::mem::take(&mut current_steps),
-                    test_selector: finalize_test_selector(current_test_selector.take(), end)?,
-                    tags: std::mem::take(&mut current_tags),
-                    review: std::mem::take(&mut current_review),
-                    mode: std::mem::take(&mut current_mode),
-                    depends_on: std::mem::take(&mut current_depends_on),
-                    span: Span::new(start, 0, end, 0),
-                });
+                push_scenario!(
+                    prev_name,
+                    start,
+                    end,
+                    std::mem::take(&mut current_steps),
+                    finalize_test_selector(current_test_selector.take(), end)?,
+                    std::mem::take(&mut current_tags),
+                    std::mem::take(&mut current_review),
+                    std::mem::take(&mut current_mode),
+                    std::mem::take(&mut current_depends_on),
+                    current_scenario_rule.take()
+                );
             }
             current_name = Some((name.to_string(), line_num));
             current_tags = Vec::new();
             current_review = ReviewMode::default();
             current_mode = ScenarioMode::Standard;
             current_depends_on = Vec::new();
+            current_scenario_rule = current_rule_id.clone();
             reading_test_selector_block = false;
         } else if let Some(tags) = match_scenario_tags(line) {
             if current_name.is_some() {
@@ -316,6 +478,12 @@ fn parse_scenarios(lines: &[(usize, &str)]) -> SpecResult<Vec<Scenario>> {
             reading_test_selector_block = false;
         }
 
+        // Only collect steps while inside a scenario, so steps under an
+        // unrecognized header do not bleed into the next scenario.
+        if current_name.is_none() {
+            continue;
+        }
+
         if let Some((kind, text)) = match_step_keyword(line) {
             let params = extract_params(text);
             current_steps.push(Step {
@@ -337,19 +505,64 @@ fn parse_scenarios(lines: &[(usize, &str)]) -> SpecResult<Vec<Scenario>> {
     // Flush last scenario
     if let Some((name, start)) = current_name {
         let end = current_steps.last().map_or(start, |s| s.span.end_line);
-        scenarios.push(Scenario {
+        push_scenario!(
             name,
-            steps: current_steps,
-            test_selector: finalize_test_selector(current_test_selector, end)?,
-            tags: current_tags,
-            review: current_review,
-            mode: current_mode,
-            depends_on: current_depends_on,
-            span: Span::new(start, 0, end, 0),
-        });
+            start,
+            end,
+            current_steps,
+            finalize_test_selector(current_test_selector, end)?,
+            current_tags,
+            current_review,
+            current_mode,
+            current_depends_on,
+            current_scenario_rule.take()
+        );
     }
 
-    Ok(scenarios)
+    Ok((scenarios, rules, malformed_rules))
+}
+
+/// Split a `Rule:` header's raw content into `(id, display_name)`.
+///
+/// The id must be an explicit kebab-case identifier (`^[a-z][a-z0-9-]*$`).
+/// Separator between id and display name is an em dash (`—`) or two-or-more
+/// spaces. No auto-slugify: if the leading token is not a valid id, returns
+/// `(None, raw)` so the `bdd-rule-id` lint can flag it and no rule is created.
+fn parse_rule_header_content(raw: &str) -> (Option<String>, String) {
+    // Strip any trailing HTML comment (e.g. promotion provenance) so it never
+    // leaks into the rule id or display name.
+    let raw = raw.split("<!--").next().unwrap_or(raw).trim();
+    // Leftmost separator wins, so an em dash inside the display name does not
+    // hijack a double-space-delimited id (and vice versa).
+    let em = raw.find('—');
+    let dsp = raw.find("  ");
+    let (id_part, name_part) = match (em, dsp) {
+        (Some(e), Some(d)) if d < e => (raw[..d].trim(), raw[d..].trim()),
+        (Some(e), _) => (raw[..e].trim(), raw[e + '—'.len_utf8()..].trim()),
+        (None, Some(d)) => (raw[..d].trim(), raw[d..].trim()),
+        (None, None) => (raw, ""),
+    };
+
+    if is_valid_rule_id(id_part) {
+        let name = if name_part.is_empty() {
+            id_part.to_string()
+        } else {
+            name_part.to_string()
+        };
+        (Some(id_part.to_string()), name)
+    } else {
+        (None, raw.to_string())
+    }
+}
+
+/// Validates a behavior rule id against `^[a-z][a-z0-9-]*$`.
+fn is_valid_rule_id(s: &str) -> bool {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_lowercase() => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
 #[derive(Default)]
@@ -406,7 +619,7 @@ fn parse_table_row(line: &str) -> Option<Vec<String>> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use crate::spec_core::StepKind;
@@ -1111,6 +1324,483 @@ Scenario: C
             }
             other => panic!("expected AcceptanceCriteria, got {other:?}"),
         }
+    }
+
+    // ---- BDD semantics v1: Rule / Example parsing ----
+
+    use crate::spec_core::{BehaviorRule, RuleScope, Section as Sec};
+
+    fn rules_of(doc: &SpecDocument) -> Vec<BehaviorRule> {
+        doc.sections
+            .iter()
+            .find_map(|s| match s {
+                Sec::AcceptanceCriteria { rules, .. } => Some(rules.clone()),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    fn scenarios_of(doc: &SpecDocument) -> Vec<Scenario> {
+        doc.sections
+            .iter()
+            .find_map(|s| match s {
+                Sec::AcceptanceCriteria { scenarios, .. } => Some(scenarios.clone()),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn test_parse_rule_header_creates_behavior_rule() {
+        let input = r#"spec: task
+name: "鉴权"
+---
+
+## 完成条件
+
+### Rule: auth-must-not-leak — 鉴权失败不得泄漏内部错误
+场景: 失败返回稳定错误
+  测试: test_auth_stable_error
+  假设 鉴权失败
+  当 返回响应
+  那么 不包含内部堆栈
+"#;
+        let doc = parse_spec_from_str_with_stem(input, "task-auth").unwrap();
+        let rules = rules_of(&doc);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].key.id, "auth-must-not-leak");
+        assert_eq!(rules[0].key.scope, RuleScope::Task("task-auth".into()));
+        assert_eq!(rules[0].name, "鉴权失败不得泄漏内部错误");
+        assert_eq!(
+            rules[0].scenario_names,
+            vec!["失败返回稳定错误".to_string()]
+        );
+
+        let scenarios = scenarios_of(&doc);
+        assert_eq!(scenarios[0].rule.as_deref(), Some("auth-must-not-leak"));
+    }
+
+    #[test]
+    fn test_parse_rule_header_without_display_name() {
+        let input = r#"spec: task
+name: "退款"
+---
+
+## 完成条件
+
+### Rule: refund-must-be-idempotent
+场景: 重复退款只生效一次
+  测试: test_refund_idempotent
+  假设 已退款
+  当 再次退款
+  那么 不重复扣减
+"#;
+        let doc = parse_spec_from_str_with_stem(input, "task-refund").unwrap();
+        let rules = rules_of(&doc);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].key.id, "refund-must-be-idempotent");
+        assert_eq!(rules[0].name, "refund-must-be-idempotent");
+    }
+
+    #[test]
+    fn test_parse_chinese_rule_alias() {
+        let input = r#"spec: task
+name: "促销"
+---
+
+## 完成条件
+
+规则: vip-discount-priority — VIP 折扣优先级高于促销
+示例: VIP 用户折扣优先
+  测试: test_vip_priority
+  假设 用户是 VIP
+  当 同时存在促销
+  那么 应用 VIP 折扣
+"#;
+        let doc = parse_spec_from_str_with_stem(input, "task-promo").unwrap();
+        let rules = rules_of(&doc);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].key.id, "vip-discount-priority");
+        assert_eq!(rules[0].name, "VIP 折扣优先级高于促销");
+        let scenarios = scenarios_of(&doc);
+        assert_eq!(scenarios.len(), 1);
+        assert_eq!(scenarios[0].name, "VIP 用户折扣优先");
+        assert_eq!(scenarios[0].rule.as_deref(), Some("vip-discount-priority"));
+    }
+
+    #[test]
+    fn test_parse_example_alias_as_scenario() {
+        let input = r#"spec: task
+name: "提现"
+---
+
+## 完成条件
+
+Example: 余额充足时提现成功
+  测试: test_withdraw_ok
+  假设 余额 "200"
+  当 提现 "100"
+  那么 成功
+
+示例: 余额不足时提现失败
+  测试: test_withdraw_insufficient
+  假设 余额 "50"
+  当 提现 "100"
+  那么 拒绝
+"#;
+        let doc = parse_spec_from_str_with_stem(input, "task-withdraw").unwrap();
+        let scenarios = scenarios_of(&doc);
+        assert_eq!(scenarios.len(), 2);
+        assert_eq!(scenarios[0].name, "余额充足时提现成功");
+        assert_eq!(scenarios[1].name, "余额不足时提现失败");
+        // No new "Example" AST node — both are Scenario, serialized as such.
+        let json = serde_json::to_string(&doc).unwrap();
+        assert!(!json.contains("\"Example\""));
+        assert!(!json.contains("\"example\""));
+    }
+
+    #[test]
+    fn test_legacy_spec_without_rule_compat() {
+        // A spec with no Rule line: scenarios carry rule == None, no rules emitted.
+        let doc = parse_spec_from_str(SAMPLE_SPEC).unwrap();
+        let scenarios = scenarios_of(&doc);
+        assert!(!scenarios.is_empty());
+        assert!(scenarios.iter().all(|s| s.rule.is_none()));
+        assert!(rules_of(&doc).is_empty());
+    }
+
+    #[test]
+    fn test_rule_scope_serializes_to_json() {
+        let input = r#"spec: task
+name: "鉴权"
+---
+
+## 完成条件
+
+### Rule: auth-must-not-leak — 鉴权失败不得泄漏内部错误
+场景: 失败返回稳定错误
+  测试: test_auth_stable_error
+  假设 鉴权失败
+  当 返回响应
+  那么 不包含内部堆栈
+"#;
+        let doc = parse_spec_from_str_with_stem(input, "task-auth").unwrap();
+        let json = serde_json::to_string(&doc).unwrap();
+        // RuleScope::Task(stem) serializes as { "task": "<stem>" }
+        assert!(json.contains(r#""scope":{"task":"task-auth"}"#));
+        assert!(json.contains(r#""id":"auth-must-not-leak""#));
+        assert!(json.contains(r#""rule":"auth-must-not-leak""#));
+    }
+
+    #[test]
+    fn test_capability_scope_is_reserved_in_v1() {
+        // Capability / Project scope are declared and (de)serialize cleanly,
+        // but the v1 parser never produces them.
+        let doc = parse_spec_from_str_with_stem(
+            r#"spec: task
+name: "鉴权"
+---
+
+## 完成条件
+
+### Rule: auth-ok
+场景: 通过
+  测试: test_ok
+  假设 a
+  当 b
+  那么 c
+"#,
+            "task-auth",
+        )
+        .unwrap();
+        assert!(
+            rules_of(&doc)
+                .iter()
+                .all(|r| matches!(r.key.scope, RuleScope::Task(_)))
+        );
+
+        // Reserved variants round-trip through serde.
+        let cap = RuleScope::Capability("ecosystem-import".into());
+        let cap_json = serde_json::to_string(&cap).unwrap();
+        assert_eq!(cap_json, r#"{"capability":"ecosystem-import"}"#);
+        let back: RuleScope = serde_json::from_str(&cap_json).unwrap();
+        assert_eq!(back, cap);
+        let proj_json = serde_json::to_string(&RuleScope::Project).unwrap();
+        assert_eq!(proj_json, r#""project""#);
+        let proj_back: RuleScope = serde_json::from_str(&proj_json).unwrap();
+        assert_eq!(proj_back, RuleScope::Project);
+    }
+
+    #[test]
+    fn test_json_output_additive_only() {
+        // A legacy spec (no Rule) must not emit `rules` or scenario `rule`
+        // keys, so v0.2.7 consumers see an unchanged shape.
+        let doc = parse_spec_from_str(SAMPLE_SPEC).unwrap();
+        let json = serde_json::to_string(&doc).unwrap();
+        assert!(!json.contains("\"rules\""));
+        assert!(!json.contains("\"rule\""));
+    }
+
+    // ---- Adversarial hunt regressions (Phase 1 parser) ----
+
+    #[test]
+    fn test_rule_double_space_separator_with_em_dash_in_display() {
+        // Bug 1/2: leftmost separator wins. Double-space is the intended
+        // id/name separator even when the display name contains an em dash.
+        let input = "spec: task\nname: \"x\"\n---\n\n## 完成条件\n\n### Rule: rate-limit  Throttling — protect upstream\n场景: 超阈值\n  测试: t\n  当 a\n  那么 b\n";
+        let doc = parse_spec_from_str_with_stem(input, "task-x").unwrap();
+        let rules = rules_of(&doc);
+        assert_eq!(rules.len(), 1, "double-space separator must yield one rule");
+        assert_eq!(rules[0].key.id, "rate-limit");
+        assert_eq!(rules[0].name, "Throttling — protect upstream");
+        assert_eq!(scenarios_of(&doc)[0].rule.as_deref(), Some("rate-limit"));
+    }
+
+    #[test]
+    fn test_rule_em_dash_separator_with_double_space_in_display() {
+        // Mirror: em-dash is leftmost -> it is the separator; trailing double
+        // spaces inside the display name are preserved (trimmed at ends only).
+        let input = "spec: task\nname: \"x\"\n---\n\n## 完成条件\n\n### Rule: auth-leak — fails  must not leak\n场景: s\n  测试: t\n  当 a\n  那么 b\n";
+        let doc = parse_spec_from_str_with_stem(input, "task-x").unwrap();
+        let rules = rules_of(&doc);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].key.id, "auth-leak");
+        assert_eq!(rules[0].name, "fails  must not leak");
+    }
+
+    #[test]
+    fn test_stray_step_after_rule_header_does_not_leak_into_prior_scenario() {
+        // Bug 3: a step-like line between a Rule header and the next scenario
+        // must not attach to the previous scenario across the rule boundary.
+        let input = "spec: task\nname: \"x\"\n---\n\n## 完成条件\n\n### Rule: rule-one — first\n场景: A\n  当 b\n  那么 c\n\n### Rule: rule-two — second\n  那么 stray\n场景: B\n  当 e\n  那么 f\n";
+        let doc = parse_spec_from_str_with_stem(input, "task-x").unwrap();
+        let scenarios = scenarios_of(&doc);
+        let a = scenarios.iter().find(|s| s.name == "A").unwrap();
+        assert_eq!(
+            a.steps.len(),
+            2,
+            "scenario A must keep exactly its own steps"
+        );
+        assert_eq!(a.rule.as_deref(), Some("rule-one"));
+        let b = scenarios.iter().find(|s| s.name == "B").unwrap();
+        assert_eq!(b.rule.as_deref(), Some("rule-two"));
+    }
+
+    #[test]
+    fn test_fullwidth_colon_english_scenario_header_is_recognized() {
+        // Bug 4: `Scenario：` (English word + full-width colon) must parse as a
+        // header, so steps do not bleed into the next scenario.
+        let input = "spec: task\nname: \"x\"\n---\n\n## 完成条件\n\nScenario：A\n  假设 a1\n  当 a2\n  那么 a3\n\nScenario: B\n  假设 b1\n  当 b2\n  那么 b3\n";
+        let doc = parse_spec_from_str(input).unwrap();
+        let scenarios = scenarios_of(&doc);
+        assert_eq!(scenarios.len(), 2, "both scenarios must be recognized");
+        assert_eq!(scenarios[0].name, "A");
+        assert_eq!(
+            scenarios[0].steps.len(),
+            3,
+            "A's steps must not bleed into B"
+        );
+        assert_eq!(scenarios[1].steps.len(), 3);
+    }
+
+    #[test]
+    fn test_fullwidth_colon_english_rule_header_is_recognized() {
+        // Bug 5: `Rule：` (English word + full-width colon) must create a rule.
+        let input = "spec: task\nname: \"x\"\n---\n\n## 完成条件\n\nRule：auth-must-not-leak\nScenario: stable error\n  当 a\n  那么 b\n";
+        let doc = parse_spec_from_str_with_stem(input, "task-x").unwrap();
+        let rules = rules_of(&doc);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].key.id, "auth-must-not-leak");
+        assert_eq!(
+            scenarios_of(&doc)[0].rule.as_deref(),
+            Some("auth-must-not-leak")
+        );
+    }
+
+    #[test]
+    fn test_probe_from_scenario_with_selector() {
+        use crate::spec_core::Probe;
+        let input = r#"spec: task
+name: "x"
+---
+
+## 完成条件
+
+场景: 绑定
+  测试: test_x
+  当 a
+  那么 b
+"#;
+        let doc = parse_spec_from_str(input).unwrap();
+        let sc = &scenarios_of(&doc)[0];
+        match Probe::from_scenario(sc) {
+            Some(Probe::Test(sel)) => assert_eq!(sel.filter, "test_x"),
+            other => panic!("expected Probe::Test, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_probe_from_scenario_without_selector() {
+        use crate::spec_core::Probe;
+        let input = r#"spec: task
+name: "x"
+---
+
+## 完成条件
+
+场景: 无绑定
+  当 a
+  那么 b
+"#;
+        let doc = parse_spec_from_str(input).unwrap();
+        let sc = &scenarios_of(&doc)[0];
+        assert!(Probe::from_scenario(sc).is_none());
+    }
+
+    #[test]
+    fn test_scenario_unchanged_no_probe_field() {
+        use crate::spec_core::Probe;
+        // Scenario still exposes binding via test_selector; Probe is a derived view.
+        let doc = parse_spec_from_str(SAMPLE_SPEC).unwrap();
+        for sc in scenarios_of(&doc) {
+            // No panic; derivation is consistent with test_selector presence.
+            assert_eq!(
+                Probe::from_scenario(&sc).is_some(),
+                sc.test_selector.is_some()
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_lint_ack_marker() {
+        let input = r#"spec: task
+name: "x"
+---
+
+## 意图
+
+做点事。
+<!-- lint-ack: bdd-rule-id — 故意留作示例 -->
+
+## 完成条件
+
+场景: s
+  测试: t
+  当 a
+  那么 b
+"#;
+        let doc = parse_spec_from_str(input).unwrap();
+        assert_eq!(doc.lint_acks.len(), 1);
+        assert_eq!(doc.lint_acks[0].code, "bdd-rule-id");
+        assert!(doc.lint_acks[0].reason.contains("故意留作示例"));
+    }
+
+    #[test]
+    fn test_lint_acks_additive_empty() {
+        let doc = parse_spec_from_str(SAMPLE_SPEC).unwrap();
+        assert!(doc.lint_acks.is_empty());
+        let json = serde_json::to_string(&doc).unwrap();
+        assert!(!json.contains("lint_acks"));
+    }
+
+    fn questions_of(doc: &SpecDocument) -> Option<Vec<String>> {
+        doc.sections.iter().find_map(|s| match s {
+            Sec::Questions { items, .. } => Some(items.clone()),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn test_parse_questions_section() {
+        let input = r#"spec: task
+name: "x"
+---
+
+## Questions
+
+- 折扣能否叠加?
+- 退款按原价还是折后价?
+"#;
+        let doc = parse_spec_from_str(input).unwrap();
+        let q = questions_of(&doc).expect("Questions section present");
+        assert_eq!(q.len(), 2);
+        assert!(q[0].contains("折扣"));
+    }
+
+    #[test]
+    fn test_parse_questions_section_chinese() {
+        let input = r#"spec: task
+name: "x"
+---
+
+## 问题
+
+- VIP 等级怎么定义?
+"#;
+        let doc = parse_spec_from_str(input).unwrap();
+        let q = questions_of(&doc).expect("中文 Questions section present");
+        assert_eq!(q.len(), 1);
+    }
+
+    #[test]
+    fn test_spec_without_questions_unaffected() {
+        let doc = parse_spec_from_str(SAMPLE_SPEC).unwrap();
+        assert!(questions_of(&doc).is_none());
+    }
+
+    #[test]
+    fn test_questions_do_not_affect_verification() {
+        // Questions are not scenarios: all_scenarios excludes them.
+        let input = r#"spec: task
+name: "x"
+---
+
+## 完成条件
+
+场景: 唯一场景
+  测试: t
+  当 a
+  那么 b
+
+## Questions
+
+- 还没想清楚的问题
+"#;
+        let doc = parse_spec_from_str(input).unwrap();
+        let resolved = crate::spec_parser::resolve_spec(doc, &[]).unwrap();
+        assert_eq!(
+            resolved.all_scenarios.len(),
+            1,
+            "questions must not count as scenarios"
+        );
+    }
+
+    #[test]
+    fn test_capability_spec_rule_has_capability_scope() {
+        let input = r#"spec: capability
+name: "ecosystem-import"
+---
+
+## 完成条件
+
+### Rule: import-preserves-traceability — 导入保留来源 ID
+"#;
+        let doc = parse_spec_from_str_with_stem(input, "ignored-stem").unwrap();
+        let rules = rules_of(&doc);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].key.id, "import-preserves-traceability");
+        assert_eq!(
+            rules[0].key.scope,
+            RuleScope::Capability("ecosystem-import".into())
+        );
+    }
+
+    #[test]
+    fn test_task_without_capability_is_none_additive() {
+        let doc = parse_spec_from_str(SAMPLE_SPEC).unwrap();
+        assert_eq!(doc.meta.capability, None);
+        let json = serde_json::to_string(&doc).unwrap();
+        assert!(!json.contains("\"capability\""));
     }
 
     #[test]

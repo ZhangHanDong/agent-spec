@@ -93,6 +93,7 @@ impl Verifier for AiVerifier {
                     reasoning: decision.reasoning,
                 }],
                 duration_ms: 0,
+                provenance: None,
             });
         }
 
@@ -220,6 +221,7 @@ mod tests {
             review: Default::default(),
             mode: Default::default(),
             depends_on: vec![],
+            rule: None,
             span: Span::line(1),
         };
 
@@ -237,6 +239,7 @@ mod tests {
                         tags: vec![],
                         depends: vec![],
                         estimate: None,
+                        capability: None,
                     },
                     sections: vec![
                         Section::Intent {
@@ -253,9 +256,12 @@ mod tests {
                         },
                         Section::AcceptanceCriteria {
                             scenarios: vec![scenario.clone()],
+                            rules: vec![],
+                            malformed_rules: vec![],
                             span: Span::line(3),
                         },
                     ],
+                    lint_acks: vec![],
                     source_path: PathBuf::new(),
                 },
                 inherited_constraints: vec![Constraint {
