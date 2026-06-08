@@ -11,7 +11,7 @@ description: |
 
 # Agent Spec Estimate
 
-> **Version:** 1.1.0 | **Last Updated:** 2026-03-19
+> **Version:** 1.2.0 | **Last Updated:** 2026-06-08 | **Tracks agent-spec:** 0.3.0 (BDD-spine)
 
 You are an expert at estimating AI agent work effort from structured Task Contracts. Help users by:
 - **Estimating specs**: Read a `.spec`/`.spec.md` file and produce a round-based effort estimate
@@ -34,10 +34,15 @@ If `agent-spec` is not installed, inform the user:
 
 | Action | Command | Output |
 |--------|---------|--------|
-| Estimate a spec | `agent-spec plan <spec> --code . --format json` then apply estimation | Round-based breakdown table |
-| Estimate (contract only) | `agent-spec contract <spec>` then apply estimation | Round-based breakdown (no codebase context) |
+| Estimate a spec | `agent-spec contract <spec>` then apply estimation | Round-based breakdown table |
 | Batch estimate | Run on all specs in `specs/` | Sorted effort ranking |
 | Calibrate from history | `agent-spec explain <spec> --history` | Compare predicted vs actual rounds |
+| Library sizing signal (0.3.0) | `agent-spec audit --spec-dir specs --format json` | Counts of rules/scenarios/unproven-rules/open-questions to weight remaining effort |
+
+**0.3.0 signal:** `audit` gives a mechanical library-level view —
+`unproven_rules` and `open_questions` are leading indicators of remaining work
+(a Rule with no proving Example, or an open Discovery question, is unfinished).
+Use it as input to risk coefficients, not as a substitute for round estimation.
 
 ## Core Method
 
@@ -81,26 +86,20 @@ A Task Contract has structured elements that map directly to estimation inputs:
 
 ## Estimation Procedure
 
-### Step 1: Read the Contract and Codebase Context
+### Step 1: Read the Contract
 
 ```bash
-# Preferred: plan gives contract + codebase context + task sketch
-agent-spec plan specs/task.spec.md --code . --format json
-
-# Alternative: contract only (no codebase awareness)
 agent-spec contract specs/task.spec.md
 ```
 
 Extract: scenario count, decision count, boundary path count, constraint count.
-From `plan` output, also consider: existing file count (less new code needed), existing test count (less test scaffolding), task sketch grouping (parallel vs sequential work).
 
 ### Step 2: Decompose Scenarios into Modules
 
-Each scenario is a potential module. If `plan` output is available, use its **Task Sketch** groups as the starting decomposition — scenarios in the same group share no dependencies and can be estimated together:
+Each scenario is a potential module. Group related scenarios:
 
 - If 3 scenarios all test the same endpoint → 1 module (implementation) + 1 module (tests)
 - If scenarios span different subsystems → separate modules
-- If Task Sketch has N groups → at least N sequential phases
 
 ### Step 3: Estimate Rounds per Module
 
@@ -172,8 +171,6 @@ Always produce this exact structure:
 - HIGH: Contract has specific Decisions, tight Boundaries, quantified steps
 - MEDIUM: Some vague areas but overall clear
 - LOW: Missing Decisions, broad scope, vague step language
-
-**Evidence rule**: Every number in the estimate table MUST trace back to a specific Contract element (scenario name, decision text, boundary path). Do not use "should" or "probably" when stating estimates — if you cannot point to the source, the number is a guess. Mark it as such and flag the uncertainty.
 ```
 
 ## Calibration: Predicted vs Actual
@@ -227,6 +224,54 @@ Then apply the estimation procedure to each, and sort by total rounds:
 | Ignoring exception scenarios | They seem simple but add up | Count ALL scenarios, not just happy path |
 | Forgetting verification rounds | Agent must run lifecycle N times | Add ceil(scenarios/3) rounds |
 | Missing inherited constraints | project.spec adds hidden work | Check `inherits:` and count parent constraints |
+
+## Dependency Graph for Planning
+
+Use `agent-spec graph` to visualize spec dependencies and critical path before estimating a batch:
+
+```bash
+agent-spec graph --spec-dir specs
+```
+
+The graph uses `depends` and `estimate` from spec frontmatter:
+
+```yaml
+spec: task
+name: "Checkpoint Resume"
+depends: [task-goal-gate, task-context-fidelity]
+estimate: 1d
+---
+```
+
+- **Critical path** (red edges in DOT) shows the longest dependency chain — this determines minimum wallclock time
+- **Parallel branches** can be worked simultaneously — multiply agent count by branch count for throughput
+- **Estimate values** (`0.5d`, `1d`, `2d`, `1w`, `4h`) are shown on node labels
+
+### Graph-Informed Sprint Planning
+
+```bash
+# 1. Generate and review the dependency graph
+agent-spec graph --spec-dir specs --format svg > deps.svg
+
+# 2. Identify critical path total
+# Sum estimates along the red path = minimum serial time
+
+# 3. Identify parallelizable branches
+# Independent specs (no shared dependencies) can run concurrently
+
+# 4. Estimate with parallelism
+# total_time = critical_path_time + max(parallel_branch_times)
+```
+
+Add this to your Sprint Capacity Plan output:
+
+```markdown
+#### Dependency Analysis
+- **Critical path**: task-A → task-B → task-C (total: 2.5d)
+- **Parallel branches**: task-D (0.5d), task-E (1d) — can run alongside critical path
+- **Minimum serial time**: 2.5d
+- **With 2 agents**: ~1.5d (critical path + parallel overlap)
+```
 
 ## When NOT to Estimate
 
