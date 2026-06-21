@@ -363,7 +363,7 @@ agent-spec:   Write Contract 15min + Read explain 5min + Approve 2min = ~22min
   那么 返回 400
 ```
 
-- Rule id = leading kebab-case token (`reject-invalid-input`); text after `—`/`--` is the mutable display name.
+- Rule id = leading kebab-case token (`reject-invalid-input`); separated from the mutable display name by an em dash `—` or two-or-more spaces (a plain `--` is NOT a recognized separator — it gets swallowed into the id and trips `bdd-rule-id`).
 - English form: `### Rule: reject-invalid-input — Reject invalid input`. `Example:` is a synonym for `场景:`/`Scenario:`.
 - Identity lives in the id, never the display name. Lints: `bdd-rule-id` (malformed id), `bdd-rule-grouping` (ungrouped scenarios).
 
@@ -382,9 +382,10 @@ agent-spec:   Write Contract 15min + Read explain 5min + Approve 2min = ~22min
 ### lint-ack (acknowledge a warning with a reason)
 
 ```spec
-<!-- lint-ack: error-path 本任务是只读查询,无失败路径 -->
+<!-- lint-ack: error-path — 本任务是只读查询,无失败路径 -->
 ```
 
+- Format: `<!-- lint-ack: <code> — <reason> -->`. The code and reason must be separated by an em dash `—` or a colon `:`; without one the whole string is read as the code and nothing is acknowledged.
 - Filters that Warning/Info from the report but keeps it counted (visible in `audit`). Reason is mandatory.
 - Errors can NEVER be acknowledged — only Warning/Info.
 

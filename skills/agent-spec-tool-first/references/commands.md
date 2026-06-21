@@ -60,7 +60,7 @@ agent-spec lifecycle <spec> --code <dir> \
   [--change-scope none|staged|worktree|jj] \
   [--ai-mode off|stub] \
   [--min-score 0.6] \
-  [--format text|json|md|compact|diagnostic] \
+  [--format text|json|md] \
   [--run-log-dir <dir>] \
   [--adversarial] \
   [--layers lint,boundary,test,ai,complexity] \
@@ -70,9 +70,11 @@ agent-spec lifecycle <spec> --code <dir> \
 
 Full pipeline: lint -> verify -> report. Default format is `json`.
 
+`lifecycle` honors `--format json` (machine-readable) and `--format md`/`markdown`;
+any other value (including `compact`/`diagnostic`) renders as plain text. Use
+`--format json` for retry-loop parsing.
+
 New flags:
-- `--format compact` — single-line per scenario, human-readable: `[PASS] 场景名 [FAIL] 场景名`
-- `--format diagnostic` — JSON with full stdout/stderr from test runs
 - `--resume` — skip already-passed scenarios (incremental mode)
 - `--resume=conservative` — rerun all but detect regressions
 - `--review-mode auto` (default) — treat `pending_review` as pass

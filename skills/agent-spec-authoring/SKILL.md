@@ -292,9 +292,11 @@ references and promotion) and a mutable display name:
   那么 返回 400
 ```
 
-- The id is the leading kebab-case token (`reject-invalid-input`); the text after
-  `—` / `--` is the display name. **Never encode identity in the display name** —
-  rename freely, the id is the anchor.
+- The id is the leading kebab-case token (`reject-invalid-input`); it is separated
+  from the display name by an **em dash `—`** or **two-or-more spaces** (the parser
+  recognizes only these two separators — a plain `--` is NOT a separator and would
+  be swallowed into the id, tripping `bdd-rule-id`). **Never encode identity in the
+  display name** — rename freely, the id is the anchor.
 - `bdd-rule-id` lints malformed (non-kebab-case) ids; `bdd-rule-grouping` nudges
   ungrouped scenarios. A scenario binds to a Rule via `规则:` / by sitting under
   the Rule header.
@@ -323,9 +325,12 @@ When a lint Warning/Info is a deliberate, justified exception, acknowledge it
 inline **with a mandatory reason** instead of distorting the spec:
 
 ```spec
-<!-- lint-ack: error-path 本任务是只读查询,无失败路径 -->
+<!-- lint-ack: error-path — 本任务是只读查询,无失败路径 -->
 ```
 
+- Format: `<!-- lint-ack: <code> — <reason> -->`. After `lint-ack:`, the code and
+  reason **must** be separated by an em dash `—` or a colon `:` — without one, the
+  whole string is parsed as the code and nothing is acknowledged.
 - Acknowledged lints are filtered from the report but **counted** (visible in
   `audit`) — the waiver is on the record, not silenced.
 - **Errors can never be acknowledged** — only Warning/Info. A mechanical hard

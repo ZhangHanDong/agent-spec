@@ -355,7 +355,7 @@ This produces a final merged report where Skip verdicts are replaced with the Ag
 
 5. **Layered verification**: Use `--layers` to run only what you need. During early development: `--layers boundary,test`. For CI: full `lifecycle`. For quick checks: `--layers lint`.
 
-6. **Use compact format for humans, JSON for agents**: `--format compact` gives one-line-per-scenario readability. `--format json` or `--format diagnostic` gives machine-parseable output for retry loops.
+6. **Use text for humans, JSON for agents**: `--format json` gives machine-parseable output for retry loops; the default text format is human-readable. (Note: `lifecycle`/`verify` only honor `json` and `md`/`markdown` — other values, including `compact`/`diagnostic`, render as plain text.)
 
 7. **Aim for decision coverage**: Every Decision in the spec should be exercised by at least one scenario. The `decision-coverage` linter catches orphaned decisions.
 
