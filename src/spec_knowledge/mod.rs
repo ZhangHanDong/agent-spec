@@ -2,6 +2,7 @@
 
 pub mod index;
 pub mod lint;
+pub mod liveness;
 pub mod model;
 pub mod parser;
 
@@ -10,4 +11,5 @@ pub use model::{
 };
 pub use index::{SatisfiesIndex, build_satisfies_index};
 pub use lint::lint_decision;
+pub use liveness::{decision_liveness, spec_rollup};
 pub use parser::{parse_decision, parse_decision_str, resolve_decision_id};
