@@ -302,7 +302,7 @@ mod tests {
                     depends: vec![],
                     estimate: None,
                     capability: None,
-                },
+                    satisfies: vec![],                },
                 sections: vec![Section::Constraints {
                     items: constraints,
                     span: Span::line(1),

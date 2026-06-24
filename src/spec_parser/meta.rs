@@ -10,6 +10,7 @@ pub fn parse_meta(lines: &[&str]) -> Result<SpecMeta, String> {
     let mut depends = Vec::new();
     let mut estimate = None;
     let mut capability = None;
+    let mut satisfies = Vec::new();
 
     for line in lines {
         let trimmed = line.trim();
@@ -81,6 +82,15 @@ pub fn parse_meta(lines: &[&str]) -> Result<SpecMeta, String> {
                     capability = Some(v.to_string());
                 }
             }
+            "satisfies" => {
+                let value = value.trim_start_matches('[').trim_end_matches(']');
+                for id in value.split(',') {
+                    let s = id.trim().trim_matches('"').to_ascii_uppercase();
+                    if !s.is_empty() {
+                        satisfies.push(s);
+                    }
+                }
+            }
             _ => {} // ignore unknown keys
         }
     }
@@ -98,6 +108,7 @@ pub fn parse_meta(lines: &[&str]) -> Result<SpecMeta, String> {
         depends,
         estimate,
         capability,
+        satisfies,
     })
 }
 
@@ -187,5 +198,28 @@ mod tests {
         let meta =
             parse_meta(&["spec: task", r#"name: "t""#, "capability: ecosystem-import"]).unwrap();
         assert_eq!(meta.capability, Some("ecosystem-import".to_string()));
+    }
+
+    // ---- KLL: satisfies edge ----
+
+    #[test]
+    fn test_parse_satisfies_array() {
+        let lines = vec![
+            "spec: task",
+            r#"name: "X""#,
+            "satisfies: [adr-001, REQ-002]",
+        ];
+        let meta = parse_meta(&lines).unwrap();
+        assert_eq!(
+            meta.satisfies,
+            vec!["ADR-001".to_string(), "REQ-002".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_satisfies_defaults_empty() {
+        let lines = vec!["spec: task", r#"name: "X""#];
+        let meta = parse_meta(&lines).unwrap();
+        assert!(meta.satisfies.is_empty());
     }
 }

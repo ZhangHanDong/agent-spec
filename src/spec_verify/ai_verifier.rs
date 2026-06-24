@@ -240,7 +240,7 @@ mod tests {
                         depends: vec![],
                         estimate: None,
                         capability: None,
-                    },
+                        satisfies: vec![],                    },
                     sections: vec![
                         Section::Intent {
                             content: "验证 AI 请求包含完整上下文".into(),

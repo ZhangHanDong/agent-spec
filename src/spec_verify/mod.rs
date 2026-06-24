@@ -188,7 +188,7 @@ mod tests {
                         depends: vec![],
                         estimate: None,
                         capability: None,
-                    },
+                        satisfies: vec![],                    },
                     sections: vec![Section::AcceptanceCriteria {
                         scenarios: vec![scenario.clone()],
                         rules: vec![],
@@ -271,7 +271,7 @@ mod tests {
                         depends: vec![],
                         estimate: None,
                         capability: None,
-                    },
+                        satisfies: vec![],                    },
                     sections: vec![],
                     lint_acks: vec![],
                     source_path: PathBuf::new(),
