@@ -29,7 +29,7 @@ pub fn decision_liveness(declared: LivenessDeclared, spec_verdicts: &[Verdict]) 
     if declared == LivenessDeclared::Na {
         return Liveness::Na;
     }
-    if spec_verdicts.iter().any(|v| *v == Verdict::Fail) {
+    if spec_verdicts.contains(&Verdict::Fail) {
         return Liveness::Violated;
     }
     if spec_verdicts.is_empty() || spec_verdicts.iter().any(|v| *v != Verdict::Pass) {

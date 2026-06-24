@@ -1,4 +1,10 @@
 //! Knowledge & Liveness Layer (KLL). P1: decisions, satisfies edge, liveness.
+//!
+//! The re-exports below form the module's public facade. Not every item is
+//! wired into the CLI in P1 (P2 consumes more), so unused-import noise is
+//! silenced here — mirroring the crate-wide `allow(dead_code)` for the same
+//! ahead-of-use reason.
+#![allow(unused_imports)]
 
 pub mod index;
 pub mod lint;

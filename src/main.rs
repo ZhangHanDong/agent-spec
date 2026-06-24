@@ -326,6 +326,26 @@ enum Commands {
         #[arg(long, default_value = "dot")]
         format: String,
     },
+    /// Trace a decision to the specs that satisfy it and report liveness.
+    Trace {
+        /// Decision id (e.g. ADR-001), case-insensitive.
+        id: String,
+        /// Knowledge root (decisions live under <knowledge>/decisions).
+        #[arg(long, default_value = "knowledge")]
+        knowledge: PathBuf,
+        /// Specs root.
+        #[arg(long, default_value = "specs")]
+        specs: PathBuf,
+        /// Code directory to verify against.
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        /// Output format: text | json.
+        #[arg(long, default_value = "text")]
+        format: String,
+        /// Exit non-zero when the decision is violated.
+        #[arg(long)]
+        gate: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -456,6 +476,14 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             depth,
         } => cmd_plan(&spec, &code, &format, &depth),
         Commands::Graph { spec_dir, format } => cmd_graph(&spec_dir, &format),
+        Commands::Trace {
+            id,
+            knowledge,
+            specs,
+            code,
+            format,
+            gate,
+        } => cmd_trace(&id, &knowledge, &specs, &code, &format, gate),
     }
 }
 
@@ -2203,6 +2231,71 @@ fn cmd_init(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let output_dir = std::env::current_dir()?;
     cmd_init_at(&output_dir, level, name, lang, template)
+}
+
+fn cmd_trace(
+    id: &str,
+    knowledge: &Path,
+    specs: &Path,
+    code: &Path,
+    format: &str,
+    gate: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::spec_knowledge::model::Liveness;
+
+    let target = id.to_ascii_uppercase();
+
+    // Find the decision file under <knowledge>/decisions whose resolved id matches.
+    let decisions_dir = knowledge.join("decisions");
+    let decision = find_decision(&decisions_dir, &target)?;
+
+    let index = crate::spec_knowledge::build_satisfies_index(specs);
+    let report = crate::spec_knowledge::build_trace(&decision, &index, |spec_path| {
+        crate::spec_knowledge::trace::verify_spec_rollup(spec_path, code)
+    });
+
+    match format {
+        "json" => println!("{}", serde_json::to_string_pretty(&report)?),
+        _ => print!("{}", crate::spec_knowledge::format_trace_text(&report)),
+    }
+
+    if gate {
+        match report.liveness {
+            Liveness::Violated => {
+                eprintln!("gate: decision {} is VIOLATED", report.decision_id);
+                std::process::exit(2);
+            }
+            Liveness::Unproven => {
+                eprintln!(
+                    "gate (warning): decision {} is UNPROVEN",
+                    report.decision_id
+                );
+            }
+            Liveness::Honored | Liveness::Na => {}
+        }
+    }
+    Ok(())
+}
+
+fn find_decision(
+    dir: &Path,
+    target_id: &str,
+) -> Result<crate::spec_knowledge::DecisionDoc, Box<dyn std::error::Error>> {
+    let entries =
+        std::fs::read_dir(dir).map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
+    for entry in entries.flatten() {
+        let p = entry.path();
+        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+        if !(name.ends_with(".md") || name.ends_with(".spec")) {
+            continue;
+        }
+        if let Ok(doc) = crate::spec_knowledge::parse_decision(&p)
+            && doc.meta.id == target_id
+        {
+            return Ok(doc);
+        }
+    }
+    Err(format!("no decision with id {target_id} in {}", dir.display()).into())
 }
 
 fn cmd_init_at(
