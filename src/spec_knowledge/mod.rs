@@ -12,6 +12,7 @@ pub mod lint;
 pub mod liveness;
 pub mod model;
 pub mod parser;
+pub mod project;
 pub mod requirement;
 pub mod scaffold;
 pub mod trace;
@@ -28,6 +29,7 @@ pub use parser::{
     parse_decision, parse_decision_str, parse_knowledge, parse_knowledge_str, parse_requirement,
     parse_requirement_str, resolve_decision_id,
 };
+pub use project::{collect_guidance, render_guidance_md};
 pub use requirement::{NormativeKeyword, RequirementClause, extract_requirements};
 pub use scaffold::scaffold_workspace;
 pub use trace::{TraceReport, build_trace, format_trace_text, verify_spec_rollup};

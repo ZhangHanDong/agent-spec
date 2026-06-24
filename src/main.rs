@@ -143,6 +143,9 @@ enum Commands {
         /// Check for drift instead of writing (non-zero exit if drifted)
         #[arg(long)]
         check: bool,
+        /// Append projected guidance from this knowledge root (KLL §6.4).
+        #[arg(long)]
+        with_guidance: Option<PathBuf>,
     },
     /// Promote a passing task Rule into a capability spec (living-spec library)
     Promote {
@@ -399,9 +402,12 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             forbid,
             within,
         } => cmd_check_structure(&code, &forbid, &within),
-        Commands::GenIntegrations { target, out, check } => {
-            cmd_gen_integrations(&target, &out, check)
-        }
+        Commands::GenIntegrations {
+            target,
+            out,
+            check,
+            with_guidance,
+        } => cmd_gen_integrations(&target, &out, check, with_guidance.as_deref()),
         Commands::Promote {
             spec,
             rule,
@@ -790,6 +796,7 @@ fn cmd_gen_integrations(
     target: &str,
     out: &Path,
     check: bool,
+    with_guidance: Option<&Path>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let targets: Vec<&str> = if target == "all" {
         vec!["agents", "cursor", "claude"]
@@ -802,9 +809,22 @@ fn cmd_gen_integrations(
         _ => "agent-spec-tool-first.md",
     };
 
+    // Optionally project guidance and append it to every rendered target.
+    let guidance_block = match with_guidance {
+        Some(dir) => {
+            let docs = crate::spec_knowledge::collect_guidance(dir);
+            crate::spec_knowledge::render_guidance_md(&docs, None)
+        }
+        None => String::new(),
+    };
+
     let mut drifted = Vec::new();
     for t in &targets {
-        let rendered = crate::spec_report::render_named(t)?;
+        let mut rendered = crate::spec_report::render_named(t)?;
+        if !guidance_block.is_empty() {
+            rendered.push('\n');
+            rendered.push_str(&guidance_block);
+        }
         let path = out.join(filename(t));
         if check {
             let existing = std::fs::read_to_string(&path).unwrap_or_default();
