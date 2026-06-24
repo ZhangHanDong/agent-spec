@@ -7,6 +7,32 @@ use std::path::PathBuf;
 #[serde(rename_all = "lowercase")]
 pub enum KnowledgeKind {
     Decision,
+    Requirement,
+    Guidance,
+    Proposal,
+}
+
+impl KnowledgeKind {
+    /// Parse a frontmatter `kind:` value (case-insensitive).
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "decision" => Some(KnowledgeKind::Decision),
+            "requirement" => Some(KnowledgeKind::Requirement),
+            "guidance" => Some(KnowledgeKind::Guidance),
+            "proposal" => Some(KnowledgeKind::Proposal),
+            _ => None,
+        }
+    }
+
+    /// The conventional subdirectory under `knowledge/` for this kind.
+    pub fn dir(self) -> &'static str {
+        match self {
+            KnowledgeKind::Decision => "decisions",
+            KnowledgeKind::Requirement => "requirements",
+            KnowledgeKind::Guidance => "guidance",
+            KnowledgeKind::Proposal => "proposals",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -57,14 +83,17 @@ pub struct KSection {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DecisionDoc {
+pub struct KnowledgeDoc {
     pub meta: KnowledgeMeta,
     pub sections: Vec<KSection>,
     #[serde(skip)]
     pub source_path: PathBuf,
 }
 
-impl DecisionDoc {
+/// Back-compat alias: a decision is just a knowledge doc with `kind: decision`.
+pub type DecisionDoc = KnowledgeDoc;
+
+impl KnowledgeDoc {
     /// Find a section by case-insensitive heading match.
     pub fn section(&self, heading: &str) -> Option<&KSection> {
         self.sections

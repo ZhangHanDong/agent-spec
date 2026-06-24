@@ -1,7 +1,7 @@
-//! Hand-written decision parser (mirrors spec_parser/meta.rs). No serde_yaml.
+//! Hand-written knowledge parser (mirrors spec_parser/meta.rs). No serde_yaml.
 
 use crate::spec_knowledge::model::{
-    DecisionDoc, DecisionStatus, KSection, KnowledgeKind, KnowledgeMeta, LivenessDeclared,
+    DecisionStatus, KSection, KnowledgeDoc, KnowledgeKind, KnowledgeMeta, LivenessDeclared,
 };
 use std::path::Path;
 
@@ -31,8 +31,9 @@ pub fn resolve_decision_id(frontmatter_id: Option<&str>, path: &Path) -> Option<
     }
 }
 
-/// Parse a decision document from a string. `path` is used for id fallback.
-pub fn parse_decision_str(input: &str, path: &Path) -> Result<DecisionDoc, String> {
+/// Parse a knowledge document of any kind from a string. `path` is used for id
+/// fallback. The kind is read from frontmatter `kind:` (defaults to decision).
+pub fn parse_knowledge_str(input: &str, path: &Path) -> Result<KnowledgeDoc, String> {
     let lines: Vec<&str> = input.lines().collect();
     let sep = lines
         .iter()
@@ -47,22 +48,56 @@ pub fn parse_decision_str(input: &str, path: &Path) -> Result<DecisionDoc, Strin
     let meta_lines = &rest[..close];
     let body_lines = &rest[close + 1..];
 
-    let meta = parse_decision_meta(meta_lines, path)?;
+    let meta = parse_knowledge_meta(meta_lines, path)?;
     let sections = parse_sections(body_lines);
-    Ok(DecisionDoc {
+    Ok(KnowledgeDoc {
         meta,
         sections,
         source_path: path.to_path_buf(),
     })
 }
 
-/// Parse a decision document from disk.
-pub fn parse_decision(path: &Path) -> Result<DecisionDoc, String> {
+/// Parse a knowledge document of any kind from disk.
+pub fn parse_knowledge(path: &Path) -> Result<KnowledgeDoc, String> {
+    let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    parse_knowledge_str(&content, path)
+}
+
+/// Parse a string, requiring it to be of the given `kind`.
+fn parse_kind_str(input: &str, path: &Path, kind: KnowledgeKind) -> Result<KnowledgeDoc, String> {
+    let doc = parse_knowledge_str(input, path)?;
+    if doc.meta.kind != kind {
+        return Err(format!(
+            "expected kind {:?}, found {:?}",
+            kind, doc.meta.kind
+        ));
+    }
+    Ok(doc)
+}
+
+/// Parse a decision document from a string (strict: kind must be decision).
+pub fn parse_decision_str(input: &str, path: &Path) -> Result<KnowledgeDoc, String> {
+    parse_kind_str(input, path, KnowledgeKind::Decision)
+}
+
+/// Parse a decision document from disk (strict: kind must be decision).
+pub fn parse_decision(path: &Path) -> Result<KnowledgeDoc, String> {
     let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
     parse_decision_str(&content, path)
 }
 
-fn parse_decision_meta(lines: &[&str], path: &Path) -> Result<KnowledgeMeta, String> {
+/// Parse a requirement document from a string (strict: kind must be requirement).
+pub fn parse_requirement_str(input: &str, path: &Path) -> Result<KnowledgeDoc, String> {
+    parse_kind_str(input, path, KnowledgeKind::Requirement)
+}
+
+/// Parse a requirement document from disk (strict: kind must be requirement).
+pub fn parse_requirement(path: &Path) -> Result<KnowledgeDoc, String> {
+    let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    parse_requirement_str(&content, path)
+}
+
+fn parse_knowledge_meta(lines: &[&str], path: &Path) -> Result<KnowledgeMeta, String> {
     let mut id_field: Option<String> = None;
     let mut status: Option<DecisionStatus> = None;
     let mut supersedes: Option<String> = None;
@@ -81,10 +116,8 @@ fn parse_decision_meta(lines: &[&str], path: &Path) -> Result<KnowledgeMeta, Str
         let val = val.trim().trim_matches('"').trim();
         match key {
             "kind" => {
-                if val != "decision" {
-                    return Err(format!("unsupported knowledge kind '{val}' (P1: decision)"));
-                }
-                kind = KnowledgeKind::Decision;
+                kind = KnowledgeKind::parse(val)
+                    .ok_or_else(|| format!("unsupported knowledge kind '{val}'"))?;
             }
             "id" => id_field = Some(val.to_string()),
             "status" => {
@@ -110,7 +143,8 @@ fn parse_decision_meta(lines: &[&str], path: &Path) -> Result<KnowledgeMeta, Str
     }
 
     let id = resolve_decision_id(id_field.as_deref(), path).ok_or_else(|| {
-        "decision has no resolvable id (frontmatter id: or <letters>-<digits> filename)".to_string()
+        "knowledge doc has no resolvable id (frontmatter id: or <letters>-<digits> filename)"
+            .to_string()
     })?;
 
     Ok(KnowledgeMeta {
