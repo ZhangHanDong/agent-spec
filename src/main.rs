@@ -9,6 +9,7 @@ mod spec_parser;
 mod spec_report;
 mod spec_verify;
 
+mod spec_knowledge;
 mod vcs;
 
 use clap::{Parser, Subcommand};
