@@ -7,6 +7,7 @@
 #![allow(unused_imports)]
 
 pub mod context;
+pub mod governance;
 pub mod guidance;
 pub mod index;
 pub mod lint;
@@ -19,6 +20,7 @@ pub mod scaffold;
 pub mod trace;
 
 pub use context::{list_context, read_context, safe_join};
+pub use governance::{lint_corpus, lint_doc};
 pub use guidance::{applies_to, applies_to_path, applies_to_stack, glob_match, skills};
 pub use index::{SatisfiesIndex, build_satisfies_index};
 pub use lint::{lint_decision, lint_guidance, lint_requirement};
