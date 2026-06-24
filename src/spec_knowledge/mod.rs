@@ -15,6 +15,7 @@ pub mod liveness;
 pub mod model;
 pub mod parser;
 pub mod project;
+pub mod proposal;
 pub mod requirement;
 pub mod sarif;
 pub mod scaffold;
@@ -35,6 +36,7 @@ pub use parser::{
     parse_requirement_str, resolve_decision_id,
 };
 pub use project::{collect_guidance, render_guidance_md};
+pub use proposal::{lint_proposal, produces};
 pub use requirement::{NormativeKeyword, RequirementClause, extract_requirements};
 pub use sarif::{Finding, render_sarif};
 pub use scaffold::scaffold_workspace;

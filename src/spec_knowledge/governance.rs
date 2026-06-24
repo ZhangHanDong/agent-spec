@@ -43,22 +43,23 @@ fn collect_md(dir: &Path, out: &mut Vec<PathBuf>) {
         let p = entry.path();
         if p.is_dir() {
             collect_md(&p, out);
-        } else if p.extension().and_then(|e| e.to_str()) == Some("md")
-            && p.file_name().and_then(|n| n.to_str()) != Some("README.md")
-        {
-            out.push(p);
+        } else if p.extension().and_then(|e| e.to_str()) == Some("md") {
+            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+            // README and `*-template.md` are scaffolding, not artifacts.
+            if name != "README.md" && !name.ends_with("-template.md") {
+                out.push(p);
+            }
         }
     }
 }
 
-/// Per-document lint dispatched by kind. Proposals reuse the decision rules
-/// (same MADR shape); their dedicated `Produces`-edge checks are added in P3.
+/// Per-document lint dispatched by kind.
 pub fn lint_doc(doc: &KnowledgeDoc) -> Vec<LintDiagnostic> {
     match doc.meta.kind {
         KnowledgeKind::Decision => lint_decision(doc),
         KnowledgeKind::Requirement => lint_requirement(doc),
         KnowledgeKind::Guidance => lint_guidance(doc),
-        KnowledgeKind::Proposal => lint_decision(doc),
+        KnowledgeKind::Proposal => crate::spec_knowledge::proposal::lint_proposal(doc),
     }
 }
 
@@ -136,6 +137,19 @@ pub fn lint_corpus(docs: &[KnowledgeDoc]) -> Vec<LintDiagnostic> {
                     Severity::Warning,
                     format!("{} references superseded id {refid}", d.meta.id),
                 ));
+            }
+        }
+
+        // Produces integrity: a proposal's produced ids should exist (§6.3).
+        if d.meta.kind == KnowledgeKind::Proposal {
+            for produced in crate::spec_knowledge::proposal::produces(d) {
+                if !by_id.contains_key(produced.as_str()) {
+                    out.push(diag(
+                        "produces-dangling",
+                        Severity::Warning,
+                        format!("{} produces {produced}, which does not exist", d.meta.id),
+                    ));
+                }
             }
         }
     }
@@ -229,6 +243,19 @@ mod tests {
             .map(|d| d.rule.clone())
             .collect();
         assert!(rules.contains(&"supersession-dangling".to_string()));
+    }
+
+    #[test]
+    fn test_produces_dangling_warns() {
+        let prop = parse(
+            "---\nkind: proposal\nid: LEP-001\nliveness: n/a\n---\n## Context\nc\n## Decision\nd\n## Consequences\ng/b\n## Produces: ADR-404\n",
+            "lep-001.md",
+        );
+        let rules: Vec<_> = lint_corpus(&[prop])
+            .iter()
+            .map(|d| d.rule.clone())
+            .collect();
+        assert!(rules.contains(&"produces-dangling".to_string()));
     }
 
     #[test]
