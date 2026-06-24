@@ -172,6 +172,9 @@ enum Commands {
         /// Template profile: standard, rewrite-parity
         #[arg(long, default_value = "standard")]
         template: String,
+        /// Scaffold the canonical KLL workspace tree instead of a single spec.
+        #[arg(long)]
+        workspace: bool,
     },
     /// Run full lifecycle: lint -> verify -> report (for CI/agent use)
     Lifecycle {
@@ -410,7 +413,8 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             name,
             lang,
             template,
-        } => cmd_init(&level, name.as_deref(), &lang, &template),
+            workspace,
+        } => cmd_init(&level, name.as_deref(), &lang, &template, workspace),
         Commands::Lifecycle {
             spec,
             code,
@@ -2228,8 +2232,20 @@ fn cmd_init(
     name: Option<&str>,
     lang: &str,
     template: &str,
+    workspace: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let output_dir = std::env::current_dir()?;
+    if workspace {
+        let created = crate::spec_knowledge::scaffold::scaffold_workspace(&output_dir)?;
+        if created.is_empty() {
+            println!("workspace already scaffolded (nothing to do)");
+        } else {
+            for p in created {
+                println!("created {p}");
+            }
+        }
+        return Ok(());
+    }
     cmd_init_at(&output_dir, level, name, lang, template)
 }
 
@@ -4047,6 +4063,7 @@ Scenario: Contract alias
                 lang,
                 template,
                 name,
+                workspace: _,
             } => {
                 assert_eq!(level, "task");
                 assert_eq!(lang, "en");
