@@ -16,7 +16,7 @@ pub mod scaffold;
 pub mod trace;
 
 pub use index::{SatisfiesIndex, build_satisfies_index};
-pub use lint::lint_decision;
+pub use lint::{lint_decision, lint_requirement};
 pub use liveness::{decision_liveness, spec_rollup};
 pub use model::{
     DecisionDoc, DecisionStatus, KSection, KnowledgeDoc, KnowledgeKind, KnowledgeMeta, Liveness,

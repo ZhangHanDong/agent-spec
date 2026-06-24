@@ -50,6 +50,23 @@ impl NormativeKeyword {
     }
 }
 
+/// Count whole-word BCP-14 base tokens in a clause (case-sensitive uppercase).
+/// Used by the 29148 single-statement lint: >1 token = a compound requirement.
+pub fn normative_token_count(text: &str) -> usize {
+    const TOKENS: &[&str] = &[
+        "MUST",
+        "SHALL",
+        "SHOULD",
+        "MAY",
+        "REQUIRED",
+        "RECOMMENDED",
+        "OPTIONAL",
+    ];
+    text.split(|c: char| !c.is_ascii_alphabetic())
+        .filter(|w| TOKENS.contains(w))
+        .count()
+}
+
 /// One normative clause from a requirement's `## Requirements` section.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequirementClause {
