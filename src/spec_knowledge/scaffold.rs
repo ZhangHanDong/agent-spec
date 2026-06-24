@@ -9,7 +9,10 @@ const FILES: &[(&str, &str)] = &[
     ("knowledge/decisions/adr-template.md", ADR_TEMPLATE),
     ("knowledge/guidance/README.md", GUIDANCE_README),
     ("knowledge/context/README.md", CONTEXT_README),
-    ("knowledge/standards/canon/artifact-types.md", ARTIFACT_TYPES),
+    (
+        "knowledge/standards/canon/artifact-types.md",
+        ARTIFACT_TYPES,
+    ),
     (".agent-spec/config.yaml", CONFIG_YAML),
 ];
 

@@ -82,7 +82,9 @@ mod tests {
 
     #[test]
     fn test_clean_accepted_decision_has_no_errors() {
-        let doc = parse("---\nkind: decision\nid: ADR-001\nstatus: accepted\n---\n## Context\nc\n## Decision\nd\n## Consequences\nGood, because A. Bad, because B.\n## Alternatives Considered\nOption X — rejected because Y.\n");
+        let doc = parse(
+            "---\nkind: decision\nid: ADR-001\nstatus: accepted\n---\n## Context\nc\n## Decision\nd\n## Consequences\nGood, because A. Bad, because B.\n## Alternatives Considered\nOption X — rejected because Y.\n",
+        );
         let errs: Vec<_> = lint_decision(&doc)
             .into_iter()
             .filter(|d| d.severity == Severity::Error)
@@ -99,7 +101,9 @@ mod tests {
 
     #[test]
     fn test_accepted_without_alternatives_is_error() {
-        let doc = parse("---\nkind: decision\nid: ADR-003\nstatus: accepted\n---\n## Context\nc\n## Decision\nd\n## Consequences\nGood. Bad.\n");
+        let doc = parse(
+            "---\nkind: decision\nid: ADR-003\nstatus: accepted\n---\n## Context\nc\n## Decision\nd\n## Consequences\nGood. Bad.\n",
+        );
         let rules: Vec<_> = lint_decision(&doc).iter().map(|d| d.rule.clone()).collect();
         assert!(rules.contains(&"decision-accepted-needs-alternatives".to_string()));
     }

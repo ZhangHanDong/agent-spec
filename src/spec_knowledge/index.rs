@@ -70,7 +70,7 @@ mod tests {
 
         let idx = build_satisfies_index(&specs);
         assert_eq!(idx.get("ADR-001").map(|v| v.len()), Some(1));
-        assert!(idx.get("ADR-999").is_none());
+        assert!(!idx.contains_key("ADR-999"));
 
         std::fs::remove_dir_all(&dir).ok();
     }

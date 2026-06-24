@@ -930,7 +930,8 @@ mod tests {
                     depends: vec![],
                     estimate: None,
                     capability: None,
-                    satisfies: vec![],                },
+                    satisfies: vec![],
+                },
                 sections: vec![Section::Boundaries {
                     items: vec![Boundary {
                         category: BoundaryCategory::Allow,
@@ -1055,7 +1056,8 @@ mod tests {
                     depends: vec![],
                     estimate: None,
                     capability: None,
-                    satisfies: vec![],                },
+                    satisfies: vec![],
+                },
                 sections: vec![Section::Boundaries {
                     items: vec![Boundary {
                         category: BoundaryCategory::Allow,
@@ -1222,7 +1224,8 @@ name: "退款"
                     depends: vec![],
                     estimate: None,
                     capability: None,
-                    satisfies: vec![],                },
+                    satisfies: vec![],
+                },
                 sections: vec![Section::Boundaries {
                     items: vec![Boundary {
                         category: BoundaryCategory::Allow,

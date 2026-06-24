@@ -24,7 +24,11 @@ pub struct TraceReport {
 /// Build a trace report. `verify_fn` runs verification for one spec path and
 /// returns its rolled-up verdict — injected so the builder is unit-testable
 /// without invoking cargo test.
-pub fn build_trace<F>(decision: &DecisionDoc, index: &SatisfiesIndex, mut verify_fn: F) -> TraceReport
+pub fn build_trace<F>(
+    decision: &DecisionDoc,
+    index: &SatisfiesIndex,
+    mut verify_fn: F,
+) -> TraceReport
 where
     F: FnMut(&Path) -> Verdict,
 {

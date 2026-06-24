@@ -1,6 +1,6 @@
 //! Derived liveness (§7). Never stored; computed from current spec verdicts.
 
-use crate::spec_core::{VerificationSummary, Verdict};
+use crate::spec_core::{Verdict, VerificationSummary};
 use crate::spec_knowledge::model::{Liveness, LivenessDeclared};
 
 /// Roll a single spec's verification summary into one representative verdict:
