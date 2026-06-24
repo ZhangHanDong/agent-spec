@@ -8,7 +8,48 @@
 use crate::spec_core::{LintDiagnostic, Severity, Span};
 use crate::spec_knowledge::lint::{lint_decision, lint_guidance, lint_requirement};
 use crate::spec_knowledge::model::{DecisionStatus, KnowledgeDoc, KnowledgeKind};
+use crate::spec_knowledge::parser::parse_knowledge;
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+/// Collect every typed knowledge doc under `knowledge_dir` (the four kind
+/// directories), skipping README files and unparseable docs. Sorted by id.
+/// `standards/**` is never scanned — that is the §9 self-referential exemption.
+pub fn collect_knowledge(knowledge_dir: &Path) -> Vec<KnowledgeDoc> {
+    const KINDS: [KnowledgeKind; 4] = [
+        KnowledgeKind::Decision,
+        KnowledgeKind::Requirement,
+        KnowledgeKind::Guidance,
+        KnowledgeKind::Proposal,
+    ];
+    let mut files = Vec::new();
+    for kind in KINDS {
+        collect_md(&knowledge_dir.join(kind.dir()), &mut files);
+    }
+    files.sort();
+    let mut docs: Vec<KnowledgeDoc> = files
+        .iter()
+        .filter_map(|p| parse_knowledge(p).ok())
+        .collect();
+    docs.sort_by(|a, b| a.meta.id.cmp(&b.meta.id));
+    docs
+}
+
+fn collect_md(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if p.is_dir() {
+            collect_md(&p, out);
+        } else if p.extension().and_then(|e| e.to_str()) == Some("md")
+            && p.file_name().and_then(|n| n.to_str()) != Some("README.md")
+        {
+            out.push(p);
+        }
+    }
+}
 
 /// Per-document lint dispatched by kind. Proposals reuse the decision rules
 /// (same MADR shape); their dedicated `Produces`-edge checks are added in P3.

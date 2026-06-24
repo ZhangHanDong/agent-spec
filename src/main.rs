@@ -333,6 +333,18 @@ enum Commands {
         #[arg(long, default_value = "dot")]
         format: String,
     },
+    /// Lint the knowledge corpus (per-doc rules + governance integrity).
+    LintKnowledge {
+        /// Knowledge root.
+        #[arg(long, default_value = "knowledge")]
+        knowledge: PathBuf,
+        /// Output format: text | json | sarif.
+        #[arg(long, default_value = "text")]
+        format: String,
+        /// Exit non-zero when any Error-level finding is present.
+        #[arg(long)]
+        gate: bool,
+    },
     /// Serve the knowledge layer over MCP (read-only, deterministic, stdio).
     Mcp {
         /// Knowledge root.
@@ -499,6 +511,11 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             depth,
         } => cmd_plan(&spec, &code, &format, &depth),
         Commands::Graph { spec_dir, format } => cmd_graph(&spec_dir, &format),
+        Commands::LintKnowledge {
+            knowledge,
+            format,
+            gate,
+        } => cmd_lint_knowledge(&knowledge, &format, gate),
         Commands::Mcp {
             knowledge,
             specs,
@@ -2285,6 +2302,79 @@ fn cmd_init(
         return Ok(());
     }
     cmd_init_at(&output_dir, level, name, lang, template)
+}
+
+fn cmd_lint_knowledge(
+    knowledge: &Path,
+    format: &str,
+    gate: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::spec_core::Severity;
+    use crate::spec_knowledge::sarif::Finding;
+
+    let docs = crate::spec_knowledge::collect_knowledge(knowledge);
+    let mut findings: Vec<Finding> = Vec::new();
+    for d in &docs {
+        let uri = d.source_path.display().to_string();
+        for diag in crate::spec_knowledge::lint_doc(d) {
+            findings.push(Finding {
+                uri: uri.clone(),
+                diag,
+            });
+        }
+    }
+    for diag in crate::spec_knowledge::lint_corpus(&docs) {
+        findings.push(Finding {
+            uri: String::new(),
+            diag,
+        });
+    }
+
+    let errors = findings
+        .iter()
+        .filter(|f| f.diag.severity == Severity::Error)
+        .count();
+
+    match format {
+        "sarif" => {
+            let log = crate::spec_knowledge::render_sarif(&findings);
+            println!("{}", serde_json::to_string_pretty(&log)?);
+        }
+        "json" => {
+            let arr: Vec<serde_json::Value> = findings
+                .iter()
+                .map(|f| {
+                    serde_json::json!({
+                        "uri": f.uri,
+                        "rule": f.diag.rule,
+                        "severity": format!("{:?}", f.diag.severity),
+                        "message": f.diag.message,
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&arr)?);
+        }
+        _ => {
+            for f in &findings {
+                let where_ = if f.uri.is_empty() { "(corpus)" } else { &f.uri };
+                println!(
+                    "{where_}: [{:?}] {} — {}",
+                    f.diag.severity, f.diag.rule, f.diag.message
+                );
+            }
+            println!(
+                "{} docs, {} findings ({errors} errors)",
+                docs.len(),
+                findings.len()
+            );
+        }
+    }
+
+    if gate && errors > 0 {
+        eprintln!("gate: {errors} error-level knowledge finding(s)");
+        std::process::exit(2);
+    }
+    Ok(())
 }
 
 fn cmd_mcp(

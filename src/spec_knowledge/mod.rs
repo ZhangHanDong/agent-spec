@@ -16,11 +16,12 @@ pub mod model;
 pub mod parser;
 pub mod project;
 pub mod requirement;
+pub mod sarif;
 pub mod scaffold;
 pub mod trace;
 
 pub use context::{list_context, read_context, safe_join};
-pub use governance::{lint_corpus, lint_doc};
+pub use governance::{collect_knowledge, lint_corpus, lint_doc};
 pub use guidance::{applies_to, applies_to_path, applies_to_stack, glob_match, skills};
 pub use index::{SatisfiesIndex, build_satisfies_index};
 pub use lint::{lint_decision, lint_guidance, lint_requirement};
@@ -35,5 +36,6 @@ pub use parser::{
 };
 pub use project::{collect_guidance, render_guidance_md};
 pub use requirement::{NormativeKeyword, RequirementClause, extract_requirements};
+pub use sarif::{Finding, render_sarif};
 pub use scaffold::scaffold_workspace;
 pub use trace::{TraceReport, build_trace, format_trace_text, verify_spec_rollup};
