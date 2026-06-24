@@ -10,6 +10,7 @@ mod spec_report;
 mod spec_verify;
 
 mod spec_knowledge;
+mod spec_mcp;
 mod vcs;
 
 use clap::{Parser, Subcommand};
@@ -332,6 +333,18 @@ enum Commands {
         #[arg(long, default_value = "dot")]
         format: String,
     },
+    /// Serve the knowledge layer over MCP (read-only, deterministic, stdio).
+    Mcp {
+        /// Knowledge root.
+        #[arg(long, default_value = "knowledge")]
+        knowledge: PathBuf,
+        /// Specs root.
+        #[arg(long, default_value = "specs")]
+        specs: PathBuf,
+        /// Code directory to verify against (for liveness).
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+    },
     /// Trace a decision to the specs that satisfy it and report liveness.
     Trace {
         /// Decision id (e.g. ADR-001), case-insensitive.
@@ -486,6 +499,11 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             depth,
         } => cmd_plan(&spec, &code, &format, &depth),
         Commands::Graph { spec_dir, format } => cmd_graph(&spec_dir, &format),
+        Commands::Mcp {
+            knowledge,
+            specs,
+            code,
+        } => cmd_mcp(knowledge, specs, code),
         Commands::Trace {
             id,
             knowledge,
@@ -2267,6 +2285,20 @@ fn cmd_init(
         return Ok(());
     }
     cmd_init_at(&output_dir, level, name, lang, template)
+}
+
+fn cmd_mcp(
+    knowledge: PathBuf,
+    specs: PathBuf,
+    code: PathBuf,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = crate::spec_mcp::McpContext {
+        knowledge,
+        specs,
+        code,
+    };
+    crate::spec_mcp::serve(&ctx)?;
+    Ok(())
 }
 
 fn cmd_trace(
