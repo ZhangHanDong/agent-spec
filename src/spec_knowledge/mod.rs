@@ -6,6 +6,7 @@
 //! the crate-wide `allow(dead_code)` for the same ahead-of-use reason.
 #![allow(unused_imports)]
 
+pub mod guidance;
 pub mod index;
 pub mod lint;
 pub mod liveness;
@@ -15,8 +16,9 @@ pub mod requirement;
 pub mod scaffold;
 pub mod trace;
 
+pub use guidance::{applies_to, applies_to_path, applies_to_stack, glob_match, skills};
 pub use index::{SatisfiesIndex, build_satisfies_index};
-pub use lint::{lint_decision, lint_requirement};
+pub use lint::{lint_decision, lint_guidance, lint_requirement};
 pub use liveness::{decision_liveness, spec_rollup};
 pub use model::{
     DecisionDoc, DecisionStatus, KSection, KnowledgeDoc, KnowledgeKind, KnowledgeMeta, Liveness,

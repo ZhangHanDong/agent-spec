@@ -103,6 +103,7 @@ fn parse_knowledge_meta(lines: &[&str], path: &Path) -> Result<KnowledgeMeta, St
     let mut supersedes: Option<String> = None;
     let mut liveness = LivenessDeclared::Auto;
     let mut kind = KnowledgeKind::Decision;
+    let mut tags = Vec::new();
 
     for line in lines {
         let line = line.trim();
@@ -138,6 +139,15 @@ fn parse_knowledge_meta(lines: &[&str], path: &Path) -> Result<KnowledgeMeta, St
                     other => return Err(format!("unknown liveness '{other}'")),
                 };
             }
+            "tags" => {
+                let val = val.trim_start_matches('[').trim_end_matches(']');
+                for tag in val.split(',') {
+                    let t = tag.trim().trim_matches('"');
+                    if !t.is_empty() {
+                        tags.push(t.to_string());
+                    }
+                }
+            }
             _ => {} // unknown keys ignored (forward-compat), like spec meta
         }
     }
@@ -153,6 +163,7 @@ fn parse_knowledge_meta(lines: &[&str], path: &Path) -> Result<KnowledgeMeta, St
         status,
         supersedes,
         liveness,
+        tags,
     })
 }
 

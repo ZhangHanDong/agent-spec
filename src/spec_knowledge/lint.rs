@@ -152,6 +152,37 @@ pub fn lint_requirement(doc: &KnowledgeDoc) -> Vec<LintDiagnostic> {
     out
 }
 
+const GUIDANCE_REQUIRED: [&str; 2] = ["Scope", "Instructions"];
+
+/// Lint a guidance artifact (§6.4): required sections, plus a forcing function
+/// that guidance never enters the code gate (`liveness` must be `n/a`).
+pub fn lint_guidance(doc: &KnowledgeDoc) -> Vec<LintDiagnostic> {
+    use crate::spec_knowledge::model::LivenessDeclared;
+    let mut out = Vec::new();
+
+    for req in GUIDANCE_REQUIRED {
+        if doc.section(req).is_none() {
+            out.push(diag(
+                "guidance-required-section",
+                Severity::Error,
+                format!("guidance is missing required `## {req}` section"),
+                Some("add the section"),
+            ));
+        }
+    }
+
+    if doc.meta.liveness != LivenessDeclared::Na {
+        out.push(diag(
+            "guidance-liveness-na",
+            Severity::Warning,
+            "guidance should declare `liveness: n/a` (it never enters the code gate)".into(),
+            Some("set `liveness: n/a` in the front-matter"),
+        ));
+    }
+
+    out
+}
+
 /// The text preceding the first BCP-14 keyword (the EARS "subject"), trimmed.
 fn subject_before_keyword(text: &str) -> String {
     const NEEDLES: &[&str] = &[
@@ -251,5 +282,31 @@ mod tests {
             .collect();
         assert!(rules.contains(&"requirement-single-statement".to_string()));
         assert!(rules.contains(&"requirement-bcp14-keyword".to_string()));
+    }
+
+    // ---- guidance lint (§6.4) ----
+
+    fn parse_guidance(input: &str) -> KnowledgeDoc {
+        crate::spec_knowledge::parser::parse_knowledge_str(input, Path::new("g-001-x.md")).unwrap()
+    }
+
+    #[test]
+    fn test_clean_guidance_has_no_errors() {
+        let doc = parse_guidance(
+            "---\nkind: guidance\nid: G-001\nliveness: n/a\n---\n## Scope\nrust modules\n## Instructions\nprefer ? over unwrap\n",
+        );
+        let errs: Vec<_> = lint_guidance(&doc)
+            .into_iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert!(errs.is_empty(), "unexpected errors: {errs:?}");
+    }
+
+    #[test]
+    fn test_guidance_missing_section_and_bad_liveness() {
+        let doc = parse_guidance("---\nkind: guidance\nid: G-002\n---\n## Scope\ns\n");
+        let rules: Vec<_> = lint_guidance(&doc).iter().map(|d| d.rule.clone()).collect();
+        assert!(rules.contains(&"guidance-required-section".to_string()));
+        assert!(rules.contains(&"guidance-liveness-na".to_string()));
     }
 }

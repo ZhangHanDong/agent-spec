@@ -93,6 +93,7 @@ mod tests {
                 status: Some(DecisionStatus::Accepted),
                 supersedes: None,
                 liveness: declared,
+                tags: vec![],
             },
             sections: vec![],
             source_path: PathBuf::new(),

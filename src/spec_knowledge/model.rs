@@ -73,6 +73,10 @@ pub struct KnowledgeMeta {
     pub supersedes: Option<String>,
     #[serde(default)]
     pub liveness: LivenessDeclared,
+    /// Scope tags (e.g. stack `rust`), used by guidance scoping. UPPERCASE
+    /// not enforced — tags are matched case-insensitively.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
 }
 
 /// One `## Heading` block and its raw body text.
@@ -116,6 +120,7 @@ mod tests {
                 status: Some(DecisionStatus::Accepted),
                 supersedes: None,
                 liveness: LivenessDeclared::Auto,
+                tags: vec![],
             },
             sections: vec![KSection {
                 heading: "Context".into(),
