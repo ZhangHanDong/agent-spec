@@ -80,6 +80,33 @@ Notes:
 - `promote` writes to `specs/capabilities/<name>.spec.md`; the capability name is path-traversal-checked.
 - `audit` and `check-structure` are mechanical and read-only (no code execution beyond scanning).
 
+## Knowledge & Liveness Layer (KLL)
+
+KLL adds a typed **knowledge layer** beside specs: durable `decision` /
+`requirement` / `guidance` / `proposal` artifacts under `knowledge/`, a
+`satisfies:` edge from specs back to decisions, and a **derived liveness**
+answer to "is this decision still guarded by the code?" — recomputed from
+current spec verdicts, never stored. A read-only MCP server serves it all to
+agents with no RAG. Knowledge lives in `knowledge/`; specs still live in
+`specs/`.
+
+| Command | Purpose | When to Use |
+|---------|---------|-------------|
+| `agent-spec init --workspace` | Scaffold the canonical `knowledge/` tree (decisions/requirements/proposals/guidance/context + canon + `.agent-spec/config.yaml`). Idempotent | Once, to lay down the knowledge workspace beside `specs/` |
+| `agent-spec trace <id> [--gate]` | Trace a decision id to the specs that `satisfy:` it and report **liveness** (honored / violated / unproven / n/a). `--gate` exits 2 on violated, warns on unproven | Check whether a recorded decision is still enforced by passing specs; use `--gate` in CI |
+| `agent-spec lint-knowledge [--format text\|json\|sarif] [--gate]` | Lint the knowledge corpus: per-doc rules + governance (id-conflict, supersession integrity, stale refs). `--gate` exits 2 on any Error | Governance gate for the knowledge base; `--format sarif` feeds GitHub Code Scanning |
+| `agent-spec mcp` | Serve the knowledge layer over MCP (JSON-RPC 2.0 over stdio, read-only, deterministic) | Wire into an MCP client so agents query knowledge live |
+| `agent-spec gen-integrations --with-guidance <knowledge>` | Project `guidance/` artifacts into the generated CLAUDE.md/AGENTS.md/.cursorrules | Push stack/path-scoped guidance into agent tool config |
+
+The six MCP tools (deterministic, no RAG): `knowledge.find`,
+`knowledge.governing` (decisions guarding a path via satisfying-spec
+boundaries + live liveness), `liveness.status`, `spec.contract`,
+`guidance.for`, `context.read`.
+
+Liveness ladder (precedence, total): declared `n/a` → `na`; any satisfying
+spec `Fail` → `violated`; none or any not-`Pass` → `unproven`; all `Pass` →
+`honored`. Liveness is **never stored** — always recomputed.
+
 ## Documentation
 
 Refer to the local files for detailed command patterns:

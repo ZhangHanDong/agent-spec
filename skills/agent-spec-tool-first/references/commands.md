@@ -15,7 +15,10 @@ Commands:
   check-structure     Mechanical structural check: forbid a reference within a file glob
   gen-integrations    Generate per-tool integration files from a single source
   promote             Promote a passing task Rule into a capability spec (living-spec library)
-  init                Create a starter .spec.md file
+  init                Create a starter .spec.md file (or --workspace for the knowledge tree)
+  trace               Trace a decision to satisfying specs and report liveness (KLL)
+  lint-knowledge      Lint the knowledge corpus (per-doc + governance); text/json/sarif (KLL)
+  mcp                 Serve the knowledge layer over MCP (read-only, stdio) (KLL)
   lifecycle           Run full lifecycle: lint -> verify -> report
   brief               Compatibility alias for the contract view
   contract            Render an explicit Task Contract for agent execution
@@ -138,7 +141,13 @@ Built-in linters: VagueVerb, Unquantified, Testability, Coverage, Determinism, I
 
 ```bash
 agent-spec init [--level org|project|task] [--name <name>] [--lang zh|en|both]
+agent-spec init --workspace
 ```
+
+`--workspace` ignores the spec flags and instead scaffolds the canonical KLL
+knowledge tree (`knowledge/decisions|requirements|proposals|guidance|context`,
+`knowledge/standards/canon/artifact-types.md`, `.agent-spec/config.yaml`), each
+with a README + template. Idempotent: existing files are left untouched.
 
 ## Change Set Defaults
 
@@ -311,13 +320,114 @@ agent-spec check-structure --code src --forbid crate::services --in "clients/**"
 agent-spec gen-integrations \
   [--target agents|cursor|claude|all] \
   [--out <DIR>] \
-  [--check]
+  [--check] \
+  [--with-guidance <KNOWLEDGE_DIR>]
 ```
 
 Generates per-tool integration files (agents / cursor / claude) from a single
 source. `--check` compares on-disk files to what would be generated and exits
 non-zero on drift — use it as a CI drift gate. Write and check share the same
 renderer, so "check passes" is equivalent to "write is a no-op".
+
+`--with-guidance <knowledge>` projects the `knowledge/guidance/` artifacts (KLL)
+into each generated file as a delimited `<!-- agent-spec:guidance -->` block —
+scope, instructions, applies-to globs, and designated skills.
+
+## Knowledge & Liveness Layer (KLL)
+
+KLL adds a typed knowledge layer beside specs. Artifacts live under
+`knowledge/` (one kind per subdirectory); specs stay in `specs/` and link back
+with a `satisfies:` frontmatter edge. **Liveness is derived, never stored** —
+recomputed from current spec verdicts on every `trace`.
+
+### Artifact kinds
+
+| Kind | Dir | Required sections | Notes |
+|------|-----|-------------------|-------|
+| `decision` | `knowledge/decisions/` | `## Context · ## Decision · ## Consequences` | MADR shape; Accepted ⇒ `## Alternatives Considered`; Consequences must name both sides |
+| `requirement` | `knowledge/requirements/` | `## Problem · ## Requirements` | `[REQ-NNN] … MUST/SHOULD/MAY …` clauses; BCP-14 / ISO-29148 / EARS quality lint (warnings) |
+| `guidance` | `knowledge/guidance/` | `## Scope · ## Instructions` | `## Applies To` globs + `## Skills`; `liveness: n/a`; projected via `gen-integrations --with-guidance` |
+| `proposal` | `knowledge/proposals/` | `## Context · ## Decision · ## Consequences` | `liveness: n/a`; `## Produces: ADR-NNN` edge to spawned decisions |
+| context | `knowledge/context/` | — | free-form, untyped, unlinted escape hatch |
+
+Knowledge frontmatter (identity only):
+
+```yaml
+---
+kind: decision            # decision | requirement | guidance | proposal
+id: ADR-001               # canonical; falls back to <letters>-<digits> filename prefix
+status: Accepted          # Proposed | Accepted | Superseded | Deprecated | Rejected
+supersedes: ADR-000       # optional
+liveness: auto            # auto (verifiable) | n/a (governance, never code-gated)
+tags: [rust]              # optional; used by guidance scoping
+---
+```
+
+The spec→decision edge, in spec frontmatter:
+
+```yaml
+satisfies: [ADR-001, REQ-002]
+```
+
+### trace
+
+```bash
+agent-spec trace <ID> \
+  [--knowledge knowledge] \
+  [--specs specs] \
+  [--code .] \
+  [--format text|json] \
+  [--gate]
+```
+
+Resolves a decision id (case-insensitive) to the specs that `satisfy:` it, runs
+verification on each, and rolls the verdicts up into a **liveness** state.
+`--gate` exits 2 on `violated` and warns (exit 0) on `unproven`.
+
+**Liveness ladder** (precedence, total and mutually exclusive):
+1. declared `n/a` → `na`
+2. any satisfying spec `Fail` → `violated`
+3. none, or any not-`Pass` → `unproven`
+4. all `Pass` → `honored`
+
+### lint-knowledge
+
+```bash
+agent-spec lint-knowledge \
+  [--knowledge knowledge] \
+  [--format text|json|sarif] \
+  [--gate]
+```
+
+Lints the whole knowledge corpus: per-doc rules (required sections + forcing
+functions, by kind) **plus** governance integrity — `knowledge-id-conflict`
+(Error), `supersession-dangling` (Error), `supersession-target-not-marked`
+(Warning), `references-superseded` (Warning), `produces-dangling` (Warning).
+`--gate` exits 2 on any Error-level finding. `--format sarif` emits SARIF 2.1.0
+for GitHub Code Scanning. `README.md` and `*-template.md` are exempt
+(self-referential exemption).
+
+### mcp
+
+```bash
+agent-spec mcp \
+  [--knowledge knowledge] \
+  [--specs specs] \
+  [--code .]
+```
+
+Serves the knowledge layer over MCP — JSON-RPC 2.0 over newline-delimited
+stdio (`initialize`, `tools/list`, `tools/call`). Read-only and deterministic:
+**no RAG, no embeddings, no model calls**. Six tools:
+
+| Tool | Args | Returns |
+|------|------|---------|
+| `knowledge.find` | `id` \| `tag` \| `path` | matching artifacts (id, kind, status, path) |
+| `knowledge.governing` | `path` | decisions guarding the path (via satisfying-spec boundaries) + live liveness |
+| `liveness.status` | `id` | the trace report (satisfying specs + verdicts + liveness) |
+| `spec.contract` | `name` | the task contract for a spec |
+| `guidance.for` | `path` \| `stack` | guidance + designated skills for the scope |
+| `context.read` | `path` (optional) | free-form context file, or the file listing |
 
 ## Frontmatter: depends and estimate
 
