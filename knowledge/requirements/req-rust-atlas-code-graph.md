@@ -2,7 +2,7 @@
 kind: requirement
 id: REQ-RUST-ATLAS
 title: "Rust Atlas Code Graph"
-status: accepted
+status: proposed
 liveness: auto
 tags: [atlas, code-graph, static-analysis, mcp]
 ---
@@ -20,20 +20,52 @@ CLI and MCP surfaces.
 
 ## Requirements
 
-[REQ-RUST-ATLAS-CRATE] The repository MUST become a Cargo workspace with a standalone library crate `crates/rust-atlas` that has no dependency on the `agent-spec` binary crate and can be published independently.
+[REQ-RUST-ATLAS-CRATE] The repository MUST become a Cargo workspace with a standalone library crate at `crates/rust-atlas`.
 
-[REQ-RUST-ATLAS-SCHEMA] The graph schema MUST define node kinds (crate, module, struct, enum, trait, fn, impl, type alias, const, macro) and edge kinds (contains, impls-trait, impl-for, references, calls, uses-type), where every edge carries a `provenance` value of `syn`, `scip`, or `mir`, and the persisted graph carries a `schema_version`.
+[REQ-RUST-ATLAS-CRATE-INDEPENDENT] The `rust-atlas` crate MUST NOT depend on the `agent-spec` binary crate.
 
-[REQ-RUST-ATLAS-EXTRACT] The syn extraction layer MUST build the module tree, symbol nodes with file, span, visibility, and signature, and declaration-level edges using only the stable toolchain.
+[REQ-RUST-ATLAS-SCHEMA-NODES] The graph schema MUST define node kinds crate, module, struct, enum, trait, fn, impl, type alias, const, and macro.
 
-[REQ-RUST-ATLAS-SCIP] The build MUST optionally ingest a SCIP index to add resolved cross-file `references` edges with provenance `scip`, and MUST degrade to syn-only extraction with a capability marker in graph metadata when no SCIP index is available.
+[REQ-RUST-ATLAS-SCHEMA-EDGES] Every edge MUST carry a `provenance` value of `syn`, `scip`, or `mir` on the edge kinds contains, impls-trait, impl-for, references, calls, and uses-type.
+
+[REQ-RUST-ATLAS-SCHEMA-VERSION] The persisted graph MUST carry a `schema_version` field.
+
+[REQ-RUST-ATLAS-EXTRACT] The syn extraction layer MUST build the module tree, symbol nodes with file, span, visibility, and signature, and declaration-level edges.
+
+[REQ-RUST-ATLAS-EXTRACT-STABLE] The syn extraction layer MUST compile and run on the stable toolchain without nightly features.
+
+[REQ-RUST-ATLAS-SCIP] The build MUST support optional ingestion of a SCIP index that adds resolved cross-file `references` edges with provenance `scip`.
+
+[REQ-RUST-ATLAS-SCIP-DEGRADE] When no SCIP index is available, the build MUST complete syn-only and record the absent capability in graph metadata.
 
 [REQ-RUST-ATLAS-STORE] The graph MUST persist under `.agent-spec/graph/` as per-source-file JSON shards plus metadata recording a blake3 content hash for every analyzed source file.
 
-[REQ-RUST-ATLAS-STALENESS] Commands MUST detect stale shards by hash comparison, rebuild only dirty shards incrementally, expose an `atlas check` command whose exit code reflects staleness, and report staleness instead of silently answering from an outdated graph when rebuild is disabled.
+[REQ-RUST-ATLAS-STALE-DETECT] Commands MUST detect stale shards by comparing stored content hashes against current file hashes.
 
-[REQ-RUST-ATLAS-CLI] The `agent-spec atlas` subcommand MUST provide `build`, `tree`, `query`, `refs`, `impls`, and `check` with machine-readable JSON output, and MUST NOT reuse or alter the existing `agent-spec graph` spec-dependency command.
+[REQ-RUST-ATLAS-STALE-REBUILD] Incremental rebuild MUST rewrite only the shards of changed files.
 
-[REQ-RUST-ATLAS-MCP] The existing `agent-spec mcp` server MUST expose read-only atlas tools (`atlas_tree`, `atlas_query`, `atlas_refs`, `atlas_impls`, `atlas_status`) as thin wrappers over the library API that return structured errors instead of panicking when the graph is missing.
+[REQ-RUST-ATLAS-STALE-CHECK] The `atlas check` command MUST exit non-zero when any shard is stale.
 
-[REQ-RUST-ATLAS-DEGRADE] Files that fail to parse MUST be recorded as `unparsed` diagnostics while the rest of the graph still builds; extraction MUST be read-only over analyzed code and MUST NOT perform network or LLM calls.
+[REQ-RUST-ATLAS-STALE-FROZEN] When rebuild is disabled, query commands MUST attach the stale file list to every result served from an outdated graph.
+
+[REQ-RUST-ATLAS-CLI] The `agent-spec atlas` subcommand MUST provide `build`, `tree`, `query`, `refs`, `impls`, and `check` with machine-readable JSON output.
+
+[REQ-RUST-ATLAS-CLI-NAME] The atlas surface MUST NOT reuse, rename, or alter the existing `agent-spec graph` spec-dependency command.
+
+[REQ-RUST-ATLAS-MCP] The existing `agent-spec mcp` server MUST expose read-only atlas tools (`atlas_tree`, `atlas_query`, `atlas_refs`, `atlas_impls`, `atlas_status`) as thin wrappers over the library API.
+
+[REQ-RUST-ATLAS-MCP-ERRORS] When the graph is missing or stale, atlas MCP tools MUST return a structured error payload instead of panicking.
+
+[REQ-RUST-ATLAS-PARSE-DEGRADE] A file that fails to parse MUST be recorded as an `unparsed` diagnostic while the rest of the graph still builds.
+
+[REQ-RUST-ATLAS-READ-ONLY] Extraction MUST treat analyzed source code as read-only.
+
+[REQ-RUST-ATLAS-NO-NETWORK] The `rust-atlas` crate MUST NOT perform network or LLM calls.
+
+[REQ-RUST-ATLAS-NEGATIVE] Satisfying specs MUST include negative scenarios covering unknown symbol lookups, queries before any build, stale graphs with rebuild disabled, missing SCIP indexes, and unparsable source files.
+
+## Source Trace
+
+- design: docs/superpowers/specs/2026-07-11-rust-atlas-design.md
+- plan: docs/superpowers/plans/2026-07-11-rust-atlas-code-graph.md
+- staged contract: specs/roadmap/task-rust-atlas-code-graph.spec.md
