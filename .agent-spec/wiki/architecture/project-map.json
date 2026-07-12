@@ -1,0 +1,151 @@
+{
+  "version": 1,
+  "projects": [
+    {
+      "id": "agent-spec",
+      "title": "agent-spec",
+      "repo": ".",
+      "role": "Specification compiler and code live wiki host",
+      "interfaces": [
+        "cli",
+        "filesystem"
+      ],
+      "protocols": [
+        "agent-spec-cli",
+        "markdown"
+      ],
+      "status": "active",
+      "source_files": [
+        "Cargo.toml",
+        "src/spec_wiki"
+      ],
+      "external_sources": [
+        "rust-agents/agent-spec"
+      ],
+      "path": "projects/agent-spec.md"
+    },
+    {
+      "id": "codewiki",
+      "title": "codewiki",
+      "repo": "rust-agents/codewiki",
+      "role": "Reference implementation for LLMWiki-style code documentation",
+      "interfaces": [
+        "source-reference"
+      ],
+      "protocols": [
+        "llmwiki-methodology",
+        "markdown"
+      ],
+      "status": "reference",
+      "source_files": [
+        "knowledge/requirements/req-code-live-wiki.md",
+        "src/spec_wiki/live.rs"
+      ],
+      "external_sources": [
+        "rust-agents/codewiki"
+      ],
+      "path": "projects/codewiki.md"
+    },
+    {
+      "id": "symposium",
+      "title": "symposium",
+      "repo": "consult/symposium",
+      "role": "Reference for Rust workspace metadata and dependency extraction",
+      "interfaces": [
+        "cargo-metadata"
+      ],
+      "protocols": [
+        "cargo-metadata-json"
+      ],
+      "status": "reference",
+      "source_files": [
+        "knowledge/requirements/req-code-live-wiki.md",
+        "specs/task-code-live-wiki.spec.md",
+        "src/spec_wiki/architecture.rs"
+      ],
+      "external_sources": [
+        "consult/symposium"
+      ],
+      "path": "projects/symposium.md"
+    }
+  ],
+  "flows": [
+    {
+      "id": "agent-spec-to-codewiki",
+      "title": "agent-spec adapts codewiki methodology",
+      "projects": [
+        "agent-spec",
+        "codewiki"
+      ],
+      "kind": "adapts-methodology-from",
+      "protocols": [
+        "source-review",
+        "markdown"
+      ],
+      "requirements": [
+        "REQ-CODE-LIVE-WIKI"
+      ],
+      "specs": [
+        "specs/task-code-live-wiki.spec.md"
+      ],
+      "source_files": [
+        "knowledge/requirements/req-code-live-wiki.md",
+        "src/spec_wiki/live.rs",
+        "skills/agent-spec-wiki/SKILL.md"
+      ],
+      "external_sources": [
+        "rust-agents/codewiki"
+      ],
+      "path": "flows/agent-spec-to-codewiki.md"
+    },
+    {
+      "id": "agent-spec-to-symposium",
+      "title": "agent-spec adapts symposium metadata model",
+      "projects": [
+        "agent-spec",
+        "symposium"
+      ],
+      "kind": "adapts-metadata-from",
+      "protocols": [
+        "cargo-metadata-json"
+      ],
+      "requirements": [
+        "REQ-CODE-LIVE-WIKI"
+      ],
+      "specs": [
+        "specs/task-code-live-wiki.spec.md"
+      ],
+      "source_files": [
+        "knowledge/requirements/req-code-live-wiki.md",
+        "specs/task-code-live-wiki.spec.md",
+        "src/spec_wiki/architecture.rs"
+      ],
+      "external_sources": [
+        "consult/symposium"
+      ],
+      "path": "flows/agent-spec-to-symposium.md"
+    }
+  ],
+  "edges": [
+    {
+      "from": "agent-spec",
+      "to": "codewiki",
+      "kind": "adapts-methodology-from",
+      "flow_id": "agent-spec-to-codewiki",
+      "protocols": [
+        "source-review",
+        "markdown"
+      ]
+    },
+    {
+      "from": "agent-spec",
+      "to": "symposium",
+      "kind": "adapts-metadata-from",
+      "flow_id": "agent-spec-to-symposium",
+      "protocols": [
+        "cargo-metadata-json"
+      ]
+    }
+  ],
+  "diagnostics": []
+}
