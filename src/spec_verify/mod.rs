@@ -1,4 +1,5 @@
 mod ai_verifier;
+mod atlas_symbols;
 mod boundaries;
 mod complexity;
 mod structural;
@@ -12,6 +13,7 @@ use crate::spec_core::{
 };
 
 pub use ai_verifier::{AiBackend, AiVerifier, build_ai_request};
+pub use atlas_symbols::AtlasSymbolVerifier;
 pub use boundaries::BoundariesVerifier;
 pub use complexity::ComplexityVerifier;
 pub use structural::StructuralVerifier;

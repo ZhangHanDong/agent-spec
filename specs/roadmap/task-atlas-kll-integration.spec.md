@@ -1,7 +1,8 @@
 spec: task
 name: "Atlas Contract And Trace Integration (Phase 3)"
 tags: [atlas, code-graph, linker, lifecycle, trace]
-depends: [task-rust-atlas-code-graph]
+satisfies: [REQ-INTENT-CODE-LINKER]
+depends: [task-rust-atlas-code-graph, task-code-graph-ir-bindings]
 estimate: 1w
 ---
 
@@ -28,11 +29,16 @@ diagnostic while keeping Requirement IR independent of derived program facts.
 - src/spec_knowledge/**
 - src/spec_core/**
 - src/spec_parser/**
-- src/spec_gateway.rs
+- src/spec_gateway/**
+- src/spec_verify/**
+- src/main.rs
 - crates/rust-atlas/**
 - fixtures/atlas/**
+- knowledge/requirements/req-intent-code-linker.md
 - docs/intent-compiler/schemas/requirement-trace-ledger-v1.schema.json
+- specs/task-atlas-kll-integration.spec.md
 - specs/roadmap/task-atlas-kll-integration.spec.md
+- skills/agent-spec-tool-first/**
 - CHANGELOG.md
 
 ### Forbidden
@@ -50,6 +56,7 @@ diagnostic while keeping Requirement IR independent of derived program facts.
 ## Questions
 
 - [x] boundary 路径 glob 与 atlas 符号引用的语法如何区分（前缀标记 vs 独立字段）？（已解决：独立字段——Boundaries 下新增 `### Symbols` 子节承载 atlas 符号路径，与路径 glob 完全分离，BoundariesVerifier 保持不动。）
+- [x] Allowed Changes 是否覆盖 lifecycle 接线位置？（已解决：合同起草于 workspace 重构前；验证管线现居 `src/spec_verify/**` + `src/spec_gateway/**`，trace 记录调用点在 `src/main.rs`——三者补入边界，并补 `satisfies` 治理链接。）
 
 ## Completion Criteria
 

@@ -120,6 +120,8 @@ fn collect_path_boundaries(sections: &[crate::spec_core::Section]) -> (Vec<Strin
 
                 match item.category {
                     BoundaryCategory::Allow => allowed.push(normalize_pattern(&item.text)),
+                    // Symbols are code-graph references, never path globs.
+                    BoundaryCategory::Symbols => {}
                     BoundaryCategory::Deny | BoundaryCategory::General => {
                         forbidden.push(normalize_pattern(&item.text))
                     }

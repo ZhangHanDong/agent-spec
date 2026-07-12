@@ -8,8 +8,8 @@ use crate::spec_core::{LintReport, SpecResult, Verdict, VerificationReport};
 use crate::spec_lint::LintPipeline;
 use crate::spec_report::OutputFormat;
 use crate::spec_verify::{
-    AiBackend, AiMode, AiVerifier, BoundariesVerifier, ComplexityVerifier, StructuralVerifier,
-    TestVerifier, VerificationContext, Verifier, run_verification,
+    AiBackend, AiMode, AiVerifier, AtlasSymbolVerifier, BoundariesVerifier, ComplexityVerifier,
+    StructuralVerifier, TestVerifier, VerificationContext, Verifier, run_verification,
 };
 
 use super::TaskContract;
@@ -210,9 +210,17 @@ impl SpecGateway {
 
         let structural = StructuralVerifier;
         let boundaries = BoundariesVerifier;
+        let atlas_symbols = AtlasSymbolVerifier;
         let test = TestVerifier;
         let complexity = ComplexityVerifier;
-        let verifiers: Vec<&dyn Verifier> = vec![&structural, &boundaries, &test, &ai, &complexity];
+        let verifiers: Vec<&dyn Verifier> = vec![
+            &structural,
+            &boundaries,
+            &atlas_symbols,
+            &test,
+            &ai,
+            &complexity,
+        ];
         run_verification(&ctx, &verifiers)
     }
 

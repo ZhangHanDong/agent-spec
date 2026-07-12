@@ -286,6 +286,8 @@ fn parse_boundaries(lines: &[(usize, &str)]) -> Vec<Boundary> {
                 || header.contains("disallow")
             {
                 category = BoundaryCategory::Deny;
+            } else if header.contains("symbols") || header.contains("符号") {
+                category = BoundaryCategory::Symbols;
             }
             continue;
         }

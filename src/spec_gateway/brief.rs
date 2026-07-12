@@ -74,6 +74,7 @@ impl SpecBrief {
                     for item in items {
                         match item.category {
                             BoundaryCategory::Allow => must.push(item.text.clone()),
+                            BoundaryCategory::Symbols => {}
                             BoundaryCategory::Deny | BoundaryCategory::General => {
                                 must_not.push(item.text.clone())
                             }
@@ -142,6 +143,7 @@ impl SpecBrief {
                     for item in items {
                         match item.category {
                             BoundaryCategory::Allow => push_unique(&mut brief.must, &item.text),
+                            BoundaryCategory::Symbols => {}
                             BoundaryCategory::Deny | BoundaryCategory::General => {
                                 push_unique(&mut brief.must_not, &item.text)
                             }
@@ -275,6 +277,7 @@ impl TaskContract {
                             BoundaryCategory::Allow => {
                                 push_unique(&mut contract.allowed_changes, &item.text)
                             }
+                            BoundaryCategory::Symbols => {}
                             BoundaryCategory::Deny => {
                                 push_unique(&mut contract.forbidden, &item.text)
                             }
@@ -342,6 +345,7 @@ impl TaskContract {
                             BoundaryCategory::Allow => {
                                 push_unique(&mut contract.allowed_changes, &item.text)
                             }
+                            BoundaryCategory::Symbols => {}
                             BoundaryCategory::Deny | BoundaryCategory::General => {
                                 push_unique(&mut contract.forbidden, &item.text)
                             }

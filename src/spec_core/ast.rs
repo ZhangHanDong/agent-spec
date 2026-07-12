@@ -146,6 +146,9 @@ pub enum BoundaryCategory {
     Allow,
     Deny,
     General,
+    /// `### Symbols` entries: `- <provider>: <symbol-path>` code-graph
+    /// references, validated against a fresh provider graph — never path globs.
+    Symbols,
 }
 
 /// Scenario execution mode.
