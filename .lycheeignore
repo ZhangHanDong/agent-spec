@@ -1,0 +1,2 @@
+# The book is materialized into docs/book at Pages deploy time; it does not exist in a plain checkout.
+file://.*/docs/book.*
