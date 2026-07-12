@@ -4,7 +4,14 @@ All notable changes to `agent-spec` are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.6.0] - 2026-07-12
+
+The **dual-IR convergence** release: all five delivery boundaries of the
+target intent-compiler architecture are shipped. The Intent-Code Linker is
+live — contracts pin real code symbols, lifecycle validates them against a
+fresh Atlas graph, trace evidence carries typed stale-aware code targets,
+and `requirements bundle` hands agents one complete, verifiable execution
+context.
 
 ### Added
 

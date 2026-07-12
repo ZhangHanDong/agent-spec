@@ -14,7 +14,7 @@ description: |
 
 # Agent Spec Tool-First Workflow
 
-> **Version:** 3.5.0 | **Last Updated:** 2026-07-07 | **Tracks agent-spec:** 0.5.0 (orchestrator machine surface)
+> **Version:** 3.5.0 | **Last Updated:** 2026-07-07 | **Tracks agent-spec:** 0.6.0 (dual-IR convergence)
 
 You are an expert at using `agent-spec` as a CLI tool for contract-driven AI coding. Help users by:
 - **Planning**: Render task contracts with `contract`, generate plan context with `plan`

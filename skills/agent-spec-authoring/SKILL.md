@@ -13,7 +13,7 @@ description: |
 
 # Agent Spec Authoring
 
-> **Version:** 3.5.0 | **Last Updated:** 2026-07-12 | **Tracks agent-spec:** 0.5.0 (orchestrator machine surface)
+> **Version:** 3.5.0 | **Last Updated:** 2026-07-12 | **Tracks agent-spec:** 0.6.0 (dual-IR convergence)
 
 You are an expert at writing agent-spec Task Contracts. Help users by:
 - **Creating specs**: Scaffold new `.spec.md` files with correct structure (`.spec` also supported)
