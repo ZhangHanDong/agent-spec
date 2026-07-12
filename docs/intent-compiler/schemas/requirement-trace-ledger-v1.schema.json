@@ -129,6 +129,47 @@
         "timestamp": {
           "type": "integer",
           "minimum": 0
+        },
+        "code_target_facts": {
+          "type": "array",
+          "description": "Typed, stale-aware code targets resolved from the contract's `### Symbols` against a fresh provider graph. Additive; absent on records from runs without symbol declarations.",
+          "items": {
+            "type": "object",
+            "required": [
+              "provider",
+              "node_id",
+              "kind",
+              "file",
+              "provenance",
+              "graph_fingerprint"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "node_id": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "file": {
+                "type": "string"
+              },
+              "provenance": {
+                "enum": [
+                  "syn",
+                  "scip",
+                  "mir"
+                ]
+              },
+              "graph_fingerprint": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          }
         }
       }
     },

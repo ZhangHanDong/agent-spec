@@ -41,8 +41,8 @@ pub mod yaml_frontend;
 
 pub use code_graph::{
     AtlasProvider, CODE_BINDINGS_SCHEMA_ID, CodeBindingEntry, CodeBindings, CodeGraphProvider,
-    CodeTarget, SymbolDeclaration, build_code_bindings, extract_symbol_declarations,
-    render_code_bindings,
+    CodeTarget, SymbolDeclaration, build_code_bindings, collect_atlas_code_target_facts,
+    extract_symbol_declarations, render_code_bindings,
 };
 pub use compile_bundle::{
     BundleLayout, COMPILE_COMMAND, CompiledBundle, compile_bundles, render_bundle_artifacts,
@@ -102,13 +102,13 @@ pub use test_obligations::{
 };
 pub use trace::{TraceReport, build_trace, format_trace_text, verify_spec_rollup};
 pub use trace_ledger::{
-    RequirementFailureExplanation, RequirementTraceDiagnostic, RequirementTraceEvidence,
-    RequirementTraceLedger, RequirementTraceRecord, RequirementTraceRecordInput,
-    RequirementTraceRunInput, explain_requirement_failure, format_requirement_failure_text,
-    format_requirement_replay_text, format_requirement_trace_mermaid,
-    format_requirement_trace_text, latest_requirement_trace_records,
-    read_requirement_trace_ledgers, record_requirement_trace_run, replay_requirement_trace,
-    write_requirement_trace_ledger,
+    CodeTargetFact, RequirementFailureExplanation, RequirementTraceDiagnostic,
+    RequirementTraceEvidence, RequirementTraceLedger, RequirementTraceRecord,
+    RequirementTraceRecordInput, RequirementTraceRunInput, explain_requirement_failure,
+    format_requirement_failure_text, format_requirement_replay_text,
+    format_requirement_trace_mermaid, format_requirement_trace_text,
+    latest_requirement_trace_records, read_requirement_trace_ledgers, record_requirement_trace_run,
+    replay_requirement_trace, write_requirement_trace_ledger,
 };
 pub use traceability::{
     TRACEABILITY_SCHEMA_ID, TraceabilityProjection, build_traceability_projection,

@@ -1972,6 +1972,8 @@ fn write_lifecycle_requirement_trace(
         timestamp,
         sanitize_for_filename(&gw.resolved().task.meta.name)
     );
+    let code_target_facts =
+        crate::spec_knowledge::collect_atlas_code_target_facts(&gw.resolved().task.sections, code);
     let ledger = crate::spec_knowledge::record_requirement_trace_run(
         crate::spec_knowledge::RequirementTraceRunInput {
             run_id,
@@ -1984,6 +1986,7 @@ fn write_lifecycle_requirement_trace(
             requirement_scenarios,
             report: verify_report,
             vcs: vcs_ctx,
+            code_target_facts,
         },
     );
     let trace_errors = ledger
@@ -7016,6 +7019,7 @@ name: "退款"
             scenario_name: "Create note".into(),
             test_selector: Some("note_create_adds_note".into()),
             code_targets: vec!["src/lib.rs".into()],
+            code_target_facts: Vec::new(),
             verdict,
             evidence: vec![crate::spec_knowledge::RequirementTraceEvidence {
                 kind: "test_output".into(),

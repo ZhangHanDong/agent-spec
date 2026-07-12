@@ -17,6 +17,21 @@ pub struct RequirementTraceRunInput<'a> {
     pub requirement_scenarios: BTreeMap<String, Vec<String>>,
     pub report: &'a VerificationReport,
     pub vcs: Option<VcsContext>,
+    /// Typed code targets resolved from the contract's `### Symbols` against
+    /// a fresh provider graph; empty when no symbols or no fresh graph.
+    pub code_target_facts: Vec<CodeTargetFact>,
+}
+
+/// A typed, stale-aware code target: which provider resolved which node in
+/// which graph state. Derived enrichment — never durable KLL truth.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeTargetFact {
+    pub provider: String,
+    pub node_id: String,
+    pub kind: String,
+    pub file: String,
+    pub provenance: String,
+    pub graph_fingerprint: String,
 }
 
 #[derive(Debug, Clone)]
@@ -33,6 +48,7 @@ pub struct RequirementTraceRecordInput<'a> {
     pub worktree_path: Option<PathBuf>,
     pub branch: Option<String>,
     pub vcs: Option<VcsContext>,
+    pub code_target_facts: Vec<CodeTargetFact>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,6 +68,8 @@ pub struct RequirementTraceRecord {
     pub scenario_name: String,
     pub test_selector: Option<String>,
     pub code_targets: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub code_target_facts: Vec<CodeTargetFact>,
     pub verdict: Verdict,
     pub evidence: Vec<RequirementTraceEvidence>,
     pub worktree_path: Option<PathBuf>,
@@ -109,6 +127,7 @@ impl RequirementTraceRecord {
             scenario_name: input.scenario_name,
             test_selector: input.test_selector,
             code_targets,
+            code_target_facts: input.code_target_facts,
             verdict: result.verdict,
             evidence,
             worktree_path: input.worktree_path,
@@ -221,6 +240,7 @@ pub fn record_requirement_trace_run(input: RequirementTraceRunInput<'_>) -> Requ
                 worktree_path: worktree.map(|entry| entry.path.clone()),
                 branch: worktree.map(|entry| entry.branch.clone()),
                 vcs: input.vcs.clone(),
+                code_target_facts: input.code_target_facts.clone(),
             });
             if let Some(record) = record {
                 if record.code_targets.is_empty() {
@@ -642,6 +662,7 @@ mod tests {
                 change_ref: "abc1234".into(),
                 operation_ref: None,
             }),
+            code_target_facts: Vec::new(),
         })
         .unwrap();
 
@@ -760,6 +781,7 @@ mod tests {
             ]),
             report: &report,
             vcs: None,
+            code_target_facts: Vec::new(),
         });
 
         assert_eq!(ledger.records.len(), 2);
@@ -835,6 +857,7 @@ mod tests {
             ]),
             report: &report,
             vcs: None,
+            code_target_facts: Vec::new(),
         });
 
         assert!(ledger.records.is_empty());
@@ -958,6 +981,7 @@ mod tests {
             scenario_name: "Create note".into(),
             test_selector: Some("note_create_adds_note".into()),
             code_targets: vec!["src/lib.rs".into()],
+            code_target_facts: Vec::new(),
             verdict,
             evidence: vec![RequirementTraceEvidence {
                 kind: "test_output".into(),

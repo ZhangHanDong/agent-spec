@@ -228,6 +228,65 @@ pub fn build_code_bindings(
     })
 }
 
+/// Resolve typed code-target facts from a spec's `### Symbols` boundary
+/// entries against a fresh Atlas graph at `<code_root>/.agent-spec/graph`.
+/// Best-effort enrichment for trace evidence: any staleness, missing graph,
+/// or unresolved symbol yields an empty list — the lifecycle verifier owns
+/// failing those cases loudly.
+pub fn collect_atlas_code_target_facts(
+    sections: &[crate::spec_core::Section],
+    code_root: &Path,
+) -> Vec<crate::spec_knowledge::CodeTargetFact> {
+    let mut symbols = Vec::new();
+    for section in sections {
+        let crate::spec_core::Section::Boundaries { items, .. } = section else {
+            continue;
+        };
+        for item in items {
+            if item.category != crate::spec_core::BoundaryCategory::Symbols {
+                continue;
+            }
+            if let Some((provider, symbol)) = item.text.split_once(':')
+                && provider.trim() == "rust-atlas"
+            {
+                symbols.push(symbol.trim().to_string());
+            }
+        }
+    }
+    if symbols.is_empty() {
+        return Vec::new();
+    }
+    symbols.sort();
+    symbols.dedup();
+
+    let provider = AtlasProvider {
+        code_root: code_root.to_path_buf(),
+        graph_dir: code_root.join(".agent-spec/graph"),
+    };
+    match provider.stale_files() {
+        Ok(stale) if stale.is_empty() => {}
+        _ => return Vec::new(),
+    }
+    let Ok(fingerprint) = provider.fingerprint() else {
+        return Vec::new();
+    };
+    let mut facts = Vec::new();
+    for symbol in &symbols {
+        let Ok(target) = provider.resolve(symbol) else {
+            return Vec::new();
+        };
+        facts.push(crate::spec_knowledge::CodeTargetFact {
+            provider: provider.name().to_string(),
+            node_id: target.node_id,
+            kind: target.kind,
+            file: target.file,
+            provenance: target.provenance,
+            graph_fingerprint: fingerprint.clone(),
+        });
+    }
+    facts
+}
+
 /// Render the bindings artifact as pretty JSON with a trailing newline.
 pub fn render_code_bindings(bindings: &CodeBindings) -> Result<String, String> {
     let mut text = serde_json::to_string_pretty(bindings).map_err(|e| e.to_string())?;
@@ -345,6 +404,91 @@ mod tests {
         assert!(
             err.contains("ghost-graph"),
             "diagnostic must name the unknown provider: {err}"
+        );
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn test_atlas_trace_target_records_provider_node_and_fingerprint() {
+        let dir = make_tree("bind-trace-facts");
+        // Facts resolve against the conventional graph location.
+        rust_atlas::build(
+            &dir.join("code"),
+            &dir.join("code/.agent-spec/graph"),
+            &rust_atlas::BuildOptions::default(),
+        )
+        .unwrap();
+        let spec = dir.join("specs/task-bind.spec.md");
+        let parsed = crate::spec_parser::parse_spec(&spec).unwrap();
+        let req = dir.join("knowledge/requirements/req-bind.md");
+        let before = fs::read_to_string(&req).unwrap();
+
+        // Resolve typed facts from the contract symbols against the fresh graph.
+        let facts = collect_atlas_code_target_facts(&parsed.sections, &dir.join("code"));
+        assert_eq!(facts.len(), 2, "both declared symbols must resolve");
+
+        // Persist trace evidence for a passing run carrying those facts.
+        let report = crate::spec_core::VerificationReport::from_results(
+            "Bind Demo Contract".into(),
+            vec![crate::spec_core::ScenarioResult {
+                scenario_name: "reserves".into(),
+                verdict: crate::spec_core::Verdict::Pass,
+                step_results: vec![],
+                evidence: vec![],
+                duration_ms: 1,
+                provenance: None,
+            }],
+        );
+        let record = crate::spec_knowledge::RequirementTraceRecord::from_parts(
+            crate::spec_knowledge::RequirementTraceRecordInput {
+                run_id: "run-facts".into(),
+                timestamp: 1,
+                requirement_id: "REQ-BIND-DEMO".into(),
+                requirement_source: req.clone(),
+                work_unit_id: "WU-REQ-BIND-DEMO".into(),
+                spec_path: spec.clone(),
+                scenario_name: "reserves".into(),
+                test_selector: Some("test_reserves".into()),
+                report: &report,
+                worktree_path: None,
+                branch: None,
+                vcs: None,
+                code_target_facts: facts.clone(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(record.code_target_facts.len(), 2);
+        let fact = &record.code_target_facts[0];
+        assert_eq!(fact.provider, "rust-atlas");
+        assert_eq!(fact.node_id, "bind_demo::SlotStore");
+        assert_eq!(fact.kind, "struct");
+        assert_eq!(fact.file, "src/lib.rs");
+        assert_eq!(fact.provenance, "syn");
+        assert_eq!(fact.graph_fingerprint.len(), 64);
+        assert!(
+            record
+                .code_target_facts
+                .iter()
+                .all(|f| f.graph_fingerprint == fact.graph_fingerprint),
+            "one run resolves against one graph state"
+        );
+
+        // Round-trip through the persisted ledger.
+        let ledger = crate::spec_knowledge::RequirementTraceLedger {
+            version: 1,
+            records: vec![record],
+            diagnostics: Vec::new(),
+        };
+        let text = serde_json::to_string_pretty(&ledger).unwrap();
+        let reread: crate::spec_knowledge::RequirementTraceLedger =
+            serde_json::from_str(&text).unwrap();
+        assert_eq!(reread.records[0].code_target_facts.len(), 2);
+
+        assert_eq!(
+            fs::read_to_string(&req).unwrap(),
+            before,
+            "Requirement IR must remain byte-identical"
         );
         fs::remove_dir_all(dir).ok();
     }

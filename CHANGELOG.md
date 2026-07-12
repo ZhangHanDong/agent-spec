@@ -8,6 +8,19 @@ All notable changes to `agent-spec` are documented here. Format follows
 
 ### Added
 
+- Intent-Code Linker, Atlas slice (`REQ-INTENT-CODE-LINKER`, boundary 3):
+  Task Contracts declare code-graph references in a `### Symbols` boundary
+  subsection (`- rust-atlas: <canonical::path>`); the lifecycle pipeline
+  validates every reference against a fresh graph — `atlas-symbol-missing`
+  for absent symbols, `atlas-stale` (before any lookup) for a lagging or
+  missing graph, silence when everything resolves, and zero graph burden
+  for contracts without symbols. Persisted trace evidence now records
+  typed, stale-aware code targets (provider, node id, kind, file,
+  provenance, graph fingerprint) alongside the untyped strings; the
+  requirement-trace-ledger schema gains the additive `code_target_facts`
+  field. Atlas access stays read-only and derived facts never become
+  durable KLL truth.
+
 - Code Graph IR bindings (`REQ-CODE-GRAPH-IR`, target-architecture boundary
   2): a provider-neutral `CodeGraphProvider` consumer contract (identity,
   staleness facts, graph fingerprint, symbol resolution) with Rust Atlas as

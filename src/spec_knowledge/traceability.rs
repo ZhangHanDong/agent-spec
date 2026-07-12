@@ -258,6 +258,7 @@ mod tests {
             scenario_name: "holds".to_string(),
             test_selector: Some("test_holds".to_string()),
             code_targets: Vec::new(),
+            code_target_facts: Vec::new(),
             verdict: crate::spec_core::Verdict::Pass,
             evidence: Vec::new(),
             worktree_path: None,
