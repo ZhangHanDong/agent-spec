@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-spec.dev/schemas/agent-spec/intent-compiler/compilation-provenance-v1.schema.json",
+  "title": "Intent Compiler Compilation Provenance Manifest v1",
+  "type": "object",
+  "required": ["manifest_version", "direction", "tool", "dialect_schema", "input", "outputs", "reproducible"],
+  "properties": {
+    "manifest_version": { "const": 1 },
+    "direction": { "enum": ["import", "export"] },
+    "tool": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" }
+      }
+    },
+    "dialect_schema": { "type": "string" },
+    "input": { "$ref": "#/$defs/digestEntry" },
+    "outputs": { "type": "array", "items": { "$ref": "#/$defs/digestEntry" } },
+    "reproducible": { "type": "boolean" }
+  },
+  "$defs": {
+    "digestEntry": {
+      "type": "object",
+      "required": ["path", "blake3"],
+      "properties": {
+        "path": { "type": "string" },
+        "blake3": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    }
+  }
+}

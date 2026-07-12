@@ -12,6 +12,12 @@ specs and tests that still guard them.
 
 ### Added
 
+- Compilation provenance manifests (enterprise `*.compilation.json` alignment):
+  opt-in `--provenance <path>.json` on `requirements import`/`export` binds the
+  direction, blake3 input/output digests, tool identity, dialect schema version,
+  and a reproducibility result; `verify_provenance` recomputes the chain and
+  reports drift. Schema: `docs/intent-compiler/schemas/compilation-provenance-v1.schema.json`.
+
 - Intent Compiler YAML export: `requirements export --out <file>.yaml [--id REQ-*]`
   projects confirmed requirements into the import dialect (round-trip fixpoint,
   governance-status scoping with exclusion diagnostics, explicit lossiness report,

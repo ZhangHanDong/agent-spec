@@ -620,6 +620,9 @@ enum RequirementCommands {
         out: PathBuf,
         #[arg(long)]
         check: bool,
+        /// Optional compilation provenance manifest target (.json)
+        #[arg(long)]
+        provenance: Option<PathBuf>,
     },
     /// Apply an explicit human governance transition to a requirement
     Transition {
@@ -654,6 +657,9 @@ enum RequirementCommands {
         /// Compare against the existing file and exit non-zero on drift
         #[arg(long)]
         check: bool,
+        /// Optional compilation provenance manifest target (.json)
+        #[arg(long)]
+        provenance: Option<PathBuf>,
     },
     /// Validate and print the requirement graph
     Graph {
@@ -3102,9 +3108,12 @@ fn cmd_atlas(action: AtlasCommands) -> Result<(), Box<dyn std::error::Error>> {
 
 fn cmd_requirements(action: RequirementCommands) -> Result<(), Box<dyn std::error::Error>> {
     match action {
-        RequirementCommands::Import { from, out, check } => {
-            cmd_requirements_import(&from, &out, check)
-        }
+        RequirementCommands::Import {
+            from,
+            out,
+            check,
+            provenance,
+        } => cmd_requirements_import(&from, &out, check, provenance.as_deref()),
         RequirementCommands::Transition { id, to, knowledge } => {
             let outcome = crate::spec_knowledge::transition_requirement(&knowledge, &id, &to)?;
             println!(
@@ -3133,6 +3142,7 @@ fn cmd_requirements(action: RequirementCommands) -> Result<(), Box<dyn std::erro
             out,
             id,
             check,
+            provenance,
         } => {
             let outcome = crate::spec_knowledge::write_export(
                 &knowledge,
@@ -3140,6 +3150,19 @@ fn cmd_requirements(action: RequirementCommands) -> Result<(), Box<dyn std::erro
                 &crate::spec_knowledge::ExportOptions { ids: id },
                 check,
             )?;
+            if let Some(manifest_path) = provenance.as_deref() {
+                let manifest = crate::spec_knowledge::write_export_provenance(
+                    &knowledge,
+                    &out,
+                    &outcome.yaml,
+                    manifest_path,
+                )?;
+                println!(
+                    "provenance: {} (reproducible: {})",
+                    manifest_path.display(),
+                    manifest.reproducible
+                );
+            }
             for note in &outcome.excluded {
                 eprintln!("excluded: {note}");
             }
@@ -3231,6 +3254,7 @@ fn cmd_requirements_import(
     from: &Path,
     out: &Path,
     check: bool,
+    provenance: Option<&Path>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let input = std::fs::read_to_string(from)?;
     let source_name = from.display().to_string();
@@ -3255,8 +3279,17 @@ fn cmd_requirements_import(
             return Ok(());
         }
         let written = crate::spec_knowledge::write_generated_docs(out, &docs)?;
-        for path in written {
+        for path in &written {
             println!("imported: {}", path.display());
+        }
+        if let Some(manifest_path) = provenance {
+            let manifest =
+                crate::spec_knowledge::write_import_provenance(from, &written, manifest_path)?;
+            println!(
+                "provenance: {} (reproducible: {})",
+                manifest_path.display(),
+                manifest.reproducible
+            );
         }
         return Ok(());
     }
@@ -5702,7 +5735,7 @@ name: "退款"
         )
         .unwrap();
 
-        cmd_requirements_import(&source, &out, false).unwrap();
+        cmd_requirements_import(&source, &out, false, None).unwrap();
         let artifact = out.join("req-101-user-login.md");
         assert!(artifact.exists());
         let body = fs::read_to_string(artifact).unwrap();

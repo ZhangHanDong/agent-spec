@@ -18,6 +18,7 @@ pub mod model;
 pub mod parser;
 pub mod project;
 pub mod proposal;
+pub mod provenance;
 pub mod questions;
 pub mod requirement;
 pub mod requirement_graph;
@@ -57,6 +58,10 @@ pub use parser::{
 };
 pub use project::{collect_guidance, collect_guidance_checked, render_guidance_md};
 pub use proposal::{lint_proposal, produces};
+pub use provenance::{
+    ProvenanceManifest, blake3_hex, corpus_digest, verify_provenance, write_export_provenance,
+    write_import_provenance,
+};
 pub use questions::{
     ClarificationDiagnostic, ClarificationQuestion, build_clarification_questions,
     collect_clarification_lint_diagnostics,

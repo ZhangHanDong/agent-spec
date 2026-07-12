@@ -101,3 +101,11 @@ file is derived — never the source of truth for a confirmed requirement.
 
 Contract: `specs/task-intent-compiler-yaml-export.spec.md`
 (satisfies `REQ-INTENT-COMPILER-YAML-EXPORT`).
+
+## Compilation provenance (opt-in)
+
+Both directions accept `--provenance <path>.json` and emit a manifest binding
+direction, blake3 input/output digests, tool identity, the dialect schema
+version, and a reproducibility result. `verify_provenance` recomputes the
+digests and reports drifted paths. Schema:
+`docs/intent-compiler/schemas/compilation-provenance-v1.schema.json`.
