@@ -12,7 +12,7 @@ stateDiagram-v2
     proposed --> rejected: transition --to rejected
     accepted --> deprecated: transition --to deprecated
     accepted --> superseded: supersede --by NEW
-    note right of accepted: 缺失 status 会让\nplan --gate 直接失败
+    note right of accepted: 缺失 status 会让 plan --gate 直接失败
 ```
 
 ```bash
@@ -60,9 +60,8 @@ REQ-INTENT-CODE-LINKER
 
 执行阶梯自底向上：`unplanned → planned → ready → active → verified → archived`
 ——staged 合同是 planned，工作单元就绪是 ready，活跃合同是 active，活跃且
-honored 是 verified，归档是 archived。liveness 三值 honored / violated /
-unproven（外加声明性的 na），**永远重算，从不存储**——不存在"上次是绿的"这种
-陈旧安慰（详见第 15 章）。
+honored 是 verified，归档是 archived。liveness 三值 `honored` / `violated` / `unproven`（外加声明性的 `na`），
+**永远重算，从不存储**（详见第 15 章）。
 
 ## 开工仪式
 

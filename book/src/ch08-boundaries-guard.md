@@ -27,10 +27,11 @@ agent-spec guard --spec-dir specs --code . --change-scope worktree # CI
 ```
 
 ```text
-agent-spec guard: 54 spec(s) passed
+agent-spec guard: 55 spec(s) passed
 ```
 
-这行输出来自 agent-spec 自己的仓库——54 份活跃合同在每次提交前全部复验。
+这行输出来自 agent-spec 自己的仓库（写作时快照；活跃合同数会随仓库生长）——
+全部活跃合同在每次提交前复验。
 任何一份合同 lint 不过或验证不过，提交被阻断。
 
 ## `### Symbols`：把合同钉到真实符号上
@@ -69,4 +70,5 @@ Intent-Code Linker 的第一块（架构全景详见第 19 章，图的构建详
 
 `.jj/` 存在（哪怕同时有 `.git/`）就用 `--change-scope jj`，且不要跑
 `git add`——jj 自动快照。`stamp` 在 jj 仓库会带 `Spec-Change:` trailer；
-`explain --history` 可通过 operation id 给出运行间的文件级 diff。
+`explain --history` 可通过 operation id 给出运行间的文件级 diff
+（这两个命令详见第 9 章）。

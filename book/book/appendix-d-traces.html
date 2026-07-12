@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-75b06212.js";
+            window.path_to_searchindex_js = "searchindex-ab7bcc20.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-98d15170.js"></script>
@@ -179,7 +179,7 @@
                     <main>
                         <h1 id="附录-d-端到端轨迹"><a class="header" href="#附录-d-端到端轨迹">附录 D 端到端轨迹</a></h1>
 <p>单章讲的是模块，轨迹讲的是系统。两条 E2E trace 把分散的章节串成完整的因果链。</p>
-<h3 id="轨迹一一条需求从-prd-到-honored"><a class="header" href="#轨迹一一条需求从-prd-到-honored">轨迹一：一条需求从 PRD 到 honored</a></h3>
+<h2 id="轨迹一一条需求从-prd-到-honored"><a class="header" href="#轨迹一一条需求从-prd-到-honored">轨迹一：一条需求从 PRD 到 honored</a></h2>
 <p><strong>贯穿</strong>：第 10 章（intake）→ 第 11 章（治理）→ 第 12 章（计划）→ 第 7 章
 （lifecycle）→ 第 13 章（溯源）→ 第 15 章（liveness）。</p>
 <pre class="mermaid">sequenceDiagram
@@ -206,7 +206,7 @@
 <p>这条轨迹在真实世界完整跑过：agent-spec 1.0 的三个集成需求
 （REQ-COMPILER-MACHINE-SURFACE 等）就是沿着它从 proposed 走到
 accepted/verified/honored 的。</p>
-<h3 id="轨迹二一次合同验证之旅含符号与边界"><a class="header" href="#轨迹二一次合同验证之旅含符号与边界">轨迹二：一次合同验证之旅（含符号与边界）</a></h3>
+<h2 id="轨迹二一次合同验证之旅含符号与边界"><a class="header" href="#轨迹二一次合同验证之旅含符号与边界">轨迹二：一次合同验证之旅（含符号与边界）</a></h2>
 <p><strong>贯穿</strong>：第 4 章（四要素）→ 第 6 章（lint）→ 第 7 章（四层管线）→ 第 8 章
 （边界与符号）→ 第 16 章（Atlas 图）→ 第 9 章（验收与盖章）。</p>
 <pre class="mermaid">flowchart TD
@@ -230,7 +230,7 @@ accepted/verified/honored 的。</p>
 blake3 新鲜度模型（第 16 章）；最终 trace 记录里的图指纹让“当时对着哪个代码
 状态验证的“永远可答（第 13 章）。验收时人类读到的 explain 摘要（第 9 章），
 背后是这整条机械链的汇总——这就是为什么两个“是“就可以放心批准。</p>
-<h3 id="轨迹揭示的原则"><a class="header" href="#轨迹揭示的原则">轨迹揭示的原则</a></h3>
+<h2 id="轨迹揭示的原则"><a class="header" href="#轨迹揭示的原则">轨迹揭示的原则</a></h2>
 <p>两条轨迹的共同点：<strong>每个箭头都是一条命令，每个节点都有可校验的产物</strong>。系统的
 可信不来自某个环节的聪明，而来自链条上没有一环允许“口头承诺“。</p>
 

@@ -7419,7 +7419,7 @@ name: "退款"
             Path::new(env!("CARGO_MANIFEST_DIR")).join("book/src/appendix-d-traces.md"),
         )
         .expect("appendix D must exist");
-        let trace_count = traces.matches("### 轨迹").count();
+        let trace_count = traces.matches("## 轨迹").count();
         assert!(
             trace_count >= 2,
             "appendix D needs at least two E2E traces, found {trace_count}"

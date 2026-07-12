@@ -36,14 +36,15 @@ agent-spec requirements plan --knowledge knowledge --specs specs --gate
 ```
 
 ```text
-batch 1: REQ-CODE-LIVE-WIKI, REQ-KLL-WORK-UNITS, REQ-RUST-ATLAS
-batch 2: REQ-CODE-LIVE-WIKI-DEEPENING, REQ-REQUIREMENTS-COMPILER-PLAN-DAG
+batch 1: REQ-CODE-LIVE-WIKI, REQ-INTENT-CODE-LINKER, REQ-KLL-WORK-UNITS, REQ-RUST-ATLAS
+batch 2: REQ-AGENT-SPEC-BOOK, REQ-CODE-LIVE-WIKI-DEEPENING, REQ-REQUIREMENTS-COMPILER-PLAN-DAG
 batch 3: REQ-CROSS-PROJECT-WIKI
 ```
 
-批次即拓扑序：同批次可并行。gate 语义里最重要的一条是
-`requirement-uncovered`——accepted 的需求没有活跃合同守护时失败。这正是上一章
-"开工仪式"的机械依据：**接受即排期义务**。
+（写作时快照——批次会随需求图生长；`batch N:` 行格式是稳定的。）
+
+批次即拓扑序：同批次可并行。gate 语义里最重要的一条是 `requirement-uncovered`——即上一章"开工仪式"的
+机械依据（详见第 11 章，此处不再展开）。
 
 ## draft-specs：草稿不是成品
 
@@ -51,9 +52,9 @@ batch 3: REQ-CROSS-PROJECT-WIKI
 agent-spec requirements draft-specs --knowledge knowledge --out specs/generated
 ```
 
-只有 `ready` 单元会生成草稿。草稿自带 `satisfies: [REQ-*]` 与占位选择器
+只有 `ready` 单元会生成草稿。草稿自带 `satisfies: [REQ-*]`（satisfies 边详见第 15 章）与占位选择器
 （`pending_...`）——**lifecycle 对草稿本来就应该失败**，直到人类评审、补上真实
-测试选择器并提升到 `specs/`。草稿是起点，不是可以直接執行的合同。
+测试选择器并提升到 `specs/`。草稿是起点，不是可以直接执行的合同。
 
 worktree 并行开发的机械配套：
 

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-75b06212.js";
+            window.path_to_searchindex_js = "searchindex-ab7bcc20.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-98d15170.js"></script>
@@ -183,6 +183,8 @@
 前置依赖：第 1 章的心智模型。基于 agent-spec 1.0.0。</p>
 </blockquote>
 <h2 id="安装"><a class="header" href="#安装">安装</a></h2>
+<p>安装需要 Rust 工具链（<a href="https://rustup.rs">rustup.rs</a>）；<strong>使用</strong>则不需要任何
+Rust 知识——装完就是一个普通 CLI。</p>
 <pre><code class="language-bash">cargo install agent-spec
 agent-spec --version
 </code></pre>
@@ -193,9 +195,12 @@ Agent 使用）：</p>
 <pre><code class="language-bash">git clone https://github.com/ZhangHanDong/agent-spec &amp;&amp; cd agent-spec &amp;&amp; ./install-skills.sh
 </code></pre>
 <h2 id="初始化第一个合同"><a class="header" href="#初始化第一个合同">初始化第一个合同</a></h2>
-<pre><code class="language-bash">agent-spec init --level task --lang zh --name "用户注册API"
+<p><code>init</code> 在<strong>当前目录</strong>生成合同文件（保留你给的大小写），所以先进入 <code>specs/</code>：</p>
+<pre><code class="language-bash">mkdir -p specs &amp;&amp; cd specs
+agent-spec init --level task --lang zh --name "用户注册API"
+cd ..
 </code></pre>
-<p>生成的 <code>specs/用户注册api.spec.md</code> 是一个骨架。合同的完整语法在第 4、5 章展开，
+<p>生成的 <code>specs/用户注册API.spec.md</code> 是一个骨架。合同的完整语法在第 4、5 章展开，
 这里先感受最小可用形态：</p>
 <pre><code class="language-markdown">spec: task
 name: "用户注册API"
@@ -228,13 +233,14 @@ name: "用户注册API"
 <p>注意两点纪律：<strong>每个场景都绑定一个测试</strong>（<code>测试:</code> 行），<strong>异常场景不少于正常场景</strong>
 ——这两条会被质量门强制（详见第 6 章）。</p>
 <h2 id="第一次质量门与验证"><a class="header" href="#第一次质量门与验证">第一次质量门与验证</a></h2>
-<pre><code class="language-bash">agent-spec lint specs/用户注册api.spec.md --min-score 0.7
-agent-spec lifecycle specs/用户注册api.spec.md --code . --format json
+<pre><code class="language-bash">agent-spec lint specs/用户注册API.spec.md --min-score 0.7
+agent-spec lifecycle specs/用户注册API.spec.md --code . --format json
 </code></pre>
 <p>lifecycle 是主质量门：先重跑 lint（防合同被篡改），再依次跑结构、边界、测试三层
 验证。此刻测试还没写，你会看到 <code>skip</code> verdict——<strong>skip 不等于 pass</strong>，五种 verdict
-各司其职（详见第 7 章）。当 Agent（或你）补上实现与测试后，输出会收敛为：</p>
-<pre><code class="language-text">"summary": { "failed": 0, "passed": 2, "skipped": 0, "total": 2, "uncertain": 0 }
+各司其职（详见第 7 章）。当 Agent（或你）补上实现与测试后，摘要会收敛为（示例，字段与真实输出一致——
+真实摘要固定六键，按字母序）：</p>
+<pre><code class="language-text">"summary": { "failed": 0, "passed": 2, "pending_review": 0, "skipped": 0, "total": 2, "uncertain": 0 }
 </code></pre>
 <h2 id="你刚刚经历了什么"><a class="header" href="#你刚刚经历了什么">你刚刚经历了什么</a></h2>
 <pre class="mermaid">sequenceDiagram

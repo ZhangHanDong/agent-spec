@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-75b06212.js";
+            window.path_to_searchindex_js = "searchindex-ab7bcc20.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-98d15170.js"></script>
@@ -231,8 +231,9 @@ liveness。前置依赖：第 9 章。基于 agent-spec 1.0.0。</p>
 <h2 id="治理-lint"><a class="header" href="#治理-lint">治理 lint</a></h2>
 <pre><code class="language-bash">agent-spec lint-knowledge --knowledge knowledge --gate
 </code></pre>
-<pre><code class="language-text">19 docs, 202 findings (0 errors)
+<pre><code class="language-text">20 docs, 204 findings (0 errors)
 </code></pre>
+<p>（写作时快照；语料会生长，<code>0 errors</code> 是门的语义所在。）</p>
 <p>语料级校验：id 冲突、supersession 完整性（superseded 必须有对应的
 <code>supersedes:</code> 回链）、陈旧引用；文档级 forcing functions（上文的 ADR 规则等）。
 <code>--format sarif</code> 可直接喂 GitHub Code Scanning。</p>

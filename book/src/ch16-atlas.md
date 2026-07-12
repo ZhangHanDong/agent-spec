@@ -48,5 +48,5 @@ graph TD
 ## 增量与自托管
 
 分片只在源文件 hash 变化时重建——大仓库重索引的成本是一个文件而不是全世界。
-agent-spec 仓库自托管：75 个文件全图零 unparsed。MIR 层（rustc 驱动的深度事实）
-是 0.7 弧的 additive 深化，已在路线图合同中staged。
+agent-spec 仓库自托管：写作时 85 个源文件全图零 unparsed。MIR 层（rustc 驱动
+的深度事实）是 0.7 弧的 additive 深化，已列入路线图合同。

@@ -68,8 +68,9 @@ requirements:
 
 方言是**受约束的子集**：两空格缩进、无锚点、无 flow 集合（`[]` 也不行）——
 超出子集的构造会得到指名道姓的 `yaml-unsupported-construct` 诊断，而不是猜测性
-解析。导入产物带 `source: imported-yaml` 溯源标记，且不带 `--force` 时拒绝
-覆盖已有文档。
+解析。导入产物带 `source: imported-yaml` 溯源标记；再次导入只会刷新**带此标记**的
+文件，任何不带标记的既有文档一律拒绝覆盖（没有强制开关——手写文档的所有权
+不容侵犯）。
 
 反方向的导出（`requirements export --out requirements.yaml`）是**派生投影**：
 往返是不动点（导出→导入→再导出逐字节相同），`--check` 做漂移门，装不下的内容

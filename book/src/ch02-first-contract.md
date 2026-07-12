@@ -5,6 +5,9 @@
 
 ## 安装
 
+安装需要 Rust 工具链（[rustup.rs](https://rustup.rs)）；**使用**则不需要任何
+Rust 知识——装完就是一个普通 CLI。
+
 ```bash
 cargo install agent-spec
 agent-spec --version
@@ -23,11 +26,15 @@ git clone https://github.com/ZhangHanDong/agent-spec && cd agent-spec && ./insta
 
 ## 初始化第一个合同
 
+`init` 在**当前目录**生成合同文件（保留你给的大小写），所以先进入 `specs/`：
+
 ```bash
+mkdir -p specs && cd specs
 agent-spec init --level task --lang zh --name "用户注册API"
+cd ..
 ```
 
-生成的 `specs/用户注册api.spec.md` 是一个骨架。合同的完整语法在第 4、5 章展开，
+生成的 `specs/用户注册API.spec.md` 是一个骨架。合同的完整语法在第 4、5 章展开，
 这里先感受最小可用形态：
 
 ```markdown
@@ -66,16 +73,17 @@ name: "用户注册API"
 ## 第一次质量门与验证
 
 ```bash
-agent-spec lint specs/用户注册api.spec.md --min-score 0.7
-agent-spec lifecycle specs/用户注册api.spec.md --code . --format json
+agent-spec lint specs/用户注册API.spec.md --min-score 0.7
+agent-spec lifecycle specs/用户注册API.spec.md --code . --format json
 ```
 
 lifecycle 是主质量门：先重跑 lint（防合同被篡改），再依次跑结构、边界、测试三层
 验证。此刻测试还没写，你会看到 `skip` verdict——**skip 不等于 pass**，五种 verdict
-各司其职（详见第 7 章）。当 Agent（或你）补上实现与测试后，输出会收敛为：
+各司其职（详见第 7 章）。当 Agent（或你）补上实现与测试后，摘要会收敛为（示例，字段与真实输出一致——
+真实摘要固定六键，按字母序）：
 
 ```text
-"summary": { "failed": 0, "passed": 2, "skipped": 0, "total": 2, "uncertain": 0 }
+"summary": { "failed": 0, "passed": 2, "pending_review": 0, "skipped": 0, "total": 2, "uncertain": 0 }
 ```
 
 ## 你刚刚经历了什么

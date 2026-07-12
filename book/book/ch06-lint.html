@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-75b06212.js";
+            window.path_to_searchindex_js = "searchindex-ab7bcc20.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-98d15170.js"></script>
@@ -196,9 +196,10 @@ Quality: 100% (determinism: 100%, testability: 100%, coverage: 100%)
 <pre class="mermaid">mindmap
   root((lint))
     结构
-      malformed 结构畸形
-      零场景验收段
-      implicit-dep 缺测试选择器
+      bdd-rule-id 规则 id 畸形
+      scenario-presence 零场景验收段
+      explicit-test-binding 缺测试选择器
+      implicit-dep 参数未在 Given 定义
     语言
       vague-verb 模糊动词
       unquantified 未量化
@@ -209,7 +210,7 @@ Quality: 100% (determinism: 100%, testability: 100%, coverage: 100%)
       decision-coverage 决策未覆盖
       error-path 缺异常路径
       universal-claim 全称断言场景不足
-      flag-combination 旗标组合未测
+      flag-combination-coverage 旗标组合未测
     边界
       boundary-entry-point 多入口未逐一验证
       platform-decision-tag 平台决策未标记

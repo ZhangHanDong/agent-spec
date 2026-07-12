@@ -13,8 +13,9 @@
 | `And` | `并且` | 同类补充步骤 |
 | `But` | `但是` | 反向补充步骤 |
 
-措辞必须**确定性**："返回 201"而不是"应该返回 201"——`should/might/应该`
-会被 determinism linter 拦下。
+措辞必须**确定性**："返回 201"而不是"可能返回 201"——`可能/大约/有时/
+might/could/maybe` 这类非确定词会被 determinism linter 拦下（"应该"不在
+拦截名单里，但同样别用：确定性是给机器读的纪律）。
 
 ## 测试选择器
 
@@ -26,7 +27,7 @@
   测试:                            # 结构化形式
     包: spec-gateway
     过滤: test_contract_prompt_format
-    级别: integration
+    层级: integration
 ```
 
 选择器过滤的是真实测试名。改了测试函数名合同就会 skip——这是特性不是缺陷：
@@ -76,7 +77,7 @@ graph TD
 ```
 
 Rule 的 kebab-case id 是稳定锚（改显示名随意，id 不动），成熟后可用
-`agent-spec promote` 升入能力库（`specs/capabilities/`）。id 与显示名之间用
+`agent-spec promote` 升入能力库（`specs/capabilities/`，命令详见附录 A）。id 与显示名之间用
 **em dash `—` 或两个以上空格**分隔——普通 `--` 会被吞进 id。
 
 ## 一份体检清单

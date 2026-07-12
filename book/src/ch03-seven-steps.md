@@ -34,18 +34,10 @@ graph TD
 | ⑥ 验收 | 人 | `explain --format markdown` | 读合同级摘要，不读 diff |
 | ⑦ 盖章 | 机器 | `stamp --dry-run` / `archive` | Git trailer 建立合同↔提交溯源 |
 
-## 重试协议（第④步的纪律）
+## 第④步的纪律（一句话版）
 
-lifecycle 失败时，Agent 的义务是**修代码，不是改合同**：
-
-1. `--format json` 拿到每个场景的 `verdict` 与 `evidence`；
-2. `fail`：测试真的跑了且失败——读证据修码；
-3. `skip`：测试没找到——检查 `测试:` 选择器是否对得上真实测试名；
-4. `uncertain`：需要 AI 或人工评审的场景（详见第 7 章 caller 模式）;
-5. 同一场景连续三次失败：停下来，升级给人类。
-
-改合同让验证变绿是谄媚（sycophancy），不是修复——若合同本身错了，显式切回
-写作模式修订合同，绝不静默放宽验收标准。
+lifecycle 失败时，Agent 的义务是**修代码，不是改合同**——改合同让验证变绿
+是谄媚（sycophancy），不是修复。逐 verdict 的完整重试协议详见第 7 章。
 
 ## 何时不用它
 

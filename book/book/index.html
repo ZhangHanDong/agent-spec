@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-75b06212.js";
+            window.path_to_searchindex_js = "searchindex-ab7bcc20.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-98d15170.js"></script>
@@ -200,14 +200,15 @@
 <h3 id="推荐阅读路径"><a class="header" href="#推荐阅读路径">推荐阅读路径</a></h3>
 <p><strong>路径 A：实践者速通</strong>（今天就要用起来）</p>
 <blockquote>
-<p>前言 → 第 1 章 → 第 2 章 → 第 3 章 → 第 4 章 → 第 5 章 → 第 7 章 → 附录 A</p>
+<p>前言 → 第 1 章 → 第 2 章 → 第 3 章 → 第 4 章 → 第 5 章 → 第 6 章 → 第 7 章 → 第 8 章 → 附录 A</p>
 </blockquote>
-<p>读完你能独立写合同、跑验证、看懂五种 verdict，并把 guard 挂进 CI。</p>
+<p>读完你能独立写合同、过质量门、跑验证、看懂五种 verdict，并把 guard 挂进 CI。</p>
 <p><strong>路径 B：架构师深读</strong>（评估它是否值得引入团队）</p>
 <blockquote>
 <p>前言 → 第 1 章 → 第 18 章 → 第 19 章 → 第 10 章 → 第 11 章 → 第 13 章 → 附录 D</p>
 </blockquote>
-<p>先看哲学与架构再回到编译管线，最后用两条端到端轨迹验证叙事的完整性。</p>
+<p>这是一条<strong>评估用的跳读路径</strong>：刻意越过各章声明的前置依赖，先看哲学与架构，
+再抽查编译管线，最后用两条端到端轨迹验证叙事完整性。读不顺处按定位锚补课即可。</p>
 <h3 id="全书知识地图"><a class="header" href="#全书知识地图">全书知识地图</a></h3>
 <pre class="mermaid">graph TD
     subgraph P1["第一部分 入门"]
@@ -235,12 +236,15 @@
     C13 -.证据链.-&gt; C15
 </pre>
 
+<p>图例：实线为<strong>阅读顺序</strong>（部分之间的推荐先后），虚线为跨部分的主题关联；
+各章严格的前置依赖以每章定位锚为准。</p>
 <h3 id="标记约定"><a class="header" href="#标记约定">标记约定</a></h3>
 <ul>
-<li>命令块中的输出都来自 <strong>真实运行</strong>（agent-spec 1.0.0），未经虚构。</li>
-<li><code>file:line</code> 形式的引用指向 agent-spec 仓库源码。</li>
-<li>“详见第 N 章” 是全书统一的交叉引用格式。</li>
-<li>每章开篇的 <code>&gt; **定位**</code> 告诉你这一章讲什么、依赖哪一章、什么时候需要读它。</li>
+<li>标注为真实运行的命令输出来自 agent-spec 1.0.0，未经虚构；教程性示例
+（如第 2 章的“用户注册API“演练）会注明“示例“。仓库快照数字（合同数、
+文档数等）以写作时为准，仓库会继续生长。</li>
+<li>“详见第 N 章” 是交叉引用的规范格式（行文中也会自然使用“上一章/下一章“）。</li>
+<li>每章开篇的 <code>&gt; **定位**</code> 告诉你这一章讲什么、依赖哪一章（必要时含适用场景）。</li>
 </ul>
 
                     </main>

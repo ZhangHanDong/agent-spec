@@ -25,9 +25,10 @@ Quality: 100% (determinism: 100%, testability: 100%, coverage: 100%)
 mindmap
   root((lint))
     结构
-      malformed 结构畸形
-      零场景验收段
-      implicit-dep 缺测试选择器
+      bdd-rule-id 规则 id 畸形
+      scenario-presence 零场景验收段
+      explicit-test-binding 缺测试选择器
+      implicit-dep 参数未在 Given 定义
     语言
       vague-verb 模糊动词
       unquantified 未量化
@@ -38,7 +39,7 @@ mindmap
       decision-coverage 决策未覆盖
       error-path 缺异常路径
       universal-claim 全称断言场景不足
-      flag-combination 旗标组合未测
+      flag-combination-coverage 旗标组合未测
     边界
       boundary-entry-point 多入口未逐一验证
       platform-decision-tag 平台决策未标记

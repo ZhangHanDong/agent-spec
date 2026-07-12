@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-75b06212.js";
+            window.path_to_searchindex_js = "searchindex-ab7bcc20.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-98d15170.js"></script>
@@ -234,8 +234,9 @@
 </code></pre>
 <p>方言是<strong>受约束的子集</strong>：两空格缩进、无锚点、无 flow 集合（<code>[]</code> 也不行）——
 超出子集的构造会得到指名道姓的 <code>yaml-unsupported-construct</code> 诊断，而不是猜测性
-解析。导入产物带 <code>source: imported-yaml</code> 溯源标记，且不带 <code>--force</code> 时拒绝
-覆盖已有文档。</p>
+解析。导入产物带 <code>source: imported-yaml</code> 溯源标记；再次导入只会刷新<strong>带此标记</strong>的
+文件，任何不带标记的既有文档一律拒绝覆盖（没有强制开关——手写文档的所有权
+不容侵犯）。</p>
 <p>反方向的导出（<code>requirements export --out requirements.yaml</code>）是<strong>派生投影</strong>：
 往返是不动点（导出→导入→再导出逐字节相同），<code>--check</code> 做漂移门，装不下的内容
 （Source Trace、tags 等）进 lossiness 清单而非静默丢弃。</p>

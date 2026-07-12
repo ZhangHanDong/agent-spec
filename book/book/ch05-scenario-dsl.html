@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-75b06212.js";
+            window.path_to_searchindex_js = "searchindex-ab7bcc20.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-98d15170.js"></script>
@@ -197,8 +197,8 @@
 </tbody>
 </table>
 </div>
-<p>措辞必须<strong>确定性</strong>：“返回 201“而不是“应该返回 201”——<code>should/might/应该</code>
-会被 determinism linter 拦下。</p>
+<p>措辞必须<strong>确定性</strong>：“返回 201“而不是“可能返回 201”——<code>可能/大约/有时/ might/could/maybe</code> 这类非确定词会被 determinism linter 拦下（“应该“不在
+拦截名单里，但同样别用：确定性是给机器读的纪律）。</p>
 <h2 id="测试选择器"><a class="header" href="#测试选择器">测试选择器</a></h2>
 <pre><code class="language-markdown">场景: 正常路径
   测试: test_happy_path            # 简单形式
@@ -207,7 +207,7 @@
   测试:                            # 结构化形式
     包: spec-gateway
     过滤: test_contract_prompt_format
-    级别: integration
+    层级: integration
 </code></pre>
 <p>选择器过滤的是真实测试名。改了测试函数名合同就会 skip——这是特性不是缺陷：
 溯源链宁断勿假。</p>
@@ -246,7 +246,7 @@
   ...
 </code></pre>
 <p>Rule 的 kebab-case id 是稳定锚（改显示名随意，id 不动），成熟后可用
-<code>agent-spec promote</code> 升入能力库（<code>specs/capabilities/</code>）。id 与显示名之间用
+<code>agent-spec promote</code> 升入能力库（<code>specs/capabilities/</code>，命令详见附录 A）。id 与显示名之间用
 <strong>em dash <code>—</code> 或两个以上空格</strong>分隔——普通 <code>--</code> 会被吞进 id。</p>
 <h2 id="一份体检清单"><a class="header" href="#一份体检清单">一份体检清单</a></h2>
 <p>写完场景过一遍：每个场景都有选择器吗？异常 ≥ 正常吗？措辞确定吗？表格代替了

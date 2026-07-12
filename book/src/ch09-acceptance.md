@@ -16,12 +16,14 @@ agent-spec explain specs/task.spec.md --code . --format markdown
 2. **验证全过了吗？**（含异常路径的 N/N pass）
 
 两个"是"就批准。这比读 500 行 diff 快一个数量级，而且注意力落在真正需要人类
-判断的地方。想看过程再加 `--history`：
+判断的地方。想看过程再加 `--history`（真实渲染形状）：
 
 ```text
-run                    pass  fail  skip  Δ
-2026-07-12T20:14:03    3     2     0     -
-2026-07-12T20:31:17    5     0     0     +2 pass
+=== Run History (2 runs) ===
+  First pass: run #2 (timestamp 1783453380)
+  Failed runs: 1
+  | run #1 | FAIL | 3 pass 2 fail 0 skip 0 uncertain |  |
+  | run #2 | PASS | 5 pass 0 fail 0 skip 0 uncertain | +2 pass |
 ```
 
 ## stamp：合同 ↔ 提交

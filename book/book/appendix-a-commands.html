@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-75b06212.js";
+            window.path_to_searchindex_js = "searchindex-ab7bcc20.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-98d15170.js"></script>
@@ -178,7 +178,8 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="附录-a-命令速查表"><a class="header" href="#附录-a-命令速查表">附录 A 命令速查表</a></h1>
-<p>基于 agent-spec 1.0.0（兼容性承诺内的全部表面）。</p>
+<p>基于 agent-spec 1.0.0 的常用表面速查（1.0 兼容性承诺的权威清单以 README
+“Stability: the 1.0 promise” 为准）。</p>
 <h2 id="合同工作流"><a class="header" href="#合同工作流">合同工作流</a></h2>
 <div class="table-wrapper">
 <table>
@@ -190,6 +191,7 @@
 <tr><td><code>parse &lt;spec&gt;</code></td><td>结构确认（段落数、场景数）</td></tr>
 <tr><td><code>lint &lt;spec&gt; --min-score 0.7</code></td><td>合同质量门</td></tr>
 <tr><td><code>contract &lt;spec&gt;</code></td><td>渲染任务合同（Agent 的执行计划）</td></tr>
+<tr><td><code>plan &lt;spec&gt; --code .</code></td><td>生成计划上下文（代码扫描+任务草图）</td></tr>
 <tr><td><code>lifecycle &lt;spec&gt; --code . --format json</code></td><td>主质量门：lint+结构+边界+测试（+符号）</td></tr>
 <tr><td><code>verify &lt;spec&gt; --code .</code></td><td>仅验证（跳过 lint 门）</td></tr>
 <tr><td><code>guard --spec-dir specs --code . --change-scope staged</code></td><td>全仓守卫（pre-commit/CI）</td></tr>
@@ -197,11 +199,11 @@
 <tr><td><code>stamp &lt;spec&gt; --dry-run</code></td><td>Git trailer 溯源</td></tr>
 <tr><td><code>matrix &lt;spec&gt; --code .</code></td><td>Rule×场景×测试×verdict×provenance 矩阵</td></tr>
 <tr><td><code>audit --spec-dir specs</code></td><td>库健康度（只观察不阻断）</td></tr>
-<tr><td><code>promote &lt;spec&gt; --rule &lt;id&gt; --to &lt;cap&gt;</code></td><td>成熟 Rule 升能力库</td></tr>
+<tr><td><code>promote &lt;spec&gt; --rule &lt;id&gt; --to &lt;cap&gt; --code .</code></td><td>成熟 Rule 升能力库</td></tr>
 <tr><td><code>discover --from-codebase --code . --name N</code></td><td>从测试反推草稿合同</td></tr>
 <tr><td><code>archive --dry-run</code></td><td>完成合同归档（证据不绿则阻断）</td></tr>
 <tr><td><code>graph --spec-dir specs</code></td><td>合同依赖 DAG 与关键路径</td></tr>
-<tr><td><code>check-structure --forbid X --in glob</code></td><td>分层架构守卫</td></tr>
+<tr><td><code>check-structure --code . --forbid X --in glob</code></td><td>分层架构守卫</td></tr>
 </tbody>
 </table>
 </div>
@@ -223,7 +225,7 @@
 <tr><td><code>requirements compile --out d/ --layout arc-v1</code></td><td>per-requirement 四件套编译束</td></tr>
 <tr><td><code>requirements bind</code></td><td>工作单元 × 代码符号绑定</td></tr>
 <tr><td><code>requirements bundle --unit WU-X --out b.json</code></td><td>一体化执行束</td></tr>
-<tr><td><code>requirements trace/replay/explain-failure &lt;ID&gt;</code></td><td>证据记录读取</td></tr>
+<tr><td><code>requirements trace/trace-graph/replay/explain-failure &lt;ID&gt;</code></td><td>证据记录读取与图渲染</td></tr>
 <tr><td><code>requirements questions / test-obligations / worktrees</code></td><td>澄清问题 / 测试义务 / 并行工作树</td></tr>
 <tr><td><code>requirements export --out r.yaml --check</code></td><td>YAML 投影（漂移门）</td></tr>
 </tbody>
@@ -240,7 +242,7 @@
 <tr><td><code>trace &lt;id&gt; --gate</code></td><td>知识 → 合同 → liveness</td></tr>
 <tr><td><code>lint-knowledge --gate [--format sarif]</code></td><td>语料治理 lint</td></tr>
 <tr><td><code>atlas build/tree/query/refs/impls/check [--frozen]</code></td><td>代码图家族</td></tr>
-<tr><td><code>wiki init/seed/status/query/inspect/lint/check</code></td><td>live wiki 家族</td></tr>
+<tr><td><code>wiki init/seed/status/query/inspect/inventory/index/project-map/inspect-project/lint/check/meta</code></td><td>live wiki 家族</td></tr>
 <tr><td><code>mcp</code></td><td>只读 MCP server（11 工具）</td></tr>
 <tr><td><code>gen-integrations --check</code></td><td>集成文件漂移门</td></tr>
 </tbody>

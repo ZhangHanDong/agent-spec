@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-75b06212.js";
+            window.path_to_searchindex_js = "searchindex-ab7bcc20.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-98d15170.js"></script>
@@ -206,19 +206,19 @@ agent-spec requirements work-units --knowledge knowledge --out .agent-spec/work_
 <h2 id="plan一个-dag-看三层"><a class="header" href="#plan一个-dag-看三层">plan：一个 DAG 看三层</a></h2>
 <pre><code class="language-bash">agent-spec requirements plan --knowledge knowledge --specs specs --gate
 </code></pre>
-<pre><code class="language-text">batch 1: REQ-CODE-LIVE-WIKI, REQ-KLL-WORK-UNITS, REQ-RUST-ATLAS
-batch 2: REQ-CODE-LIVE-WIKI-DEEPENING, REQ-REQUIREMENTS-COMPILER-PLAN-DAG
+<pre><code class="language-text">batch 1: REQ-CODE-LIVE-WIKI, REQ-INTENT-CODE-LINKER, REQ-KLL-WORK-UNITS, REQ-RUST-ATLAS
+batch 2: REQ-AGENT-SPEC-BOOK, REQ-CODE-LIVE-WIKI-DEEPENING, REQ-REQUIREMENTS-COMPILER-PLAN-DAG
 batch 3: REQ-CROSS-PROJECT-WIKI
 </code></pre>
-<p>批次即拓扑序：同批次可并行。gate 语义里最重要的一条是
-<code>requirement-uncovered</code>——accepted 的需求没有活跃合同守护时失败。这正是上一章
-“开工仪式“的机械依据：<strong>接受即排期义务</strong>。</p>
+<p>（写作时快照——批次会随需求图生长；<code>batch N:</code> 行格式是稳定的。）</p>
+<p>批次即拓扑序：同批次可并行。gate 语义里最重要的一条是 <code>requirement-uncovered</code>——即上一章“开工仪式“的
+机械依据（详见第 11 章，此处不再展开）。</p>
 <h2 id="draft-specs草稿不是成品"><a class="header" href="#draft-specs草稿不是成品">draft-specs：草稿不是成品</a></h2>
 <pre><code class="language-bash">agent-spec requirements draft-specs --knowledge knowledge --out specs/generated
 </code></pre>
-<p>只有 <code>ready</code> 单元会生成草稿。草稿自带 <code>satisfies: [REQ-*]</code> 与占位选择器
+<p>只有 <code>ready</code> 单元会生成草稿。草稿自带 <code>satisfies: [REQ-*]</code>（satisfies 边详见第 15 章）与占位选择器
 （<code>pending_...</code>）——<strong>lifecycle 对草稿本来就应该失败</strong>，直到人类评审、补上真实
-测试选择器并提升到 <code>specs/</code>。草稿是起点，不是可以直接執行的合同。</p>
+测试选择器并提升到 <code>specs/</code>。草稿是起点，不是可以直接执行的合同。</p>
 <p>worktree 并行开发的机械配套：</p>
 <pre><code class="language-bash">agent-spec requirements worktrees --base main --path-prefix ../ws --out .agent-spec/worktrees.json
 </code></pre>

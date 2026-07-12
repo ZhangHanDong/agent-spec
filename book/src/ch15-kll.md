@@ -57,8 +57,10 @@ agent-spec lint-knowledge --knowledge knowledge --gate
 ```
 
 ```text
-19 docs, 202 findings (0 errors)
+20 docs, 204 findings (0 errors)
 ```
+
+（写作时快照；语料会生长，`0 errors` 是门的语义所在。）
 
 语料级校验：id 冲突、supersession 完整性（superseded 必须有对应的
 `supersedes:` 回链）、陈旧引用；文档级 forcing functions（上文的 ADR 规则等）。

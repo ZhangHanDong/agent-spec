@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-75b06212.js";
+            window.path_to_searchindex_js = "searchindex-ab7bcc20.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-98d15170.js"></script>
@@ -197,9 +197,10 @@ AI caller 模式。前置依赖：第 6 章。基于 agent-spec 1.0.0。</p>
     style L5 fill:#2a2440,stroke-dasharray:4
 </pre>
 
-<p>绿色四层是确定性的：零 token 成本、无假阴性。第五层 AI 只处理机械层够不着的
-残余，且默认关闭。1.0 里还有第六个隐形成员：Atlas 符号验证器——当合同声明了
-<code>### Symbols</code> 时激活（详见第 8 章）。</p>
+<p>绿色四层是确定性的：零 token 成本、无假阴性。AI 层只处理机械层够不着的残余，
+且默认关闭。管线里还有两个按需激活的确定性成员：Atlas 符号验证器插在边界层与
+测试层<strong>之间</strong>（合同声明 <code>### Symbols</code> 时激活，详见第 8 章）；复杂度验证器在
+合同声明质量约束且存在变更时运行。</p>
 <h2 id="五种-verdict"><a class="header" href="#五种-verdict">五种 verdict</a></h2>
 <div class="table-wrapper">
 <table>
@@ -234,6 +235,10 @@ failed=skipped=uncertain=0——任何“没验证“都不会被静默当作“
 <p><code>--run-log-dir</code> 记下每一次运行——<code>explain --history</code> 能给出“这份合同重试了
 几次才过“的表格（详见第 9 章）。长合同用 <code>--resume</code> 跳过已过场景；
 <code>--resume=conservative</code> 全部重跑但检测回归。</p>
+<p>逐 verdict 的重试纪律（全书唯一权威版）：<code>fail</code> 读证据修码；<code>skip</code> 检查选择器
+是否对得上真实测试名；<code>uncertain</code> 走人工或 caller 模式；同一场景连续三次失败，
+停下来升级给人类；任何时候都不许为了变绿而改合同——合同真错了就显式切回写作
+模式修订。</p>
 <h2 id="ai-caller-模式"><a class="header" href="#ai-caller-模式">AI caller 模式</a></h2>
 <p>机械层覆盖不了的场景（设计意图、代码品质）可以让<strong>调用方 Agent 自己当验证器</strong>：</p>
 <pre><code class="language-bash">agent-spec lifecycle specs/task.spec.md --code . --ai-mode caller --format json

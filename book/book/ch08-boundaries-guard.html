@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-75b06212.js";
+            window.path_to_searchindex_js = "searchindex-ab7bcc20.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-98d15170.js"></script>
@@ -205,9 +205,10 @@
 <pre><code class="language-bash">agent-spec guard --spec-dir specs --code . --change-scope staged   # pre-commit
 agent-spec guard --spec-dir specs --code . --change-scope worktree # CI
 </code></pre>
-<pre><code class="language-text">agent-spec guard: 54 spec(s) passed
+<pre><code class="language-text">agent-spec guard: 55 spec(s) passed
 </code></pre>
-<p>这行输出来自 agent-spec 自己的仓库——54 份活跃合同在每次提交前全部复验。
+<p>这行输出来自 agent-spec 自己的仓库（写作时快照；活跃合同数会随仓库生长）——
+全部活跃合同在每次提交前复验。
 任何一份合同 lint 不过或验证不过，提交被阻断。</p>
 <h2 id="-symbols把合同钉到真实符号上"><a class="header" href="#-symbols把合同钉到真实符号上"><code>### Symbols</code>：把合同钉到真实符号上</a></h2>
 <p>1.0 的合同可以在边界下声明代码符号引用：</p>
@@ -237,7 +238,8 @@ Intent-Code Linker 的第一块（架构全景详见第 19 章，图的构建详
 <h2 id="vcs-感知"><a class="header" href="#vcs-感知">VCS 感知</a></h2>
 <p><code>.jj/</code> 存在（哪怕同时有 <code>.git/</code>）就用 <code>--change-scope jj</code>，且不要跑
 <code>git add</code>——jj 自动快照。<code>stamp</code> 在 jj 仓库会带 <code>Spec-Change:</code> trailer；
-<code>explain --history</code> 可通过 operation id 给出运行间的文件级 diff。</p>
+<code>explain --history</code> 可通过 operation id 给出运行间的文件级 diff
+（这两个命令详见第 9 章）。</p>
 
                     </main>
 

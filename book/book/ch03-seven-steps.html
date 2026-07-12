@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-75b06212.js";
+            window.path_to_searchindex_js = "searchindex-ab7bcc20.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-98d15170.js"></script>
@@ -214,17 +214,9 @@
 </tbody>
 </table>
 </div>
-<h2 id="重试协议第④步的纪律"><a class="header" href="#重试协议第④步的纪律">重试协议（第④步的纪律）</a></h2>
-<p>lifecycle 失败时，Agent 的义务是<strong>修代码，不是改合同</strong>：</p>
-<ol>
-<li><code>--format json</code> 拿到每个场景的 <code>verdict</code> 与 <code>evidence</code>；</li>
-<li><code>fail</code>：测试真的跑了且失败——读证据修码；</li>
-<li><code>skip</code>：测试没找到——检查 <code>测试:</code> 选择器是否对得上真实测试名；</li>
-<li><code>uncertain</code>：需要 AI 或人工评审的场景（详见第 7 章 caller 模式）;</li>
-<li>同一场景连续三次失败：停下来，升级给人类。</li>
-</ol>
-<p>改合同让验证变绿是谄媚（sycophancy），不是修复——若合同本身错了，显式切回
-写作模式修订合同，绝不静默放宽验收标准。</p>
+<h2 id="第④步的纪律一句话版"><a class="header" href="#第④步的纪律一句话版">第④步的纪律（一句话版）</a></h2>
+<p>lifecycle 失败时，Agent 的义务是<strong>修代码，不是改合同</strong>——改合同让验证变绿
+是谄媚（sycophancy），不是修复。逐 verdict 的完整重试协议详见第 7 章。</p>
 <h2 id="何时不用它"><a class="header" href="#何时不用它">何时不用它</a></h2>
 <p>探索性原型（还不知道“做完“长什么样）、大型架构重构（边界难以定义）——这些先
 自由写码，等能回答“什么是完成“了再立合同。合同适合边界清晰的功能与可复现的
