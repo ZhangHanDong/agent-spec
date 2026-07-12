@@ -6864,9 +6864,13 @@ name: "退款"
 
         for term in [
             "name: Documentation Lint",
-            "cargo install harper-cli lychee",
+            "cargo install lychee --locked",
+            // harper-cli is not on crates.io; CI uses the prebuilt release binary
+            "harper-cli-x86_64-unknown-linux-gnu.tar.gz",
             "npm install -g markdownlint-cli2",
             "DOCS_LINT_REQUIRE_EXTERNAL=all",
+            // bilingual docs: harper runs but only markdownlint/lychee/zh-lint gate
+            "DOCS_LINT_HARPER_ADVISORY=1",
             "bash scripts/docs-lint.sh",
             "pull_request",
             "push",
@@ -8621,6 +8625,20 @@ Scenario: verification metadata stays visible
         assert!(wiki.join("queries").is_dir());
         assert!(wiki.join("projects").is_dir());
         assert!(wiki.join("flows").is_dir());
+        for placeholder_dir in [
+            "modules",
+            "concepts",
+            "decisions",
+            "learnings",
+            "queries",
+            "projects",
+            "flows",
+        ] {
+            assert!(
+                wiki.join(placeholder_dir).join(".gitkeep").exists(),
+                "scaffold dir '{placeholder_dir}' must carry .gitkeep so git preserves it empty"
+            );
+        }
 
         let architecture = fs::read_to_string(wiki.join("_architecture.md")).unwrap();
         assert!(architecture.contains("source_files:"));

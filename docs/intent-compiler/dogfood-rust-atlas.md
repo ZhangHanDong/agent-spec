@@ -61,10 +61,10 @@ contract-first with TDD in `specs/task-intent-compiler-yaml-frontend.spec.md`:
    the work unit was `blocked: missing_scenarios`. Fix: scenarios render into a
    dedicated `## Scenarios` section.
 
-After both fixes: `WU-REQ-RUST-ATLAS` is `ready / leaf_full`, and
-`draft-specs` generated `task-req-rust-atlas-rust-atlas-code-graph.spec.md`
-(kept in this directory as evidence; it parses with 22 clause-derived
-decisions and pending test selectors).
+   After both fixes: `WU-REQ-RUST-ATLAS` is `ready / leaf_full`, and
+   `draft-specs` generated `task-req-rust-atlas-rust-atlas-code-graph.spec.md`
+   (kept in this directory as evidence; it parses with 22 clause-derived
+   decisions and pending test selectors).
 
 3. **Acceptance means scheduling, and the plan gate enforces it.** With the
    folder `accepted`, `requirements plan --gate` failed with

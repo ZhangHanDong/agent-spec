@@ -1,0 +1,19 @@
+{
+  // Correctness rules stay on (reversed links, table column count, bare URLs,
+  // duplicate headings within one section, list numbering).
+  // Style-opinion rules are off: these docs are long-form bilingual prose.
+  "config": {
+    "default": true,
+    "MD003": false, // heading style varies across older docs
+    "MD013": false, // line length — long-form bilingual prose
+    "MD022": false, // blanks around headings
+    "MD024": { "siblings_only": true }, // same heading ok under different parents
+    "MD031": false, // blanks around fences
+    "MD032": false, // blanks around lists
+    "MD036": false, // emphasis-as-heading used intentionally in guides
+    "MD040": false, // fence language tags — not yet annotated everywhere
+    "MD060": false  // table column style
+  },
+  // Verbatim evidence artifacts (generated spec drafts), not prose docs.
+  "ignores": ["docs/intent-compiler/dogfood/**"]
+}

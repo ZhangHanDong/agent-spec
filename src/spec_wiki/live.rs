@@ -28,6 +28,16 @@ pub fn init_live_wiki(
         "flows",
     ] {
         std::fs::create_dir_all(wiki_dir.join(dir))?;
+        // Article dirs start empty; a .gitkeep keeps them alive across git
+        // clones (lint and `init --check` treat a missing dir as an error).
+        // Not recorded in files_written so pre-existing wikis without the
+        // placeholder still pass the `--check` drift comparison.
+        if dir != "architecture" {
+            let placeholder = wiki_dir.join(dir).join(".gitkeep");
+            if !placeholder.exists() {
+                std::fs::write(&placeholder, "")?;
+            }
+        }
     }
 
     let inventory = build_architecture_inventory(root);

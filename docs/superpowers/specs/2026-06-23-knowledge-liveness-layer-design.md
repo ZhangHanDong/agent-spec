@@ -129,7 +129,7 @@ liveness: auto            # auto(可验证) | n/a(治理决策,如许可/策略,
 - `Status`:`Proposed | Accepted | Superseded | Deprecated | Rejected`(`Proposed` 兼任"提案",见 D4)
 - **forcing functions**(lint):Accepted 决策的 `Alternatives Considered` 不得为空;`Consequences` 须含正反两面(Good/Bad because)
 
-### 6.2 requirement(EARS/规范形)[P2]
+### 6.2 requirement(EARS/规范形) [P2]
 
 - **必填**:`## Problem` · `## Requirements`(`[REQ-NNN] … MUST/SHOULD/MAY …`,一行一条)
 - **推荐**:`## Success Metrics` · `## Risks` · `## Assumptions`
@@ -139,7 +139,7 @@ liveness: auto            # auto(可验证) | n/a(治理决策,如许可/策略,
 
 - 独立治理类型;走 lifecycle + forcing-function lint;`liveness` 恒 `n/a`,永不进代码 gate;`## Produces: ADR-xxx` 链到它催生的决策(补 Lore LEP→ADR 交接的 open question)
 
-### 6.4 guidance(给 AI 的指导 + skill 指定,治理档)[P2]
+### 6.4 guidance(给 AI 的指导 + skill 指定,治理档) [P2]
 
 - **必填**:`## Scope` · `## Instructions`;**推荐**:`## Applies To`(路径/栈 glob)· `## Constraints`(Must/MustNot)· `## Skills`(本场景指定的 skill)· `## Examples`。
 - 按栈作用域:子目录(`guidance/rust/`)或 `tags: [rust]`。

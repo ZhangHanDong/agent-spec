@@ -19,7 +19,7 @@
 | 合约 scenarios 自验证 | 7 / 7 PASS |
 | commit `+#[test]` | 7 |
 | diff | 4 files, 275 insertions |
-| 新增 CLI 命令 | `agent-spec audit`(`--spec-dir` / `--format text|json`) |
+| 新增 CLI 命令 | `agent-spec audit`(`--spec-dir` / `--format text\|json`) |
 | 新增结构 | `AuditReport` + `audit_specs(docs)` |
 | 对抗 hunt | 未执行(范围决策,见下) |
 

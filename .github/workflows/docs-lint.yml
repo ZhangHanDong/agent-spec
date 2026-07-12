@@ -23,11 +23,18 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Install Rust docs lint tools
-        run: cargo install harper-cli lychee --locked
+      - name: Install lychee
+        run: cargo install lychee --locked
+
+      # harper-cli is not published to crates.io; use the prebuilt release binary.
+      - name: Install harper-cli
+        run: |
+          curl -fsSL https://github.com/Automattic/harper/releases/download/v2.6.0/harper-cli-x86_64-unknown-linux-gnu.tar.gz \
+            | tar -xz -C "$HOME/.cargo/bin"
+          harper-cli --help >/dev/null
 
       - name: Install Markdown lint
         run: npm install -g markdownlint-cli2
 
       - name: Documentation lint
-        run: DOCS_LINT_REQUIRE_EXTERNAL=all bash scripts/docs-lint.sh
+        run: DOCS_LINT_REQUIRE_EXTERNAL=all DOCS_LINT_HARPER_ADVISORY=1 bash scripts/docs-lint.sh

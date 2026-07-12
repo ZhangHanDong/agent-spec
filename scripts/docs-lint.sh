@@ -28,23 +28,40 @@ run_tool() {
   fi
 }
 
+# Harper findings fail the run unless DOCS_LINT_HARPER_ADVISORY=1. The docs are
+# bilingual and full of project vocabulary, so English prose lint is advisory in
+# CI: it must run and print, but only markdownlint/lychee/zh-lint gate.
+harper_status() {
+  if [ "${DOCS_LINT_HARPER_ADVISORY:-0}" = "1" ]; then
+    printf 'note: harper findings are advisory (DOCS_LINT_HARPER_ADVISORY=1)\n'
+  else
+    status=1
+  fi
+}
+
 run_harper() {
+  # Prose lint only reads Markdown; feeding HTML/JS produces token noise.
+  local md_files=()
+  while IFS= read -r -d '' file; do
+    md_files+=("$file")
+  done < <(find "${doc_paths[@]}" -type f -name '*.md' -print0)
+
   if [ -n "${HARPER_CMD:-}" ]; then
     ran_external=$((ran_external + 1))
     ran_harper=1
     printf '\n== harper ==\n'
     # shellcheck disable=SC2086
-    $HARPER_CMD "${doc_paths[@]}" || status=1
+    $HARPER_CMD "${md_files[@]}" || harper_status
   elif command -v harper-cli >/dev/null 2>&1; then
     ran_external=$((ran_external + 1))
     ran_harper=1
     printf '\n== harper-cli ==\n'
-    harper-cli lint "${doc_paths[@]}" || status=1
+    harper-cli lint "${md_files[@]}" || harper_status
   elif command -v harper >/dev/null 2>&1; then
     ran_external=$((ran_external + 1))
     ran_harper=1
     printf '\n== harper ==\n'
-    harper lint "${doc_paths[@]}" || status=1
+    harper lint "${md_files[@]}" || harper_status
   else
     missing_external+=("harper-cli")
     printf 'warning: harper-cli or harper not installed; skipping English prose lint\n' >&2
