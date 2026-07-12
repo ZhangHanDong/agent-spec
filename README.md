@@ -135,6 +135,7 @@ We want you to know up-front. These are real limits, not roadmap stubs:
 - **NFR ceiling.** Functional behavior bound to `cargo test` is fully verifiable today. Performance, reliability, scalability — these need specialized runners (criterion, k6, external probes; planned Phase 7) and even then the honest verdict is often `uncertain` or `pending_review`, not `pass`.
 - **Test selector maintenance.** The mechanical coverage matrix is the moat, but it comes with a cost: renaming a test function breaks the contract until you update the spec. Tooling can detect dangling selectors, it cannot rename them for you.
 - **False sense of security.** A passing `lifecycle` means the contract was satisfied. It does not mean the contract was comprehensive. We recommend coupling `agent-spec lifecycle` with periodic human + AI architectural reviews (Phase 8 `agent-spec audit` will automate part of this).
+- **Approval identity and workflow.** agent-spec provides deterministic compilation artifacts, stable machine formats, digests, and replay. Any orchestrator can insert human approval between compiler commands — but approval identity, authority, and workflow never enter the compiler core (ADR-001): a CLI cannot attest who approved, so it reports facts and digests for external systems to bind approvals to.
 
 `docs/comparison-openspec-speckit.md` §9.4 expands these in context; `docs/bdd-spine-end-state.md` shows where each is addressed across Phases 1–9.
 

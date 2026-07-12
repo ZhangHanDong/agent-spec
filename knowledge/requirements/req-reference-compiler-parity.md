@@ -51,6 +51,6 @@ fixtures, and the single README acknowledgement.
 
 ## Source Trace
 
-- decision origin: openfab spec-side integration review 2026-07-12 — agent-spec replaces the reference compiler via an explicit edge layout; the core stays provider-neutral and orchestrators depend on stable surfaces one-way
+- decision origin: orchestrator-neutral compiler integration review 2026-07-12 (governing decision: ADR-001) — agent-spec replaces the reference compiler via an explicit edge layout; the core stays provider-neutral and orchestrators depend on stable surfaces one-way
 - reference input shape: docs/intent-compiler/reference-validation-matrix.md (ticketbooking requirement tree rows)
 - staged contract: specs/roadmap/task-reference-compiler-parity.spec.md

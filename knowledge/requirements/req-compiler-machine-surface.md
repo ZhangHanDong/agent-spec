@@ -51,6 +51,6 @@ systems that reference those digests.
 
 ## Source Trace
 
-- decision origin: openfab spec-side integration review 2026-07-12 — compiler stays orchestrator-agnostic; approval/authority binding is external and references digests
+- decision origin: orchestrator-neutral compiler integration review 2026-07-12 (governing decision: ADR-001) — compiler stays orchestrator-agnostic; approval/authority binding is external and references digests
 - reference review evidence: live reference-architecture review findings (approval envelopes bind to exact artifact digests; the CLI cannot attest identity)
 - staged contract: specs/roadmap/task-compiler-machine-surface.spec.md

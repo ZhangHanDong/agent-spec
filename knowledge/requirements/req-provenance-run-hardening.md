@@ -43,6 +43,6 @@ it carries no approval or authority semantics.
 
 ## Source Trace
 
-- decision origin: openfab spec-side integration review 2026-07-12 — determinism claims become executable: build identity + configuration + replay
+- decision origin: orchestrator-neutral compiler integration review 2026-07-12 (governing decision: ADR-001) — determinism claims become executable: build identity + configuration + replay
 - reference review evidence: reference-architecture review finding "no replayable compilation provenance" (schema, build digest, configuration, replay result)
 - staged contract: specs/roadmap/task-provenance-run-hardening.spec.md
