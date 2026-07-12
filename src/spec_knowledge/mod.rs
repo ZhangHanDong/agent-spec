@@ -30,6 +30,7 @@ pub mod trace_ledger;
 pub mod transitions;
 pub mod work_units;
 pub mod worktrees;
+pub mod yaml_export;
 pub mod yaml_frontend;
 
 pub use context::{list_context, read_context, safe_join};
@@ -91,6 +92,7 @@ pub use transitions::{
 };
 pub use work_units::{WorkUnit, WorkUnitMode, WorkUnitSet, WorkUnitStatus, build_work_units};
 pub use worktrees::{WorktreeDiagnostic, WorktreeEntry, WorktreeManifest, build_worktree_manifest};
+pub use yaml_export::{ExportOptions, ExportOutcome, export_requirements_yaml, write_export};
 pub use yaml_frontend::{
     GeneratedRequirementDoc, YAML_PROVENANCE_KEY, import_requirements_yaml, write_generated_docs,
 };

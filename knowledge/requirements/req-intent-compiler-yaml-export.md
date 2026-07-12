@@ -2,7 +2,7 @@
 kind: requirement
 id: REQ-INTENT-COMPILER-YAML-EXPORT
 title: "Intent Compiler YAML Export"
-status: proposed
+status: accepted
 liveness: auto
 tags: [intent-compiler, yaml, export, projection]
 ---

@@ -12,6 +12,12 @@ specs and tests that still guard them.
 
 ### Added
 
+- Intent Compiler YAML export: `requirements export --out <file>.yaml [--id REQ-*]`
+  projects confirmed requirements into the import dialect (round-trip fixpoint,
+  governance-status scoping with exclusion diagnostics, explicit lossiness report,
+  `--check` drift gate). Dialect v1.1 adds FOLDER-level `dependencies`/`scenarios`
+  to the frontend for symmetry.
+
 - Requirement governance gate and explicit transitions (target-architecture
   delivery boundary 1): missing `status` is now an error in `requirements graph`
   and never schedules work; Markdown intake emits `status: proposed` candidates;

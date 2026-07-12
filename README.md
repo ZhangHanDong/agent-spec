@@ -633,6 +633,7 @@ If the PRD or issue is unstructured prose, use the `agent-spec-intent-compiler` 
 agent-spec requirements import --from docs/prd.md --out knowledge/requirements
 agent-spec requirements import --from requirements.yaml --out knowledge/requirements
 agent-spec requirements transition REQ-101 --to accepted   # human governance action
+agent-spec requirements export --out requirements.yaml     # derived YAML projection (--check gates drift)
 agent-spec lint-knowledge --knowledge knowledge --gate
 agent-spec requirements graph --knowledge knowledge --format json --gate
 agent-spec requirements work-units --knowledge knowledge --out .agent-spec/work_units.json

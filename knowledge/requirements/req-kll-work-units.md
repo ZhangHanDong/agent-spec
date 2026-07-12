@@ -13,7 +13,7 @@ agent-spec can verify Task Contracts and trace specs to KLL decisions or require
 
 ## Requirements
 
-[REQ-KLL-WORK-UNITS] agent-spec MUST import explicitly marked PRD or issue requirement blocks into `knowledge/requirements/*.md` artifacts.
+[REQ-KLL-WORK-UNITS-IMPORT] agent-spec MUST import explicitly marked PRD or issue requirement blocks into `knowledge/requirements/*.md` artifacts.
 [REQ-KLL-WORK-UNITS-GRAPH] agent-spec MUST validate KLL requirement artifacts as a dependency graph before generating executable work units.
 [REQ-KLL-WORK-UNITS-DRAFTS] agent-spec MUST generate reviewable Task Contract drafts with `satisfies: [REQ-*]` links for ready work units.
 

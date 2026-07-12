@@ -29,7 +29,6 @@ Remaining staged contracts:
 |------|-------|-----|
 | `task-atlas-mir-layer.spec.md` | planned (Phase 2) | depends on Phase 1 |
 | `task-atlas-kll-integration.spec.md` | planned (Phase 3) | depends on Phase 1 |
-| `task-intent-compiler-yaml-export.spec.md` | planned | YAML export projection from confirmed requirements; round-trip fixpoint |
 | `task-context-fidelity.spec.md` | partial (2/3, 1 skip) | one bound test not found in the codebase |
 | `task-history-summary.spec.md` | not started (0/4 skip) | no bound tests exist yet |
 | `task-status-file-contract.spec.md` | partial (3/4, 1 skip) | one selector unbound |

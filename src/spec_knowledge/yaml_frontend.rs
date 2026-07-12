@@ -374,6 +374,8 @@ struct FolderNode {
     title: String,
     status: String,
     description: Option<String>,
+    dependencies: Vec<String>,
+    scenarios: Vec<ScenarioNode>,
     leaves: Vec<LeafNode>,
 }
 
@@ -391,7 +393,16 @@ struct ScenarioNode {
     then: String,
 }
 
-const FOLDER_KEYS: [&str; 6] = ["id", "title", "type", "status", "description", "children"];
+const FOLDER_KEYS: [&str; 8] = [
+    "id",
+    "title",
+    "type",
+    "status",
+    "description",
+    "dependencies",
+    "scenarios",
+    "children",
+];
 const LEAF_KEYS: [&str; 6] = [
     "id",
     "title",
@@ -439,6 +450,38 @@ fn extract_folder(value: &YamlValue) -> Result<FolderNode, RequirementImportErro
         }
     };
     let description = optional_scalar(value, "description")?;
+    let dependencies = match value.get("dependencies") {
+        None => Vec::new(),
+        Some(YamlValue::List(items)) => items
+            .iter()
+            .map(|item| match item {
+                YamlValue::Scalar(dep) => {
+                    validate_node_id(dep)?;
+                    Ok(dep.clone())
+                }
+                _ => Err(err(&format!(
+                    "FOLDER `{id}`: dependencies must be a list of node ids"
+                ))),
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        Some(_) => {
+            return Err(err(&format!(
+                "FOLDER `{id}`: `dependencies:` must be a block list"
+            )));
+        }
+    };
+    let scenarios = match value.get("scenarios") {
+        None => Vec::new(),
+        Some(YamlValue::List(items)) => items
+            .iter()
+            .map(|item| extract_scenario(item, &id))
+            .collect::<Result<Vec<_>, _>>()?,
+        Some(_) => {
+            return Err(err(&format!(
+                "FOLDER `{id}`: `scenarios:` must be a block list"
+            )));
+        }
+    };
     let Some(YamlValue::List(children)) = value.get("children") else {
         return Err(err(&format!(
             "FOLDER `{id}` must carry a non-empty `children:` block list"
@@ -456,6 +499,8 @@ fn extract_folder(value: &YamlValue) -> Result<FolderNode, RequirementImportErro
         title,
         status,
         description,
+        dependencies,
+        scenarios,
         leaves,
     })
 }
@@ -613,6 +658,18 @@ fn render_folder_doc(
 ) -> String {
     let id = doc_id(&folder.id);
     let mut deps = std::collections::BTreeSet::new();
+    for dep in &folder.dependencies {
+        let target_folder = node_owner.get(dep).cloned();
+        match target_folder {
+            Some(owner) if owner == folder.id => {}
+            Some(owner) => {
+                deps.insert(doc_id(&owner));
+            }
+            None => {
+                deps.insert(doc_id(dep));
+            }
+        }
+    }
     for leaf in &folder.leaves {
         for dep in &leaf.dependencies {
             let target_folder = node_owner.get(dep).cloned();
@@ -662,8 +719,14 @@ fn render_folder_doc(
     }
     // scenarios live in a dedicated section so the requirement graph
     // recognizes them and work units can become Ready
-    if folder.leaves.iter().any(|leaf| !leaf.scenarios.is_empty()) {
+    if !folder.scenarios.is_empty() || folder.leaves.iter().any(|leaf| !leaf.scenarios.is_empty()) {
         out.push_str("## Scenarios\n\n");
+        for scenario in &folder.scenarios {
+            out.push_str(&format!("Scenario: {}\n", scenario.name));
+            out.push_str(&format!("  Given {}\n", scenario.given));
+            out.push_str(&format!("  When {}\n", scenario.when));
+            out.push_str(&format!("  Then {}\n\n", scenario.then));
+        }
         for leaf in &folder.leaves {
             for scenario in &leaf.scenarios {
                 out.push_str(&format!("Scenario: {}\n", scenario.name));

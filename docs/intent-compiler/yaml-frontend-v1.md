@@ -34,6 +34,13 @@ requirements:
     type: FOLDER               # top-level nodes must be FOLDER
     status: accepted           # optional; proposed (default) | accepted
     description: "..."         # optional; becomes ## Problem
+    dependencies:              # optional (v1.1); doc-level ## Dependencies
+      - flight-search
+    scenarios:                 # optional (v1.1); doc-level ## Scenarios
+      - name: "..."
+        given: "..."
+        when: "..."
+        then: "..."
     children:
       - id: create-booking
         title: "Create a booking"
@@ -74,3 +81,23 @@ requirements:
 
 Contract: `specs/task-intent-compiler-yaml-frontend.spec.md`
 (satisfies `REQ-INTENT-COMPILER-YAML-FRONTEND`).
+
+## Export (the inverse projection)
+
+`agent-spec requirements export --knowledge knowledge --out requirements.yaml [--id REQ-X]...`
+projects confirmed requirement documents back into this dialect. The exported
+file is derived — never the source of truth for a confirmed requirement.
+
+- Scope: `status: proposed|accepted`; superseded/deprecated/rejected (and
+  missing-status) documents are excluded with a diagnostic.
+- Inverse mapping: doc → FOLDER (Problem reflowed to one line), clause
+  `[REQ-<DOC>-<SUFFIX>]` → ATOMIC leaf (title synthesized from the suffix),
+  doc-level `## Dependencies`/`## Scenarios` → FOLDER-level keys.
+- Round-trip law: `export → import → export` is byte-identical.
+- Inexpressible content (double quotes, backslashes, clause ids that do not
+  extend the doc id) fails the whole export; Source Trace, tags, and Open
+  Questions are reported in a lossiness diagnostic.
+- `--check` re-renders and exits non-zero on drift.
+
+Contract: `specs/task-intent-compiler-yaml-export.spec.md`
+(satisfies `REQ-INTENT-COMPILER-YAML-EXPORT`).

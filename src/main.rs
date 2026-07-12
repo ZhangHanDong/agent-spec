@@ -641,6 +641,20 @@ enum RequirementCommands {
         #[arg(long, default_value = "knowledge")]
         knowledge: PathBuf,
     },
+    /// Export requirement documents as a YAML dialect projection
+    Export {
+        #[arg(long, default_value = "knowledge")]
+        knowledge: PathBuf,
+        /// Target file (.yaml/.yml); a derived projection, overwritten on export
+        #[arg(long)]
+        out: PathBuf,
+        /// Restrict export to these requirement ids (repeatable)
+        #[arg(long)]
+        id: Vec<String>,
+        /// Compare against the existing file and exit non-zero on drift
+        #[arg(long)]
+        check: bool,
+    },
     /// Validate and print the requirement graph
     Graph {
         #[arg(long, default_value = "knowledge")]
@@ -2261,7 +2275,9 @@ fn find_command_repo_root(spec: &Path, code: &Path) -> Option<PathBuf> {
 }
 
 fn find_guard_repo_root(spec_dir: &Path, code: &Path) -> Option<PathBuf> {
-    for candidate in [code, spec_dir, Path::new(".")] {
+    // No cwd fallback: guard pointed at directories outside any repository
+    // must resolve to an empty change set, not the tool's own repo.
+    for candidate in [code, spec_dir] {
         if let Some(root) = find_git_repo_root(candidate) {
             return Some(root);
         }
@@ -3110,6 +3126,31 @@ fn cmd_requirements(action: RequirementCommands) -> Result<(), Box<dyn std::erro
                 by.to_ascii_uppercase(),
                 replacement.display()
             );
+            Ok(())
+        }
+        RequirementCommands::Export {
+            knowledge,
+            out,
+            id,
+            check,
+        } => {
+            let outcome = crate::spec_knowledge::write_export(
+                &knowledge,
+                &out,
+                &crate::spec_knowledge::ExportOptions { ids: id },
+                check,
+            )?;
+            for note in &outcome.excluded {
+                eprintln!("excluded: {note}");
+            }
+            for note in &outcome.lossy {
+                eprintln!("lossy: {note}");
+            }
+            if check {
+                println!("export projection is fresh: {}", out.display());
+            } else {
+                println!("exported: {}", out.display());
+            }
             Ok(())
         }
         RequirementCommands::Graph {
