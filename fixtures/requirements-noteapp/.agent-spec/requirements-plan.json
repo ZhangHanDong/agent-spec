@@ -1,0 +1,145 @@
+{
+  "version": 1,
+  "requirements": [
+    {
+      "id": "REQ-NOTE-CREATE",
+      "title": "Create Note",
+      "source_path": "fixtures/requirements-noteapp/knowledge/requirements/req-note-create-create-note.md",
+      "status": "ready",
+      "mode": "leaf_full",
+      "scenario_count": 1,
+      "blocked_by": []
+    },
+    {
+      "id": "REQ-NOTE-LIST",
+      "title": "List Notes",
+      "source_path": "fixtures/requirements-noteapp/knowledge/requirements/req-note-list-list-notes.md",
+      "status": "ready",
+      "mode": "leaf_full",
+      "scenario_count": 1,
+      "blocked_by": []
+    }
+  ],
+  "work_units": [
+    {
+      "id": "WU-REQ-NOTE-CREATE",
+      "requirement_id": "REQ-NOTE-CREATE",
+      "title": "Create Note",
+      "source_path": "fixtures/requirements-noteapp/knowledge/requirements/req-note-create-create-note.md",
+      "mode": "leaf_full",
+      "status": "ready",
+      "depends_on": [],
+      "satisfies": [
+        "REQ-NOTE-CREATE"
+      ],
+      "scenario_count": 1,
+      "blocked_by": []
+    },
+    {
+      "id": "WU-REQ-NOTE-LIST",
+      "requirement_id": "REQ-NOTE-LIST",
+      "title": "List Notes",
+      "source_path": "fixtures/requirements-noteapp/knowledge/requirements/req-note-list-list-notes.md",
+      "mode": "leaf_full",
+      "status": "ready",
+      "depends_on": [
+        "REQ-NOTE-CREATE"
+      ],
+      "satisfies": [
+        "REQ-NOTE-LIST"
+      ],
+      "scenario_count": 1,
+      "blocked_by": []
+    }
+  ],
+  "specs": [
+    {
+      "id": "task-req-note-create",
+      "name": "Create Note",
+      "path": "fixtures/requirements-noteapp/specs/task-req-note-create.spec.md",
+      "depends": [],
+      "satisfies": [
+        "REQ-NOTE-CREATE"
+      ],
+      "risk": "C"
+    },
+    {
+      "id": "task-req-note-list",
+      "name": "List Notes",
+      "path": "fixtures/requirements-noteapp/specs/task-req-note-list.spec.md",
+      "depends": [
+        "task-req-note-create"
+      ],
+      "satisfies": [
+        "REQ-NOTE-LIST"
+      ],
+      "risk": "C"
+    }
+  ],
+  "edges": [
+    {
+      "from": "REQ-NOTE-CREATE",
+      "to": "REQ-NOTE-LIST",
+      "kind": "dependency"
+    },
+    {
+      "from": "REQ-NOTE-CREATE",
+      "to": "WU-REQ-NOTE-CREATE",
+      "kind": "work_unit"
+    },
+    {
+      "from": "REQ-NOTE-LIST",
+      "to": "WU-REQ-NOTE-LIST",
+      "kind": "work_unit"
+    },
+    {
+      "from": "WU-REQ-NOTE-CREATE",
+      "to": "task-req-note-create",
+      "kind": "satisfies"
+    },
+    {
+      "from": "WU-REQ-NOTE-LIST",
+      "to": "task-req-note-list",
+      "kind": "satisfies"
+    },
+    {
+      "from": "task-req-note-create",
+      "to": "task-req-note-list",
+      "kind": "spec_depends"
+    }
+  ],
+  "batches": [
+    {
+      "order": 1,
+      "requirement_ids": [
+        "REQ-NOTE-CREATE"
+      ]
+    },
+    {
+      "order": 2,
+      "requirement_ids": [
+        "REQ-NOTE-LIST"
+      ]
+    }
+  ],
+  "coverage": [
+    {
+      "requirement_id": "REQ-NOTE-CREATE",
+      "spec_paths": [
+        "fixtures/requirements-noteapp/specs/task-req-note-create.spec.md"
+      ],
+      "spec_depends": []
+    },
+    {
+      "requirement_id": "REQ-NOTE-LIST",
+      "spec_paths": [
+        "fixtures/requirements-noteapp/specs/task-req-note-list.spec.md"
+      ],
+      "spec_depends": [
+        "task-req-note-create"
+      ]
+    }
+  ],
+  "diagnostics": [],
+  "parse_errors": []
+}

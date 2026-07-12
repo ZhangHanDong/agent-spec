@@ -2,20 +2,22 @@
 name: agent-spec-tool-first
 description: |
   CRITICAL: Use for agent-spec CLI tool workflow. Triggers on:
-  agent-spec, contract, lifecycle, guard, verify, explain, stamp, checkpoint,
+  agent-spec, contract, lifecycle, guard, verify, explain, stamp, checkpoint, plan,
+  requirements, work-units, knowledge requirements, KLL, docs vs knowledge,
   spec verification, task contract, spec quality, lint spec, run log,
   "how to verify", "how to use agent-spec", "spec failed", "guard failed",
   contract review, contract acceptance, PR review, code review workflow,
-  合约, 验证, 生命周期, 守卫, 规格检查, 质量门禁, 合约审查,
+  plan context, codebase scan, task sketch, implementation plan,
+  合约, 验证, 生命周期, 守卫, 规格检查, 质量门禁, 合约审查, 计划,
   "验证失败", "怎么用 agent-spec", "spec 不通过", "工作流"
 ---
 
 # Agent Spec Tool-First Workflow
 
-> **Version:** 3.3.0 | **Last Updated:** 2026-06-08 | **Tracks agent-spec:** 0.3.0 (BDD-spine)
+> **Version:** 3.5.0 | **Last Updated:** 2026-07-07 | **Tracks agent-spec:** 0.4.0 (KLL requirements intake)
 
 You are an expert at using `agent-spec` as a CLI tool for contract-driven AI coding. Help users by:
-- **Planning**: Render task contracts before coding with `contract`
+- **Planning**: Render task contracts with `contract`, generate plan context with `plan`
 - **Implementing**: Follow contract Intent, Decisions, Boundaries
 - **Verifying**: Run `lifecycle` / `guard` to check code against specs
 - **Reviewing**: Use `explain` for human-readable summaries, `stamp` for git trailers
@@ -50,12 +52,18 @@ Humans define "what is correct" (Contract). Machines verify "is the code correct
 | `agent-spec init` | Scaffold new spec | Starting a new task |
 | `agent-spec contract <spec>` | Render Task Contract | Before coding - read the execution plan |
 | `agent-spec lint <files>` | Spec quality check | After writing spec, before giving to Agent |
+| `agent-spec plan <spec> --code .` | Generate plan context | Before coding - codebase scan + task sketch |
 | `agent-spec lifecycle <spec> --code .` | Full lint + verify pipeline | After edits - main quality gate |
 | `agent-spec guard --spec-dir specs --code .` | Repo-wide check | Pre-commit / CI - all specs at once |
 | `agent-spec explain <spec> --format markdown` | PR-ready review summary | Contract Acceptance - paste into PR |
 | `agent-spec explain <spec> --history` | Execution history | See how many retries the Agent needed |
 | `agent-spec stamp <spec> --dry-run` | Preview git trailers | Before committing - traceability |
 | `agent-spec graph --spec-dir specs` | Dependency graph (DOT) | After writing specs - visualize deps & critical path |
+| `agent-spec requirements graph --gate` | Validate KLL requirements and dependency graph | After importing PRD/issue requirements |
+| `agent-spec wiki status` | Check stale code live wiki articles | Session start / before broad source reading |
+| `agent-spec wiki query <text>` | Search tracked live wiki articles | Before opening many source files |
+| `agent-spec wiki check` | Live wiki lint + worktree status gate | Pre-commit / CI for tracked wiki |
+| `agent-spec atlas build/tree/query/refs/impls/check` | Rust project graph (symbols, impls, refs) with hash staleness | Query structure instead of grepping; `--frozen` for read-only |
 | `agent-spec verify <spec> --code .` | Raw verification only | When you want verify without lint gate |
 | `agent-spec checkpoint status` | VCS-aware status | Check uncommitted state |
 
@@ -79,6 +87,110 @@ Notes:
 - `matrix` shares `verify`'s change-set flags (`--change`, `--change-scope`, `--ai-mode`) and default semantics.
 - `promote` writes to `specs/capabilities/<name>.spec.md`; the capability name is path-traversal-checked.
 - `audit` and `check-structure` are mechanical and read-only (no code execution beyond scanning).
+
+## Knowledge & Liveness Layer (0.4.0 KLL)
+
+KLL adds a typed **knowledge layer** beside specs: durable `decision` /
+`requirement` / `guidance` / `proposal` artifacts under `knowledge/`, a
+`satisfies:` edge from specs back to decisions or requirements, and a **derived
+liveness** answer to "is this decision/requirement still guarded by the code?"
+— recomputed from current spec verdicts, never stored. A read-only MCP server
+serves it all to agents with no RAG. Knowledge lives in `knowledge/`; specs
+still live in `specs/`.
+
+| Command | Purpose | When to Use |
+|---------|---------|-------------|
+| `agent-spec init --workspace` | Scaffold the canonical `knowledge/` tree (decisions/requirements/proposals/guidance/context + canon + `.agent-spec/config.yaml`). Idempotent | Once, to lay down the knowledge workspace beside `specs/` |
+| `agent-spec trace <id> [--gate]` | Trace a decision or requirement id to the specs that `satisfy:` it and report **liveness** (honored / violated / unproven / n/a). `--gate` exits 2 on violated, warns on unproven | Check whether a recorded knowledge artifact is still enforced by passing specs; use `--gate` in CI |
+| `agent-spec lint-knowledge [--format text\|json\|sarif] [--gate]` | Lint the knowledge corpus: per-doc rules + governance (id-conflict, supersession integrity, stale refs). `--gate` exits 2 on any Error | Governance gate for the knowledge base; `--format sarif` feeds GitHub Code Scanning |
+| `agent-spec requirements transition <ID> --to <status>` / `requirements supersede <ID> --by <NEW>` | Explicit human governance transitions (proposed→accepted/rejected, accepted→deprecated, atomic supersession); missing status fails `graph --gate` | Accept requirements before lowering; compilation never mutates status |
+| `agent-spec requirements status <ID>` | Three-axis report: governance / execution / liveness with spec evidence | "Where is REQ-X?" in one command |
+| `agent-spec requirements export --out requirements.yaml` | YAML projection of confirmed requirements (round-trip fixpoint, `--check` drift gate) | Interop with YAML-world tooling; derived, never source of truth |
+| `agent-spec requirements import/graph/work-units/draft-specs` | Convert marked PRD/issue requirement blocks into KLL artifacts, validate the graph, generate executable work units, and draft Task Contracts with `satisfies: [REQ-*]` | Use when raw product requirements need to become verifiable agent-spec work |
+| `agent-spec mcp` | Serve the knowledge layer over MCP (JSON-RPC 2.0 over stdio, read-only, deterministic) | Wire into an MCP client so agents query knowledge live |
+| `agent-spec gen-integrations --with-guidance <knowledge>` | Project `guidance/` artifacts into the generated CLAUDE.md/AGENTS.md/.cursorrules | Push stack/path-scoped guidance into agent tool config |
+
+Requirements intake flow:
+
+```bash
+agent-spec requirements import --from docs/prd.md --out knowledge/requirements
+agent-spec requirements import --from requirements.yaml --out knowledge/requirements
+agent-spec lint-knowledge --knowledge knowledge --gate
+agent-spec requirements graph --knowledge knowledge --format json --gate
+agent-spec requirements work-units --knowledge knowledge --out .agent-spec/work_units.json
+agent-spec requirements draft-specs --knowledge knowledge --out specs/generated
+```
+
+`requirements import` reads explicit `<!-- agent-spec:requirement ... -->`
+Markdown blocks, or the constrained YAML dialect for `.yaml`/`.yml` sources
+(`docs/intent-compiler/yaml-frontend-v1.md`); it never interprets raw prose. Marked blocks need
+blocks with `id` and `title`. Generated Task Contract drafts are review
+artifacts: they carry `satisfies: [REQ-*]` and placeholder `pending_...` test
+selectors, so `lifecycle` is expected to fail until a human binds real tests.
+
+### `docs/` vs `knowledge/`
+
+Use `docs/` for human-facing explanatory material: PRDs, issue writeups, design
+notes, plans, retrospectives, tutorials, and background context. `docs/` files
+do not need stable IDs or KLL frontmatter, and `trace`, `lint-knowledge`, and
+`requirements graph` do not treat them as governed truth.
+
+Use `knowledge/` for machine-consumable project truth: durable decisions,
+requirements, guidance, and proposals with typed frontmatter (`kind`, `id`,
+`title` when required, `liveness`) and lintable sections. Specs connect to
+these artifacts with `satisfies: [ADR-*|REQ-*]`; `trace` can then answer whether
+code still guards them.
+
+Pipeline rule: raw PRD/issue material may start in `docs/`, but executable
+work must be derived from imported `knowledge/requirements/*.md`, not directly
+from raw prose. Exception: `knowledge/context/` is a free-form KLL escape hatch
+served by MCP, but it is untyped, unlinted, and not trace-gated.
+
+The six MCP tools (deterministic, no RAG): `knowledge.find`,
+`knowledge.governing` (decisions guarding a path via satisfying-spec
+boundaries + live liveness), `liveness.status`, `spec.contract`,
+`guidance.for`, `context.read`.
+
+Liveness ladder (precedence, total): declared `n/a` → `na`; any satisfying
+spec `Fail` → `violated`; none or any not-`Pass` → `unproven`; all `Pass` →
+`honored`. Liveness is **never stored** — always recomputed.
+
+## Code Live Wiki
+
+Use the wiki commands to maintain a repo-local code live wiki from raw source,
+KLL artifacts, Task Contracts, docs, archive summaries, and lifecycle trace
+evidence. The default path is `.agent-spec/wiki`.
+
+```bash
+agent-spec wiki init --code . --wiki .agent-spec/wiki
+agent-spec wiki seed --code . --wiki .agent-spec/wiki
+agent-spec wiki seed --code . --wiki .agent-spec/wiki --check
+agent-spec wiki status --code . --wiki .agent-spec/wiki
+agent-spec wiki query "intent compiler" --wiki .agent-spec/wiki
+agent-spec wiki inspect src/spec_wiki/live.rs --code . --wiki .agent-spec/wiki
+agent-spec wiki inventory --code . --format json
+agent-spec wiki inventory --code . --format mermaid
+agent-spec wiki index --wiki .agent-spec/wiki
+agent-spec wiki lint --code . --wiki .agent-spec/wiki
+agent-spec wiki check --code . --wiki .agent-spec/wiki
+agent-spec wiki meta update --code . --wiki .agent-spec/wiki
+```
+
+Wiki pages are tracked agent working memory under `.agent-spec/wiki/**`, not
+KLL truth and not published docs. Every maintained article must declare
+`source_files`. Keep `.agent-spec/runs`, `.agent-spec/trace`, temp files, and
+other runtime state ignored. Use `wiki status` to find stale articles, `wiki
+query` before broad source reading, and `wiki inspect <path>` to
+locate related wiki pages, KLL requirements, and task specs. `wiki seed` creates
+draft module/concept/decision pages without overwriting maintained articles.
+`wiki inventory` emits Rust architecture inventory and module graphs when Cargo
+metadata is available.
+`wiki check` combines index freshness, lint, and current worktree stale status.
+In CI clean checkouts it is the tracked wiki structure gate. Old article
+content should move into `learnings/` or `archive/`
+summaries with source links rather than being deleted abruptly. Non-goals:
+no built-in LLM long-form wiki generation, no web UI, and no replacement for
+`knowledge/`.
 
 ## Documentation
 
@@ -139,13 +251,24 @@ Catches: malformed structure, zero-scenario acceptance sections, vague verbs, un
 
 Optional: team "Contract Review" — review 50-80 lines of natural language instead of 500 lines of code diff.
 
-### Step 3: Agent reads Contract and codes
+### Step 3: Agent reads Contract, generates plan, and codes
 
-Agent consumes the structured contract:
+Agent consumes the structured contract and generates plan context:
 
 ```bash
+# Read the contract
 agent-spec contract specs/user-registration.spec
+
+# Generate plan context with codebase scan
+agent-spec plan specs/user-registration.spec --code . --format prompt
 ```
+
+The `plan` command outputs three blocks:
+- **Contract** — the full task contract (same as `contract` command)
+- **Codebase Context** — files in Allowed Changes paths with summaries, pub signatures, and test function names
+- **Task Sketch** — scenarios grouped by dependency order for implementation sequencing
+
+Use `--format prompt` to get a self-contained prompt for AI plan generation. Use `--depth full` to include pub API signatures.
 
 Agent is triple-constrained:
 - **Decisions** tell it "how to do it" (no technology shopping)
@@ -172,6 +295,14 @@ Agent retry loop (no human needed):
 
 Run logs record this history — "this Contract took 3 tries to pass".
 
+#### The Iron Law
+
+```
+NO CODE IS "DONE" WITHOUT A PASSING LIFECYCLE
+```
+
+If lifecycle hasn't run in this session, you cannot claim completion. If lifecycle ran but had failures, code is not done. No exceptions.
+
 #### Retry Protocol
 
 When lifecycle fails, follow this exact sequence:
@@ -184,6 +315,18 @@ When lifecycle fails, follow this exact sequence:
 6. **Fix code based on evidence. Do NOT modify the spec file** — changing the Contract to make verification pass is sycophancy, not a fix
 7. Re-run lifecycle
 8. After 3 consecutive failures on the same scenario, stop and escalate to the human
+
+#### Red Flags — Stop If You're Thinking This
+
+| Thought | Reality |
+|---------|---------|
+| "lifecycle is slow, skip it this once" | Skipping verification = delivering unverified code |
+| "I only changed one line, no need to re-run" | One line can break every scenario |
+| "skip means it's fine" | skip ≠ pass. skip = not verified |
+| "The spec is too strict, let me adjust it" | Changing spec to pass isn't fixing — it's weakening the contract |
+| "3 failures already, just submit what I have" | 3 failures → stop and escalate to human |
+| "I ran lifecycle earlier, it should still pass" | "Should" is not evidence. Run it again. |
+| "The test is flaky, not my code" | Prove it: run 3 times. If 2+ pass, investigate flake. If 0-1 pass, it's your code. |
 
 **Critical rule**: The spec defines "what is correct". If the code doesn't match, fix the code. If the spec itself is wrong, switch to authoring mode and update the Contract explicitly — never silently weaken acceptance criteria.
 
@@ -210,6 +353,8 @@ agent-spec explain specs/user-registration.spec --code . --format markdown
 Reviewer judges two questions:
 1. **Is the Contract definition correct?** (Intent, Decisions, Boundaries make sense?)
 2. **Did all verifications pass?** (4/4 pass including error paths?)
+
+**Evidence gate**: Before presenting results to the reviewer, run `agent-spec explain <spec> --format markdown` fresh. Read the output. Confirm all verdicts are `pass`. Do NOT report results from memory — run the command and read the output in this session.
 
 If both "yes" → approve. This is 10x faster than reading code diffs.
 
@@ -400,6 +545,7 @@ Month 3+:  Consider org.spec for cross-project governance
 | Preference | Use | Instead of |
 |------------|-----|------------|
 | `contract` | Render task contract | `brief` (legacy alias) |
+| `plan` | Contract + codebase + sketch | Manual code exploration |
 | `lifecycle` | Full pipeline | `verify` alone (misses lint) |
 | `guard` | Repo-wide | Multiple individual `lifecycle` calls |
 | `--change` | Explicit paths known | `--change-scope` when paths are known |
@@ -420,3 +566,32 @@ Switch to library integration only when:
 - Embedding `agent-spec` into another Rust agent runtime
 - Testing `spec-gateway` internals
 - Injecting a host `AiBackend` via `verify_with_backend(Arc<dyn AiBackend>)`
+
+## Intent Compiler
+
+Intent Compiler loop:
+
+1. Keep raw PRD/issue text in `docs/`.
+2. Convert stable requirements into `knowledge/requirements/*.md`.
+3. Run `agent-spec lint-knowledge --knowledge knowledge --gate`.
+4. Run `agent-spec requirements plan --knowledge knowledge --specs specs --format json --gate`.
+5. Run `agent-spec requirements test-obligations --knowledge knowledge --specs specs --format json --out .agent-spec/test_obligations.json`.
+6. Run `agent-spec requirements worktrees --knowledge knowledge --specs specs --base main --path-prefix ../agent-spec-worktrees --out .agent-spec/worktrees.json`.
+7. Run `agent-spec requirements replay REQ-*`, `requirements explain-failure REQ-*`, or `requirements trace-graph REQ-*` when debugging requirement liveness.
+8. Run `agent-spec requirements questions --knowledge knowledge --specs specs --format json`.
+9. Use the reverse interview skill only to resolve emitted questions.
+10. Generate or refine task specs with `satisfies: [REQ-*]`.
+11. Run `agent-spec lifecycle`, `agent-spec guard`, and `agent-spec trace REQ-*`.
+12. For agent-spec's own development, dogfood this loop on the repository's own KLL requirement and task spec before treating example fixtures as validation.
+13. After contract acceptance, run `agent-spec archive --run-log-dir . --dry-run` to prepare a compressed historical summary for completed specs whose latest lifecycle evidence matches the current spec path and content fingerprint and is still passing.
+
+The CLI is deterministic and model-free. AI may draft candidate KLL artifacts and ask clarification questions, but it does not replace KLL lint, plan gate, lifecycle, or human acceptance.
+The test-obligations manifest is the DORA Stream-D bridge: tests are derived from requirements/specs instead of code. QA class and state-machine lint keep high-risk lifecycle/protocol work from relying only on prose review.
+The worktree manifest is a scheduling artifact. It does not run `git worktree add`; it tells humans or orchestration tools which ready work units can safely map to branches and directories.
+The requirement trace ledger is a debugging and audit surface. It reports the latest stored evidence chain and marks unknown code targets explicitly instead of guessing.
+Example fixtures are demonstrations. The dogfood proof for agent-spec itself is the self-hosting KLL requirement, task spec, lifecycle evidence, replay, and trace graph in this repository.
+Archived specs are not active contracts by default. Archive requires a `done` or `completed` tag plus latest passing lifecycle evidence bound to the current spec path and content fingerprint; missing, failing, or stale evidence is reported as an archive diagnostic. Keep active specs small enough for `guard`, `trace`, and `requirements plan` to remain useful.
+
+### Documentation Engineering
+
+For human-facing docs, use Lore-style doc types, canon, and operational review checklists. Run `bash scripts/docs-lint.sh` as a pre-publish check; it uses Harper for English prose when installed, always runs agent-spec's built-in Chinese docs lint, and also runs markdownlint and lychee when installed. Keep reader-facing prose in `docs/` and machine-consumable truth in `knowledge/`. Docs gates check structure, style, rendered preview, and links; KLL/spec gates check traceability and behavior.

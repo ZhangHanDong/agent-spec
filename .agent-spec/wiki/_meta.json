@@ -1,0 +1,8 @@
+{
+  "project": "agent-spec",
+  "repo_path": ".",
+  "generator": "agent-spec code live wiki",
+  "generator_version": "0.4.0",
+  "last_compiled_commit": "9fc0d2d6fd78423ee60ec4204c48de28ebc350da",
+  "last_compiled_at": null
+}

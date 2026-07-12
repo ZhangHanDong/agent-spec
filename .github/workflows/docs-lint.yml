@@ -1,0 +1,33 @@
+name: Documentation Lint
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+concurrency:
+  group: docs-lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docs-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Rust docs lint tools
+        run: cargo install harper-cli lychee --locked
+
+      - name: Install Markdown lint
+        run: npm install -g markdownlint-cli2
+
+      - name: Documentation lint
+        run: DOCS_LINT_REQUIRE_EXTERNAL=all bash scripts/docs-lint.sh

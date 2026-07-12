@@ -28,7 +28,7 @@ echo
 # Step 2: Install skills
 mkdir -p "${SKILL_DIR}"
 
-for skill in agent-spec-tool-first agent-spec-authoring agent-spec-estimate; do
+for skill in agent-spec-tool-first agent-spec-authoring agent-spec-estimate agent-spec-intent-compiler agent-spec-wiki; do
   SRC="${SCRIPT_DIR}/skills/${skill}"
   DST="${SKILL_DIR}/${skill}"
 

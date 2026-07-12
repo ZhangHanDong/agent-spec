@@ -1,0 +1,54 @@
+# Reference-style requirement tree for the intent compiler YAML frontend.
+# Accepted subset: two-space indentation, scalar strings, block lists,
+# maps with known keys. No anchors, aliases, flow style, or block scalars.
+requirements:
+  - id: flight-search
+    title: "Flight Search"
+    type: FOLDER
+    status: accepted
+    description: "Visitors find flights before anything can be booked."
+    children:
+      - id: search-flights
+        title: "Search flights"
+        type: ATOMIC
+        statement: "The system MUST return matching flights for an origin, destination, and date query."
+        scenarios:
+          - name: "Matching flights are listed"
+            given: "two flights match the query"
+            when: "the visitor searches"
+            then: "the system lists both flights with fares"
+          - name: "Empty search results"
+            given: "no flight matches the query"
+            when: "the visitor searches"
+            then: "the system returns an empty result page"
+  - id: booking
+    title: "Booking"
+    type: FOLDER
+    description: "Visitors book and cancel flights they found."
+    children:
+      - id: create-booking
+        title: "Create a booking"
+        type: ATOMIC
+        statement: "The system MUST create a booking for a selected flight and passenger."
+        dependencies:
+          - search-flights
+        scenarios:
+          - name: "Booking succeeds for a valid flight"
+            given: "a flight selected from search results"
+            when: "the visitor submits passenger details"
+            then: "the system confirms the booking with a reference id"
+          - name: "Booking rejected without passenger details"
+            given: "a flight selected from search results"
+            when: "the visitor submits an empty passenger form"
+            then: "the system rejects the booking with a validation error"
+      - id: cancel-booking
+        title: "Cancel a booking"
+        type: ATOMIC
+        statement: "The system MUST cancel an existing booking when the visitor confirms cancellation."
+        dependencies:
+          - create-booking
+        scenarios:
+          - name: "Cancellation of an existing booking"
+            given: "an existing booking reference"
+            when: "the visitor confirms cancellation"
+            then: "the system marks the booking cancelled"

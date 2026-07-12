@@ -38,6 +38,13 @@ pub struct SpecMeta {
     /// specs that declare no `capability:`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capability: Option<String>,
+    /// Decision/requirement ids this spec satisfies (KLL §7). Normalized to
+    /// UPPERCASE. Additive; empty for specs that declare none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub satisfies: Vec<String>,
+    /// Risk/QA class for verification strength: A, B, or C.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub risk: Option<String>,
 }
 
 /// An author's deliberate waiver of a lint rule, recorded inline as

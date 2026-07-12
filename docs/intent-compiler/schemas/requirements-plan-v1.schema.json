@@ -1,0 +1,372 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-spec.dev/schemas/agent-spec/intent-compiler/requirements-plan-v1.schema.json",
+  "title": "agent-spec requirements plan v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "requirements",
+    "work_units",
+    "specs",
+    "edges",
+    "batches",
+    "coverage",
+    "diagnostics",
+    "parse_errors"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "requirements": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/requirement_node"
+      }
+    },
+    "work_units": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/work_unit"
+      }
+    },
+    "specs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/spec_node"
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/edge"
+      }
+    },
+    "batches": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/batch"
+      }
+    },
+    "coverage": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/coverage"
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/diagnostic"
+      }
+    },
+    "parse_errors": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/parse_error"
+      }
+    }
+  },
+  "$defs": {
+    "path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "requirement_node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "source_path",
+        "status",
+        "mode",
+        "scenario_count",
+        "blocked_by"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^REQ-[A-Z0-9][A-Z0-9-]*$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_path": {
+          "$ref": "#/$defs/path"
+        },
+        "status": {
+          "enum": [
+            "ready",
+            "informational",
+            "blocked"
+          ]
+        },
+        "mode": {
+          "enum": [
+            "leaf_full",
+            "parent_scenario",
+            "grouping_only",
+            "blocked_questions",
+            "missing_scenarios"
+          ]
+        },
+        "scenario_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "blocked_by": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "from",
+        "to",
+        "kind"
+      ],
+      "properties": {
+        "from": {
+          "type": "string",
+          "minLength": 1
+        },
+        "to": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "enum": [
+            "dependency",
+            "child",
+            "work_unit",
+            "satisfies",
+            "spec_depends"
+          ]
+        }
+      }
+    },
+    "spec_node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "path",
+        "depends",
+        "satisfies",
+        "risk"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "depends": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "satisfies": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^REQ-[A-Z0-9][A-Z0-9-]*$"
+          }
+        },
+        "risk": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "batch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "order",
+        "requirement_ids"
+      ],
+      "properties": {
+        "order": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "requirement_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^REQ-[A-Z0-9][A-Z0-9-]*$"
+          }
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requirement_id",
+        "spec_paths",
+        "spec_depends"
+      ],
+      "properties": {
+        "requirement_id": {
+          "type": "string",
+          "pattern": "^REQ-[A-Z0-9][A-Z0-9-]*$"
+        },
+        "spec_paths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/path"
+          }
+        },
+        "spec_depends": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "work_unit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "requirement_id",
+        "title",
+        "source_path",
+        "mode",
+        "status",
+        "depends_on",
+        "satisfies",
+        "scenario_count",
+        "blocked_by"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^WU-REQ-[A-Z0-9][A-Z0-9-]*$"
+        },
+        "requirement_id": {
+          "type": "string",
+          "pattern": "^REQ-[A-Z0-9][A-Z0-9-]*$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_path": {
+          "$ref": "#/$defs/path"
+        },
+        "mode": {
+          "enum": [
+            "leaf_full",
+            "parent_scenario",
+            "grouping_only",
+            "blocked_questions",
+            "missing_scenarios"
+          ]
+        },
+        "status": {
+          "enum": [
+            "ready",
+            "informational",
+            "blocked"
+          ]
+        },
+        "depends_on": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^REQ-[A-Z0-9][A-Z0-9-]*$"
+          }
+        },
+        "satisfies": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^REQ-[A-Z0-9][A-Z0-9-]*$"
+          }
+        },
+        "scenario_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "blocked_by": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "severity",
+        "requirement_id",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "severity": {
+          "enum": [
+            "info",
+            "warning",
+            "error"
+          ]
+        },
+        "requirement_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    },
+    "parse_error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "message"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

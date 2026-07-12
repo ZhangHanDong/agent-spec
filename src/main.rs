@@ -2,16 +2,22 @@
 #![deny(unsafe_code)]
 #![allow(dead_code)]
 
+mod spec_archive;
 mod spec_core;
 mod spec_gateway;
 mod spec_lint;
 mod spec_parser;
+mod spec_qa;
 mod spec_report;
 mod spec_verify;
+mod spec_wiki;
 
+mod spec_knowledge;
+mod spec_mcp;
 mod vcs;
 
 use clap::{Parser, Subcommand};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::process::ExitCode;
@@ -142,6 +148,9 @@ enum Commands {
         /// Check for drift instead of writing (non-zero exit if drifted)
         #[arg(long)]
         check: bool,
+        /// Append projected guidance from this knowledge root (KLL §6.4).
+        #[arg(long)]
+        with_guidance: Option<PathBuf>,
     },
     /// Promote a passing task Rule into a capability spec (living-spec library)
     Promote {
@@ -171,6 +180,9 @@ enum Commands {
         /// Template profile: standard, rewrite-parity
         #[arg(long, default_value = "standard")]
         template: String,
+        /// Scaffold the canonical KLL workspace tree instead of a single spec.
+        #[arg(long)]
+        workspace: bool,
     },
     /// Run full lifecycle: lint -> verify -> report (for CI/agent use)
     Lifecycle {
@@ -325,6 +337,458 @@ enum Commands {
         #[arg(long, default_value = "dot")]
         format: String,
     },
+    /// Import, validate, plan, and draft from KLL requirements
+    Requirements {
+        #[command(subcommand)]
+        action: RequirementCommands,
+    },
+    /// Maintain a repo-local code live wiki.
+    Wiki {
+        #[command(subcommand)]
+        action: WikiCommands,
+    },
+    /// Lint the knowledge corpus (per-doc rules + governance integrity).
+    LintKnowledge {
+        /// Knowledge root.
+        #[arg(long, default_value = "knowledge")]
+        knowledge: PathBuf,
+        /// Output format: text | json | sarif.
+        #[arg(long, default_value = "text")]
+        format: String,
+        /// Exit non-zero when any Error-level finding is present.
+        #[arg(long)]
+        gate: bool,
+    },
+    /// Serve the knowledge layer over MCP (read-only, deterministic, stdio).
+    Mcp {
+        /// Knowledge root.
+        #[arg(long, default_value = "knowledge")]
+        knowledge: PathBuf,
+        /// Specs root.
+        #[arg(long, default_value = "specs")]
+        specs: PathBuf,
+        /// Code directory to verify against (for liveness).
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+    },
+    /// Trace a decision/requirement to satisfying specs and report liveness.
+    Trace {
+        /// Decision or requirement id (e.g. ADR-001 or REQ-001), case-insensitive.
+        id: String,
+        /// Knowledge root.
+        #[arg(long, default_value = "knowledge")]
+        knowledge: PathBuf,
+        /// Specs root.
+        #[arg(long, default_value = "specs")]
+        specs: PathBuf,
+        /// Code directory to verify against.
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        /// Output format: text | json.
+        #[arg(long, default_value = "text")]
+        format: String,
+        /// Exit non-zero when the decision is violated.
+        #[arg(long)]
+        gate: bool,
+    },
+    /// Archive completed specs out of the active scan set and write a compact summary
+    Archive {
+        #[arg(long, default_value = "specs")]
+        spec_dir: PathBuf,
+        #[arg(long, default_value = ".agent-spec/archive/specs")]
+        archive_dir: PathBuf,
+        #[arg(long, default_value = "knowledge/context/spec-archives.md")]
+        summary: PathBuf,
+        /// Project root or .agent-spec/runs directory containing lifecycle run logs.
+        #[arg(long, default_value = ".")]
+        run_log_dir: PathBuf,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        check: bool,
+    },
+    /// Rust project graph: build, query, and freshness-check the atlas
+    Atlas {
+        #[command(subcommand)]
+        action: AtlasCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum AtlasCommands {
+    /// Build or incrementally refresh the graph
+    Build {
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+        #[arg(long)]
+        full: bool,
+        /// Optional SCIP index (rust-analyzer, JSON form) for resolved references
+        #[arg(long)]
+        scip: Option<PathBuf>,
+    },
+    /// Deterministic module outline
+    Tree {
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+        #[arg(long)]
+        frozen: bool,
+        #[arg(long, default_value = "json")]
+        format: String,
+    },
+    /// Node facts and adjacent edges for a canonical symbol path
+    Query {
+        symbol: String,
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+        #[arg(long)]
+        frozen: bool,
+        #[arg(long, default_value = "json")]
+        format: String,
+    },
+    /// Incoming reference/call edges for a symbol
+    Refs {
+        symbol: String,
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+        #[arg(long)]
+        frozen: bool,
+        #[arg(long, default_value = "json")]
+        format: String,
+    },
+    /// Impl relations touching a trait or type name
+    Impls {
+        name: String,
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+        #[arg(long)]
+        frozen: bool,
+        #[arg(long, default_value = "json")]
+        format: String,
+    },
+    /// Freshness check; exits non-zero when any shard is stale
+    Check {
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum WikiCommands {
+    /// Scaffold or refresh the repo-local code live wiki.
+    Init {
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/wiki")]
+        wiki: PathBuf,
+        #[arg(long, default_value = "text")]
+        format: String,
+        #[arg(long)]
+        check: bool,
+    },
+    /// Report changed source files and stale wiki articles.
+    Status {
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/wiki")]
+        wiki: PathBuf,
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// Render architecture inventory as json or mermaid.
+    Inventory {
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = "json")]
+        format: String,
+    },
+    /// Rebuild the live wiki index from article frontmatter.
+    Index {
+        #[arg(long, default_value = ".agent-spec/wiki")]
+        wiki: PathBuf,
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// Lint the code live wiki for source trace and required files.
+    Lint {
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/wiki")]
+        wiki: PathBuf,
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// Run live wiki CI checks: index freshness, lint, and stale article status.
+    Check {
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/wiki")]
+        wiki: PathBuf,
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// Seed focused live wiki module, concept, and decision pages without overwriting existing pages.
+    Seed {
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/wiki")]
+        wiki: PathBuf,
+        #[arg(long, default_value = "text")]
+        format: String,
+        #[arg(long)]
+        check: bool,
+    },
+    /// Search live wiki articles by title, tags, source files, and body text.
+    Query {
+        query: String,
+        #[arg(long, default_value = ".agent-spec/wiki")]
+        wiki: PathBuf,
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// Inspect a path and show related wiki articles, requirements, and specs.
+    Inspect {
+        path: PathBuf,
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/wiki")]
+        wiki: PathBuf,
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// Build or check the cross-project wiki map.
+    ProjectMap {
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/wiki")]
+        wiki: PathBuf,
+        #[arg(long, default_value = "json")]
+        format: String,
+        #[arg(long)]
+        out: Option<PathBuf>,
+        #[arg(long, requires = "out")]
+        check: bool,
+    },
+    /// Inspect a project id and show related project-map flows.
+    InspectProject {
+        project_id: String,
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/wiki")]
+        wiki: PathBuf,
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// Read or update live wiki metadata.
+    Meta {
+        #[command(subcommand)]
+        action: WikiMetaCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum WikiMetaCommands {
+    /// Record the current commit as the latest compiled wiki state.
+    Update {
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/wiki")]
+        wiki: PathBuf,
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum RequirementCommands {
+    /// Import marked PRD/issue blocks into knowledge/requirements/*.md
+    Import {
+        #[arg(long)]
+        from: PathBuf,
+        #[arg(long, default_value = "knowledge/requirements")]
+        out: PathBuf,
+        #[arg(long)]
+        check: bool,
+        /// Optional compilation provenance manifest target (.json)
+        #[arg(long)]
+        provenance: Option<PathBuf>,
+    },
+    /// Apply an explicit human governance transition to a requirement
+    Transition {
+        /// Requirement id, e.g. REQ-123
+        id: String,
+        /// Target status: proposed | accepted | rejected | deprecated
+        #[arg(long)]
+        to: String,
+        #[arg(long, default_value = "knowledge")]
+        knowledge: PathBuf,
+    },
+    /// Mark a requirement superseded by a replacement requirement
+    Supersede {
+        /// Requirement id being superseded
+        id: String,
+        /// Replacement requirement id
+        #[arg(long)]
+        by: String,
+        #[arg(long, default_value = "knowledge")]
+        knowledge: PathBuf,
+    },
+    /// Aggregate three-axis status (governance / execution / liveness) for one requirement
+    Status {
+        /// Requirement id, e.g. REQ-123
+        id: String,
+        #[arg(long, default_value = "knowledge")]
+        knowledge: PathBuf,
+        #[arg(long, default_value = "specs")]
+        specs: PathBuf,
+        #[arg(long, default_value = ".agent-spec/archive/specs")]
+        archive_dir: PathBuf,
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// Export requirement documents as a YAML dialect projection
+    Export {
+        #[arg(long, default_value = "knowledge")]
+        knowledge: PathBuf,
+        /// Target file (.yaml/.yml); a derived projection, overwritten on export
+        #[arg(long)]
+        out: PathBuf,
+        /// Restrict export to these requirement ids (repeatable)
+        #[arg(long)]
+        id: Vec<String>,
+        /// Compare against the existing file and exit non-zero on drift
+        #[arg(long)]
+        check: bool,
+        /// Optional compilation provenance manifest target (.json)
+        #[arg(long)]
+        provenance: Option<PathBuf>,
+    },
+    /// Validate and print the requirement graph
+    Graph {
+        #[arg(long, default_value = "knowledge")]
+        knowledge: PathBuf,
+        #[arg(long, default_value = "text")]
+        format: String,
+        #[arg(long)]
+        gate: bool,
+    },
+    /// Build a cross-layer requirement/work-unit/spec plan DAG
+    Plan {
+        #[arg(long, default_value = "knowledge")]
+        knowledge: PathBuf,
+        #[arg(long, default_value = "specs")]
+        specs: PathBuf,
+        #[arg(long, default_value = "text")]
+        format: String,
+        #[arg(long)]
+        gate: bool,
+    },
+    /// Emit test obligations derived from requirements and specs, independent of code
+    TestObligations {
+        #[arg(long, default_value = "knowledge")]
+        knowledge: PathBuf,
+        #[arg(long, default_value = "specs")]
+        specs: PathBuf,
+        #[arg(long, default_value = "json")]
+        format: String,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Emit clarification questions from requirement diagnostics
+    Questions {
+        #[arg(long, default_value = "knowledge")]
+        knowledge: PathBuf,
+        #[arg(long, default_value = "specs")]
+        specs: PathBuf,
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// Generate deterministic git worktree execution entries for ready work units
+    Worktrees {
+        #[arg(long, default_value = "knowledge")]
+        knowledge: PathBuf,
+        #[arg(long, default_value = "specs")]
+        specs: PathBuf,
+        #[arg(long, default_value = "main")]
+        base: String,
+        #[arg(long, default_value = "../agent-spec-worktrees")]
+        path_prefix: PathBuf,
+        #[arg(long, default_value = "json")]
+        format: String,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Query requirement-level trace records
+    Trace {
+        id: String,
+        #[arg(long, default_value = ".agent-spec/trace")]
+        trace_dir: PathBuf,
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/wiki")]
+        wiki: PathBuf,
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// Replay latest known evidence chain for one requirement
+    Replay {
+        id: String,
+        #[arg(long, default_value = ".agent-spec/trace")]
+        trace_dir: PathBuf,
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// Explain non-pass lifecycle evidence for one requirement
+    ExplainFailure {
+        id: String,
+        #[arg(long, default_value = ".agent-spec/trace")]
+        trace_dir: PathBuf,
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/wiki")]
+        wiki: PathBuf,
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// Render requirement trace as mermaid or json
+    TraceGraph {
+        id: String,
+        #[arg(long, default_value = ".agent-spec/trace")]
+        trace_dir: PathBuf,
+        #[arg(long, default_value = "mermaid")]
+        format: String,
+    },
+    /// Generate work_units.json from KLL requirements
+    WorkUnits {
+        #[arg(long, default_value = "knowledge")]
+        knowledge: PathBuf,
+        #[arg(long)]
+        out: Option<PathBuf>,
+        #[arg(long, default_value = "json")]
+        format: String,
+    },
+    /// Render reviewable task spec drafts from ready work units
+    DraftSpecs {
+        #[arg(long, default_value = "knowledge")]
+        knowledge: PathBuf,
+        #[arg(long, default_value = "specs/generated")]
+        out: PathBuf,
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -375,9 +839,12 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             forbid,
             within,
         } => cmd_check_structure(&code, &forbid, &within),
-        Commands::GenIntegrations { target, out, check } => {
-            cmd_gen_integrations(&target, &out, check)
-        }
+        Commands::GenIntegrations {
+            target,
+            out,
+            check,
+            with_guidance,
+        } => cmd_gen_integrations(&target, &out, check, with_guidance.as_deref()),
         Commands::Promote {
             spec,
             rule,
@@ -389,7 +856,8 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             name,
             lang,
             template,
-        } => cmd_init(&level, name.as_deref(), &lang, &template),
+            workspace,
+        } => cmd_init(&level, name.as_deref(), &lang, &template, workspace),
         Commands::Lifecycle {
             spec,
             code,
@@ -455,6 +923,42 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             depth,
         } => cmd_plan(&spec, &code, &format, &depth),
         Commands::Graph { spec_dir, format } => cmd_graph(&spec_dir, &format),
+        Commands::Requirements { action } => cmd_requirements(action),
+        Commands::Wiki { action } => cmd_wiki(action),
+        Commands::LintKnowledge {
+            knowledge,
+            format,
+            gate,
+        } => cmd_lint_knowledge(&knowledge, &format, gate),
+        Commands::Mcp {
+            knowledge,
+            specs,
+            code,
+        } => cmd_mcp(knowledge, specs, code),
+        Commands::Trace {
+            id,
+            knowledge,
+            specs,
+            code,
+            format,
+            gate,
+        } => cmd_trace(&id, &knowledge, &specs, &code, &format, gate),
+        Commands::Atlas { action } => cmd_atlas(action),
+        Commands::Archive {
+            spec_dir,
+            archive_dir,
+            summary,
+            run_log_dir,
+            dry_run,
+            check,
+        } => cmd_archive(
+            &spec_dir,
+            &archive_dir,
+            &summary,
+            &run_log_dir,
+            dry_run,
+            check,
+        ),
     }
 }
 
@@ -757,6 +1261,7 @@ fn cmd_gen_integrations(
     target: &str,
     out: &Path,
     check: bool,
+    with_guidance: Option<&Path>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let targets: Vec<&str> = if target == "all" {
         vec!["agents", "cursor", "claude"]
@@ -769,9 +1274,23 @@ fn cmd_gen_integrations(
         _ => "agent-spec-tool-first.md",
     };
 
+    // Optionally project guidance and append it to every rendered target.
+    let guidance_block = match with_guidance {
+        Some(dir) => {
+            let docs = crate::spec_knowledge::collect_guidance_checked(dir)
+                .map_err(|e| format!("cannot collect guidance: {e}"))?;
+            crate::spec_knowledge::render_guidance_md(&docs, None)
+        }
+        None => String::new(),
+    };
+
     let mut drifted = Vec::new();
     for t in &targets {
-        let rendered = crate::spec_report::render_named(t)?;
+        let mut rendered = crate::spec_report::render_named(t)?;
+        if !guidance_block.is_empty() {
+            rendered.push('\n');
+            rendered.push_str(&guidance_block);
+        }
         let path = out.join(filename(t));
         if check {
             let existing = std::fs::read_to_string(&path).unwrap_or_default();
@@ -993,7 +1512,7 @@ fn cmd_lifecycle(
     min_score: f64,
     format: &str,
     run_log_dir: Option<&Path>,
-    _adversarial: bool,
+    adversarial: bool,
     layers: Option<&str>,
     resume: Option<Option<String>>,
     review_mode: &str,
@@ -1083,7 +1602,7 @@ fn cmd_lifecycle(
     let mut verify_report = verify_report;
     apply_dependency_skips(&mut verify_report, &gw.resolved().all_scenarios);
 
-    let passing = gw.is_passing_with_review_mode(&verify_report, review_mode);
+    let mut passing = gw.is_passing_with_review_mode(&verify_report, review_mode);
 
     // Collect optimization candidates: optimize-mode scenarios that passed
     let optimization_candidates: Vec<String> =
@@ -1140,6 +1659,35 @@ fn cmd_lifecycle(
         false
     };
 
+    let run_timestamp = run_log_dir.map(|_| current_unix_timestamp());
+    let run_vcs_ctx = run_log_dir.and_then(|_| vcs::get_vcs_context(code));
+    let requirement_trace_result =
+        if let (Some(log_dir), Some(timestamp)) = (run_log_dir, run_timestamp) {
+            write_lifecycle_requirement_trace(
+                spec,
+                code,
+                log_dir,
+                &gw,
+                &verify_report,
+                timestamp,
+                run_vcs_ctx.clone(),
+            )
+        } else {
+            Ok(None)
+        };
+    let trace_recorded = matches!(requirement_trace_result, Ok(Some(_)));
+    let requirement_trace_warning = requirement_trace_result.err().map(|err| err.to_string());
+    let qa_missing_evidence = lifecycle_qa_missing_evidence(
+        gw.resolved().task.meta.risk.as_deref(),
+        &gw.resolved().all_scenarios,
+        &verify_report,
+        trace_recorded,
+        adversarial,
+    )?;
+    if !qa_missing_evidence.is_empty() {
+        passing = false;
+    }
+
     // Stage 3: Report
     if format == "json" {
         let mut json_out = serde_json::json!({
@@ -1163,6 +1711,15 @@ fn cmd_lifecycle(
         if !optimization_candidates.is_empty() {
             json_out["optimization_candidates"] = serde_json::json!(optimization_candidates);
         }
+        if let Some(ref warning) = requirement_trace_warning {
+            json_out["requirement_trace_diagnostic"] = serde_json::json!({
+                "severity": "warning",
+                "message": warning,
+            });
+        }
+        if !qa_missing_evidence.is_empty() {
+            json_out["qa_missing_evidence"] = serde_json::to_value(&qa_missing_evidence)?;
+        }
         println!("{}", serde_json::to_string_pretty(&json_out)?);
     } else {
         if let Some(ref lr) = lint_report {
@@ -1175,14 +1732,21 @@ fn cmd_lifecycle(
         if !passing {
             eprintln!("\n{}", gw.failure_summary(&verify_report));
         }
+        if let Some(ref warning) = requirement_trace_warning {
+            eprintln!("warning: failed to write requirement trace: {warning}");
+        }
+        if !qa_missing_evidence.is_empty() {
+            eprintln!("QA gate missing evidence: {qa_missing_evidence:?}");
+        }
     }
 
     // Stage 4: Write run log if enabled
     if let Some(log_dir) = run_log_dir {
         let contract = gw.plan();
-        let vcs_ctx = vcs::get_vcs_context(code);
         let entry = RunLogEntry {
             spec_name: contract.name.clone(),
+            spec_path: canonical_existing_path(spec),
+            spec_fingerprint: crate::spec_wiki::fingerprint_file(spec)?,
             passing,
             summary: format!(
                 "{}/{} passed, {} failed, {} skipped, {} uncertain",
@@ -1192,27 +1756,171 @@ fn cmd_lifecycle(
                 verify_report.summary.skipped,
                 verify_report.summary.uncertain,
             ),
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-            vcs: vcs_ctx,
+            timestamp: run_timestamp.unwrap_or_else(current_unix_timestamp),
+            vcs: run_vcs_ctx,
         };
         write_run_log(log_dir, &entry)?;
 
         // Save checkpoint alongside run log
-        save_checkpoint(
+        save_checkpoint_with_timestamp(
             log_dir,
             &verify_report,
             entry.vcs.as_ref().map(|v| v.change_ref.clone()),
+            entry.timestamp,
         )?;
     }
 
     if passing {
         Ok(())
+    } else if !qa_missing_evidence.is_empty() {
+        Err(format!("lifecycle QA gate failed; missing evidence: {qa_missing_evidence:?}").into())
     } else {
         Err(format_non_passing_summary(&verify_report.summary).into())
     }
+}
+
+fn lifecycle_qa_missing_evidence(
+    risk: Option<&str>,
+    scenarios: &[crate::spec_core::Scenario],
+    report: &crate::spec_core::VerificationReport,
+    trace_recorded: bool,
+    adversarial_review: bool,
+) -> Result<Vec<crate::spec_qa::QaEvidenceKind>, Box<dyn std::error::Error>> {
+    let Some(risk) = risk else {
+        return Ok(Vec::new());
+    };
+    let class = crate::spec_qa::QaClass::try_parse(risk)?;
+    let lifecycle = report.summary.failed == 0
+        && report.summary.skipped == 0
+        && report.summary.uncertain == 0
+        && report.summary.pending_review == 0;
+    let targeted_tests = !scenarios.is_empty()
+        && scenarios.iter().all(|scenario| {
+            report.results.iter().any(|result| {
+                result.scenario_name == scenario.name
+                    && result.verdict == crate::spec_core::Verdict::Pass
+                    && result.evidence.iter().any(|evidence| {
+                        matches!(
+                            evidence,
+                            crate::spec_core::Evidence::TestOutput { passed: true, .. }
+                        )
+                    })
+            })
+        });
+    Ok(crate::spec_qa::missing_evidence(
+        class,
+        crate::spec_qa::QaEvidenceState {
+            lifecycle,
+            trace: trace_recorded,
+            targeted_tests,
+            adversarial_review,
+        },
+    ))
+}
+
+fn write_lifecycle_requirement_trace(
+    spec: &Path,
+    code: &Path,
+    log_dir: &Path,
+    gw: &crate::spec_gateway::SpecGateway,
+    verify_report: &crate::spec_core::VerificationReport,
+    timestamp: u64,
+    vcs_ctx: Option<vcs::VcsContext>,
+) -> Result<Option<PathBuf>, Box<dyn std::error::Error>> {
+    let satisfies = gw.resolved().task.meta.satisfies.clone();
+    if satisfies.is_empty() {
+        return Ok(None);
+    }
+
+    let knowledge_dir = code.join("knowledge");
+    if !knowledge_dir.exists() {
+        return Ok(None);
+    }
+    let specs_dir = spec.parent().unwrap_or(Path::new("specs"));
+    let requirement_plan = crate::spec_knowledge::build_requirement_plan(&knowledge_dir, specs_dir);
+    let requirement_graph = crate::spec_knowledge::build_requirement_graph(&knowledge_dir);
+    let worktree_manifest =
+        read_optional_worktree_manifest(code).or_else(|| read_optional_worktree_manifest(log_dir));
+    let scenario_selectors = gw
+        .resolved()
+        .all_scenarios
+        .iter()
+        .filter_map(|scenario| {
+            scenario
+                .test_selector
+                .as_ref()
+                .map(|selector| (scenario.name.clone(), selector.filter.clone()))
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let requirement_scenarios = if satisfies.len() == 1 {
+        std::collections::BTreeMap::from([(
+            satisfies[0].clone(),
+            gw.resolved()
+                .all_scenarios
+                .iter()
+                .map(|scenario| scenario.name.clone())
+                .collect::<Vec<_>>(),
+        )])
+    } else {
+        satisfies
+            .iter()
+            .filter_map(|requirement_id| {
+                requirement_graph.node(requirement_id).map(|node| {
+                    (
+                        requirement_id.clone(),
+                        node.scenarios
+                            .iter()
+                            .map(|scenario| scenario.name.clone())
+                            .collect::<Vec<_>>(),
+                    )
+                })
+            })
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    let run_id = format!(
+        "{}-{}",
+        timestamp,
+        sanitize_for_filename(&gw.resolved().task.meta.name)
+    );
+    let ledger = crate::spec_knowledge::record_requirement_trace_run(
+        crate::spec_knowledge::RequirementTraceRunInput {
+            run_id,
+            timestamp,
+            requirement_plan: &requirement_plan,
+            worktree_manifest: worktree_manifest.as_ref(),
+            spec_path: spec.to_path_buf(),
+            spec_satisfies: satisfies,
+            scenario_selectors,
+            requirement_scenarios,
+            report: verify_report,
+            vcs: vcs_ctx,
+        },
+    );
+    let trace_errors = ledger
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.severity == "error")
+        .map(|diagnostic| format!("{}: {}", diagnostic.code, diagnostic.message))
+        .collect::<Vec<_>>();
+    if !trace_errors.is_empty() {
+        return Err(format!(
+            "requirement trace contains blocking diagnostics: {}",
+            trace_errors.join("; ")
+        )
+        .into());
+    }
+    if ledger.records.is_empty() && ledger.diagnostics.is_empty() {
+        return Ok(None);
+    }
+    crate::spec_knowledge::write_requirement_trace_ledger(code, &ledger).map(Some)
+}
+
+fn read_optional_worktree_manifest(
+    base_dir: &Path,
+) -> Option<crate::spec_knowledge::WorktreeManifest> {
+    let path = base_dir.join(".agent-spec/worktrees.json");
+    let content = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&content).ok()
 }
 
 fn filter_report_by_layers(
@@ -1588,7 +2296,9 @@ fn find_command_repo_root(spec: &Path, code: &Path) -> Option<PathBuf> {
 }
 
 fn find_guard_repo_root(spec_dir: &Path, code: &Path) -> Option<PathBuf> {
-    for candidate in [code, spec_dir, Path::new(".")] {
+    // No cwd fallback: guard pointed at directories outside any repository
+    // must resolve to an empty change set, not the tool's own repo.
+    for candidate in [code, spec_dir] {
         if let Some(root) = find_git_repo_root(candidate) {
             return Some(root);
         }
@@ -1918,11 +2628,23 @@ fn cmd_measure_determinism(
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct RunLogEntry {
     pub spec_name: String,
+    #[serde(default, skip_serializing_if = "path_is_empty")]
+    pub spec_path: PathBuf,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub spec_fingerprint: String,
     pub passing: bool,
     pub summary: String,
     pub timestamp: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vcs: Option<vcs::VcsContext>,
+}
+
+fn canonical_existing_path(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn path_is_empty(path: &Path) -> bool {
+    path.as_os_str().is_empty()
 }
 
 fn write_run_log(base_dir: &Path, entry: &RunLogEntry) -> Result<(), Box<dyn std::error::Error>> {
@@ -1951,6 +2673,13 @@ fn sanitize_for_filename(name: &str) -> String {
             }
         })
         .collect()
+}
+
+fn current_unix_timestamp() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 // ── Checkpoint / Resume ─────────────────────────────────────────
@@ -1982,6 +2711,15 @@ fn save_checkpoint(
     report: &spec_core::VerificationReport,
     vcs_ref: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    save_checkpoint_with_timestamp(base_dir, report, vcs_ref, current_unix_timestamp())
+}
+
+fn save_checkpoint_with_timestamp(
+    base_dir: &Path,
+    report: &spec_core::VerificationReport,
+    vcs_ref: Option<String>,
+    timestamp: u64,
+) -> Result<(), Box<dyn std::error::Error>> {
     let path = checkpoint_path(base_dir);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -2000,10 +2738,7 @@ fn save_checkpoint(
 
     let cp = spec_core::Checkpoint {
         spec_name: report.spec_name.clone(),
-        timestamp: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs(),
+        timestamp,
         vcs_ref: vcs_ref.clone(),
         scenarios,
     };
@@ -2069,30 +2804,133 @@ fn merge_checkpoint_results(
     spec_core::VerificationReport::from_results(report.spec_name, results)
 }
 
-fn read_run_log_history(base_dir: &Path, spec_name: &str) -> String {
+#[derive(Debug, Clone, serde::Serialize)]
+struct HistoryCounts {
+    passed: i64,
+    failed: i64,
+    skipped: i64,
+    uncertain: i64,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct HistoryDelta {
+    passed: i64,
+    failed: i64,
+    skipped: i64,
+    uncertain: i64,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct HistoryRow {
+    run: usize,
+    timestamp: u64,
+    passing: bool,
+    summary: String,
+    counts: Option<HistoryCounts>,
+    delta: Option<HistoryDelta>,
+}
+
+/// Parse "X/Y passed, N failed, N skipped, N uncertain" summaries.
+fn parse_summary_counts(summary: &str) -> Option<HistoryCounts> {
+    let mut passed = None;
+    let mut failed = None;
+    let mut skipped = None;
+    let mut uncertain = None;
+    for part in summary.split(',') {
+        let part = part.trim();
+        let mut words = part.split_whitespace();
+        let (value, label) = (words.next()?, words.next()?);
+        let number: i64 = value.split('/').next()?.parse().ok()?;
+        match label {
+            "passed" => passed = Some(number),
+            "failed" => failed = Some(number),
+            "skipped" => skipped = Some(number),
+            "uncertain" => uncertain = Some(number),
+            _ => {}
+        }
+    }
+    Some(HistoryCounts {
+        passed: passed?,
+        failed: failed?,
+        skipped: skipped?,
+        uncertain: uncertain?,
+    })
+}
+
+fn load_history_logs(base_dir: &Path, spec_name: &str) -> Vec<RunLogEntry> {
     let runs_dir = base_dir.join(".agent-spec/runs");
     let Ok(entries) = std::fs::read_dir(&runs_dir) else {
-        return String::new();
+        return Vec::new();
     };
-
     let mut logs: Vec<RunLogEntry> = entries
         .filter_map(|e| e.ok())
         .filter_map(|e| {
             let content = std::fs::read_to_string(e.path()).ok()?;
             let entry: RunLogEntry = serde_json::from_str(&content).ok()?;
-            if entry.spec_name == spec_name {
-                Some(entry)
-            } else {
-                None
-            }
+            (entry.spec_name == spec_name).then_some(entry)
         })
         .collect();
-
     logs.sort_by_key(|e| e.timestamp);
+    logs
+}
 
+/// Tabular history rows with per-run counts and deltas against the previous run.
+fn history_rows(base_dir: &Path, spec_name: &str) -> Vec<HistoryRow> {
+    let logs = load_history_logs(base_dir, spec_name);
+    let mut rows: Vec<HistoryRow> = Vec::with_capacity(logs.len());
+    for (i, log) in logs.iter().enumerate() {
+        let counts = parse_summary_counts(&log.summary);
+        let delta = match (i.checked_sub(1).and_then(|p| rows.get(p)), &counts) {
+            (Some(prev), Some(curr)) => prev.counts.as_ref().map(|p| HistoryDelta {
+                passed: curr.passed - p.passed,
+                failed: curr.failed - p.failed,
+                skipped: curr.skipped - p.skipped,
+                uncertain: curr.uncertain - p.uncertain,
+            }),
+            _ => None,
+        };
+        rows.push(HistoryRow {
+            run: i + 1,
+            timestamp: log.timestamp,
+            passing: log.passing,
+            summary: log.summary.clone(),
+            counts,
+            delta,
+        });
+    }
+    rows
+}
+
+/// JSON view of the run history (array of rows).
+fn history_json(base_dir: &Path, spec_name: &str) -> serde_json::Value {
+    serde_json::to_value(history_rows(base_dir, spec_name)).unwrap_or(serde_json::Value::Null)
+}
+
+fn format_delta(delta: &HistoryDelta) -> String {
+    let mut parts = Vec::new();
+    for (value, label) in [
+        (delta.passed, "pass"),
+        (delta.failed, "fail"),
+        (delta.skipped, "skip"),
+        (delta.uncertain, "uncertain"),
+    ] {
+        if value != 0 {
+            parts.push(format!("{value:+} {label}"));
+        }
+    }
+    if parts.is_empty() {
+        "no change".to_string()
+    } else {
+        parts.join(" ")
+    }
+}
+
+fn read_run_log_history(base_dir: &Path, spec_name: &str) -> String {
+    let logs = load_history_logs(base_dir, spec_name);
     if logs.is_empty() {
         return String::new();
     }
+    let rows = history_rows(base_dir, spec_name);
 
     let mut out = String::new();
     out.push_str(&format!("=== Run History ({} runs) ===\n", logs.len()));
@@ -2113,11 +2951,26 @@ fn read_run_log_history(base_dir: &Path, spec_name: &str) -> String {
         out.push_str(&format!("  Failed runs: {fail_count}\n"));
     }
 
-    for (i, log) in logs.iter().enumerate() {
-        let status = if log.passing { "PASS" } else { "FAIL" };
-        out.push_str(&format!("  #{}: [{}] {}\n", i + 1, status, log.summary));
+    for (row, log) in rows.iter().zip(logs.iter()) {
+        let status = if row.passing { "PASS" } else { "FAIL" };
+        let counts = row
+            .counts
+            .as_ref()
+            .map(|c| {
+                format!(
+                    "{} pass {} fail {} skip {} uncertain",
+                    c.passed, c.failed, c.skipped, c.uncertain
+                )
+            })
+            .unwrap_or_else(|| row.summary.clone());
+        let delta = row.delta.as_ref().map(format_delta).unwrap_or_default();
+        out.push_str(&format!(
+            "  | run #{} | {} | {} | {} |\n",
+            row.run, status, counts, delta
+        ));
 
         // Show jj diff between adjacent runs when both have operation IDs
+        let i = row.run - 1;
         if i > 0
             && let (Some(prev_vcs), Some(curr_vcs)) = (&logs[i - 1].vcs, &log.vcs)
             && prev_vcs.vcs_type == vcs::VcsType::Jj
@@ -2199,9 +3052,1541 @@ fn cmd_init(
     name: Option<&str>,
     lang: &str,
     template: &str,
+    workspace: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let output_dir = std::env::current_dir()?;
+    if workspace {
+        let created = crate::spec_knowledge::scaffold::scaffold_workspace(&output_dir)?;
+        if created.is_empty() {
+            println!("workspace already scaffolded (nothing to do)");
+        } else {
+            for p in created {
+                println!("created {p}");
+            }
+        }
+        return Ok(());
+    }
     cmd_init_at(&output_dir, level, name, lang, template)
+}
+
+fn cmd_lint_knowledge(
+    knowledge: &Path,
+    format: &str,
+    gate: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::spec_core::{LintDiagnostic, Severity, Span};
+    use crate::spec_knowledge::sarif::Finding;
+
+    let collection = crate::spec_knowledge::collect_knowledge_checked(knowledge);
+    let docs = collection.docs;
+    let mut findings: Vec<Finding> = Vec::new();
+    for err in collection.parse_errors {
+        findings.push(Finding {
+            uri: err.path.display().to_string(),
+            diag: LintDiagnostic {
+                rule: "knowledge-parse-error".into(),
+                severity: Severity::Error,
+                message: format!("cannot parse knowledge doc: {}", err.message),
+                span: Span::default(),
+                suggestion: Some(
+                    "fix the knowledge frontmatter or remove the malformed artifact".into(),
+                ),
+            },
+        });
+    }
+    for d in &docs {
+        let uri = d.source_path.display().to_string();
+        for diag in crate::spec_knowledge::lint_doc(d) {
+            findings.push(Finding {
+                uri: uri.clone(),
+                diag,
+            });
+        }
+    }
+    for diag in crate::spec_knowledge::lint_corpus(&docs) {
+        findings.push(Finding {
+            uri: String::new(),
+            diag,
+        });
+    }
+
+    let errors = findings
+        .iter()
+        .filter(|f| f.diag.severity == Severity::Error)
+        .count();
+
+    match format {
+        "sarif" => {
+            let log = crate::spec_knowledge::render_sarif(&findings);
+            println!("{}", serde_json::to_string_pretty(&log)?);
+        }
+        "json" => {
+            let arr: Vec<serde_json::Value> = findings
+                .iter()
+                .map(|f| {
+                    serde_json::json!({
+                        "uri": f.uri,
+                        "rule": f.diag.rule,
+                        "severity": format!("{:?}", f.diag.severity),
+                        "message": f.diag.message,
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&arr)?);
+        }
+        _ => {
+            for f in &findings {
+                let where_ = if f.uri.is_empty() { "(corpus)" } else { &f.uri };
+                println!(
+                    "{where_}: [{:?}] {} — {}",
+                    f.diag.severity, f.diag.rule, f.diag.message
+                );
+            }
+            println!(
+                "{} docs, {} findings ({errors} errors)",
+                docs.len(),
+                findings.len()
+            );
+        }
+    }
+
+    if gate && errors > 0 {
+        eprintln!("gate: {errors} error-level knowledge finding(s)");
+        std::process::exit(2);
+    }
+    Ok(())
+}
+
+fn cmd_atlas(action: AtlasCommands) -> Result<(), Box<dyn std::error::Error>> {
+    fn print_value<T: serde::Serialize>(
+        value: &T,
+        format: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if format == "json" {
+            println!("{}", serde_json::to_string_pretty(value)?);
+        } else {
+            println!("{}", serde_json::to_string(value)?);
+        }
+        Ok(())
+    }
+    let frozen_opts = |frozen: bool| rust_atlas::QueryOptions { frozen };
+    match action {
+        AtlasCommands::Build {
+            code,
+            graph,
+            full,
+            scip,
+        } => {
+            let report = rust_atlas::build(
+                &code,
+                &graph,
+                &rust_atlas::BuildOptions {
+                    full,
+                    scip_index: scip,
+                },
+            )?;
+            print_value(&report, "json")
+        }
+        AtlasCommands::Tree {
+            code,
+            graph,
+            frozen,
+            format,
+        } => {
+            let outline = rust_atlas::tree(&code, &graph, &frozen_opts(frozen))?;
+            print_value(&outline, &format)
+        }
+        AtlasCommands::Query {
+            symbol,
+            code,
+            graph,
+            frozen,
+            format,
+        } => {
+            let result = rust_atlas::query(&code, &graph, &symbol, &frozen_opts(frozen))?;
+            print_value(&result, &format)
+        }
+        AtlasCommands::Refs {
+            symbol,
+            code,
+            graph,
+            frozen,
+            format,
+        } => {
+            let report = rust_atlas::refs(&code, &graph, &symbol, &frozen_opts(frozen))?;
+            print_value(&report, &format)
+        }
+        AtlasCommands::Impls {
+            name,
+            code,
+            graph,
+            frozen,
+            format,
+        } => {
+            let report = rust_atlas::impls(&code, &graph, &name, &frozen_opts(frozen))?;
+            print_value(&report, &format)
+        }
+        AtlasCommands::Check { code, graph } => {
+            let stale = rust_atlas::check(&code, &graph)?;
+            let payload = serde_json::json!({ "stale": stale });
+            println!("{}", serde_json::to_string_pretty(&payload)?);
+            if stale.is_empty() {
+                Ok(())
+            } else {
+                Err(format!("atlas graph is stale: {}", stale.join(", ")).into())
+            }
+        }
+    }
+}
+
+fn cmd_requirements(action: RequirementCommands) -> Result<(), Box<dyn std::error::Error>> {
+    match action {
+        RequirementCommands::Import {
+            from,
+            out,
+            check,
+            provenance,
+        } => cmd_requirements_import(&from, &out, check, provenance.as_deref()),
+        RequirementCommands::Transition { id, to, knowledge } => {
+            let outcome = crate::spec_knowledge::transition_requirement(&knowledge, &id, &to)?;
+            println!(
+                "{}: {} -> {} ({})",
+                outcome.id,
+                outcome.old_status.as_deref().unwrap_or("(missing)"),
+                outcome.new_status,
+                outcome.path.display()
+            );
+            Ok(())
+        }
+        RequirementCommands::Supersede { id, by, knowledge } => {
+            let (outcome, replacement) =
+                crate::spec_knowledge::supersede_requirement(&knowledge, &id, &by)?;
+            println!(
+                "{}: {} -> superseded, replaced by {} ({})",
+                outcome.id,
+                outcome.old_status.as_deref().unwrap_or("(missing)"),
+                by.to_ascii_uppercase(),
+                replacement.display()
+            );
+            Ok(())
+        }
+        RequirementCommands::Status {
+            id,
+            knowledge,
+            specs,
+            archive_dir,
+            code,
+            format,
+        } => {
+            let report = crate::spec_knowledge::requirement_status(
+                &knowledge,
+                &specs,
+                &archive_dir,
+                &id,
+                |spec_path| crate::spec_knowledge::verify_spec_rollup(spec_path, &code),
+            )?;
+            if format == "json" {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                print!("{}", crate::spec_knowledge::format_status_text(&report));
+            }
+            Ok(())
+        }
+        RequirementCommands::Export {
+            knowledge,
+            out,
+            id,
+            check,
+            provenance,
+        } => {
+            let outcome = crate::spec_knowledge::write_export(
+                &knowledge,
+                &out,
+                &crate::spec_knowledge::ExportOptions { ids: id },
+                check,
+            )?;
+            if let Some(manifest_path) = provenance.as_deref() {
+                let manifest = crate::spec_knowledge::write_export_provenance(
+                    &knowledge,
+                    &out,
+                    &outcome.yaml,
+                    manifest_path,
+                )?;
+                println!(
+                    "provenance: {} (reproducible: {})",
+                    manifest_path.display(),
+                    manifest.reproducible
+                );
+            }
+            for note in &outcome.excluded {
+                eprintln!("excluded: {note}");
+            }
+            for note in &outcome.lossy {
+                eprintln!("lossy: {note}");
+            }
+            if check {
+                println!("export projection is fresh: {}", out.display());
+            } else {
+                println!("exported: {}", out.display());
+            }
+            Ok(())
+        }
+        RequirementCommands::Graph {
+            knowledge,
+            format,
+            gate,
+        } => cmd_requirements_graph(&knowledge, &format, gate),
+        RequirementCommands::Plan {
+            knowledge,
+            specs,
+            format,
+            gate,
+        } => cmd_requirements_plan(&knowledge, &specs, &format, gate),
+        RequirementCommands::TestObligations {
+            knowledge,
+            specs,
+            format,
+            out,
+        } => cmd_requirements_test_obligations(&knowledge, &specs, &format, out.as_deref()),
+        RequirementCommands::Questions {
+            knowledge,
+            specs,
+            format,
+        } => cmd_requirements_questions(&knowledge, &specs, &format),
+        RequirementCommands::Worktrees {
+            knowledge,
+            specs,
+            base,
+            path_prefix,
+            format,
+            out,
+        } => cmd_requirements_worktrees(
+            &knowledge,
+            &specs,
+            &base,
+            &path_prefix,
+            &format,
+            out.as_deref(),
+        ),
+        RequirementCommands::Trace {
+            id,
+            trace_dir,
+            code,
+            wiki,
+            format,
+        } => cmd_requirements_trace(&id, &trace_dir, &code, &wiki, &format),
+        RequirementCommands::Replay {
+            id,
+            trace_dir,
+            format,
+        } => cmd_requirements_replay(&id, &trace_dir, &format),
+        RequirementCommands::ExplainFailure {
+            id,
+            trace_dir,
+            code,
+            wiki,
+            format,
+        } => cmd_requirements_explain_failure(&id, &trace_dir, &code, &wiki, &format),
+        RequirementCommands::TraceGraph {
+            id,
+            trace_dir,
+            format,
+        } => cmd_requirements_trace_graph(&id, &trace_dir, &format),
+        RequirementCommands::WorkUnits {
+            knowledge,
+            out,
+            format,
+        } => cmd_requirements_work_units(&knowledge, out.as_deref(), &format),
+        RequirementCommands::DraftSpecs {
+            knowledge,
+            out,
+            check,
+        } => cmd_requirements_draft_specs(&knowledge, &out, check),
+    }
+}
+
+fn cmd_requirements_import(
+    from: &Path,
+    out: &Path,
+    check: bool,
+    provenance: Option<&Path>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let input = std::fs::read_to_string(from)?;
+    let source_name = from.display().to_string();
+    let extension = from
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(str::to_ascii_lowercase);
+    if matches!(extension.as_deref(), Some("yaml") | Some("yml")) {
+        let docs = crate::spec_knowledge::import_requirements_yaml(&input, &source_name)?;
+        if check {
+            for doc in &docs {
+                let path = out.join(&doc.filename);
+                let actual = std::fs::read_to_string(&path).unwrap_or_default();
+                if actual != doc.content {
+                    return Err(format!(
+                        "generated requirement artifact drifted: {}",
+                        path.display()
+                    )
+                    .into());
+                }
+            }
+            return Ok(());
+        }
+        let written = crate::spec_knowledge::write_generated_docs(out, &docs)?;
+        for path in &written {
+            println!("imported: {}", path.display());
+        }
+        if let Some(manifest_path) = provenance {
+            let manifest =
+                crate::spec_knowledge::write_import_provenance(from, &written, manifest_path)?;
+            println!(
+                "provenance: {} (reproducible: {})",
+                manifest_path.display(),
+                manifest.reproducible
+            );
+        }
+        return Ok(());
+    }
+    let blocks = crate::spec_knowledge::parse_requirement_blocks(&input, &source_name)?;
+    if blocks.is_empty() {
+        return Err(format!(
+            "no agent-spec requirement blocks found in {}",
+            from.display()
+        )
+        .into());
+    }
+
+    let rendered = blocks
+        .iter()
+        .map(|block| {
+            let filename = crate::spec_knowledge::requirement_artifact_filename(block);
+            let path = out.join(filename);
+            let content = crate::spec_knowledge::render_requirement_artifact(block);
+            (path, content)
+        })
+        .collect::<Vec<_>>();
+
+    if check {
+        for (path, content) in rendered {
+            let actual = std::fs::read_to_string(&path).unwrap_or_default();
+            if actual != content {
+                return Err(
+                    format!("generated requirement artifact drifted: {}", path.display()).into(),
+                );
+            }
+        }
+        return Ok(());
+    }
+
+    std::fs::create_dir_all(out)?;
+    for (path, content) in rendered {
+        std::fs::write(path, content)?;
+    }
+    Ok(())
+}
+
+fn cmd_requirements_graph(
+    knowledge: &Path,
+    format: &str,
+    gate: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut graph = crate::spec_knowledge::build_requirement_graph(knowledge);
+    graph
+        .diagnostics
+        .extend(crate::spec_knowledge::validate_requirement_graph(&graph));
+    match format {
+        "json" => println!("{}", serde_json::to_string_pretty(&graph)?),
+        _ => print_requirement_graph_text(&graph),
+    }
+    if gate
+        && (!graph.parse_errors.is_empty()
+            || graph
+                .diagnostics
+                .iter()
+                .any(|diag| diag.severity == "error"))
+    {
+        return Err("requirement graph gate failed".into());
+    }
+    Ok(())
+}
+
+fn cmd_requirements_plan(
+    knowledge: &Path,
+    specs: &Path,
+    format: &str,
+    gate: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let plan = crate::spec_knowledge::build_requirement_plan(knowledge, specs);
+    match format {
+        "json" => println!("{}", serde_json::to_string_pretty(&plan)?),
+        _ => print_requirement_plan_text(&plan),
+    }
+
+    if gate
+        && (!plan.parse_errors.is_empty()
+            || plan.diagnostics.iter().any(|diag| diag.severity == "error"))
+    {
+        return Err("requirements plan gate failed".into());
+    }
+
+    Ok(())
+}
+
+fn cmd_requirements_trace(
+    id: &str,
+    trace_dir: &Path,
+    code: &Path,
+    wiki: &Path,
+    format: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let ledger = crate::spec_knowledge::read_requirement_trace_ledgers(trace_dir);
+    let target = id.to_ascii_uppercase();
+    let mut records = ledger
+        .records
+        .iter()
+        .filter(|record| record.requirement_id == target)
+        .cloned()
+        .collect::<Vec<_>>();
+    attach_wiki_articles_to_trace_records(&mut records, code, wiki);
+    match format {
+        "json" => println!("{}", serde_json::to_string_pretty(&records)?),
+        _ => print!(
+            "{}",
+            crate::spec_knowledge::format_requirement_trace_text(&records)
+        ),
+    }
+    Ok(())
+}
+
+fn cmd_requirements_replay(
+    id: &str,
+    trace_dir: &Path,
+    format: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let ledger = crate::spec_knowledge::read_requirement_trace_ledgers(trace_dir);
+    let target = id.to_ascii_uppercase();
+    let records = crate::spec_knowledge::replay_requirement_trace(&ledger, &target);
+    if records.is_empty() {
+        return Err(format!("no requirement trace record found for {target}").into());
+    }
+    match format {
+        "json" => println!("{}", serde_json::to_string_pretty(&records)?),
+        _ => print!(
+            "{}",
+            crate::spec_knowledge::format_requirement_replay_text(&records)
+        ),
+    }
+    Ok(())
+}
+
+fn cmd_requirements_explain_failure(
+    id: &str,
+    trace_dir: &Path,
+    code: &Path,
+    wiki: &Path,
+    format: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let ledger = crate::spec_knowledge::read_requirement_trace_ledgers(trace_dir);
+    let target = id.to_ascii_uppercase();
+    let mut explanation = crate::spec_knowledge::explain_requirement_failure(&ledger, &target);
+    attach_wiki_articles_to_failure_explanation(&mut explanation, code, wiki);
+    match format {
+        "json" => println!("{}", serde_json::to_string_pretty(&explanation)?),
+        _ => print!(
+            "{}",
+            crate::spec_knowledge::format_requirement_failure_text(&explanation)
+        ),
+    }
+    Ok(())
+}
+
+fn attach_wiki_articles_to_trace_records(
+    records: &mut [crate::spec_knowledge::RequirementTraceRecord],
+    code: &Path,
+    wiki: &Path,
+) {
+    for record in records {
+        record.wiki_articles = related_wiki_article_paths_for_trace_record(record, code, wiki);
+    }
+}
+
+fn attach_wiki_articles_to_failure_explanation(
+    explanation: &mut crate::spec_knowledge::RequirementFailureExplanation,
+    code: &Path,
+    wiki: &Path,
+) {
+    attach_wiki_articles_to_trace_records(&mut explanation.non_pass_records, code, wiki);
+}
+
+fn related_wiki_article_paths_for_trace_record(
+    record: &crate::spec_knowledge::RequirementTraceRecord,
+    code: &Path,
+    wiki: &Path,
+) -> Vec<PathBuf> {
+    let mut candidates = vec![record.requirement_source.clone(), record.spec_path.clone()];
+    candidates.extend(record.code_targets.iter().map(PathBuf::from));
+
+    let mut paths = BTreeSet::new();
+    for candidate in candidates {
+        let report = crate::spec_wiki::inspect_live_wiki_path(code, wiki, &candidate);
+        for article in report.wiki_articles {
+            paths.insert(article.path);
+        }
+    }
+    paths.into_iter().collect()
+}
+
+fn cmd_requirements_trace_graph(
+    id: &str,
+    trace_dir: &Path,
+    format: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let ledger = crate::spec_knowledge::read_requirement_trace_ledgers(trace_dir);
+    let target = id.to_ascii_uppercase();
+    let records = crate::spec_knowledge::latest_requirement_trace_records(&ledger, &target);
+    match format {
+        "json" => println!("{}", serde_json::to_string_pretty(&records)?),
+        _ => print!(
+            "{}",
+            crate::spec_knowledge::format_requirement_trace_mermaid(&records)
+        ),
+    }
+    Ok(())
+}
+
+fn cmd_requirements_worktrees(
+    knowledge: &Path,
+    specs: &Path,
+    base: &str,
+    path_prefix: &Path,
+    format: &str,
+    out: Option<&Path>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let plan = crate::spec_knowledge::build_requirement_plan(knowledge, specs);
+    let manifest = crate::spec_knowledge::build_worktree_manifest(&plan, base, path_prefix);
+    let body = match format {
+        "text" => format_worktree_manifest_text(&manifest),
+        _ => serde_json::to_string_pretty(&manifest)?,
+    };
+    if let Some(path) = out {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, body)?;
+    } else {
+        print!("{body}");
+    }
+    Ok(())
+}
+
+fn format_worktree_manifest_text(manifest: &crate::spec_knowledge::WorktreeManifest) -> String {
+    let mut out = format!(
+        "worktrees: {} entries, {} diagnostics\n",
+        manifest.entries.len(),
+        manifest.diagnostics.len()
+    );
+    for entry in &manifest.entries {
+        out.push_str(&format!(
+            "batch {} {} -> {} ({})\n",
+            entry.batch,
+            entry.work_unit_id,
+            entry.path.display(),
+            entry.branch
+        ));
+    }
+    out
+}
+
+fn cmd_requirements_test_obligations(
+    knowledge: &Path,
+    specs: &Path,
+    format: &str,
+    out: Option<&Path>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let obligations = crate::spec_knowledge::build_test_obligations(knowledge, specs);
+    let body = match format {
+        "text" => format_test_obligations_text(&obligations),
+        _ => serde_json::to_string_pretty(&obligations)?,
+    };
+    if let Some(path) = out {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, body)?;
+    } else {
+        print!("{body}");
+    }
+    Ok(())
+}
+
+fn format_test_obligations_text(obligations: &crate::spec_knowledge::TestObligationSet) -> String {
+    let mut out = format!(
+        "test obligations: {} obligations, {} diagnostics\n",
+        obligations.obligations.len(),
+        obligations.diagnostics.len()
+    );
+    for obligation in &obligations.obligations {
+        out.push_str(&format!(
+            "{} {} -> {}\n",
+            obligation.requirement_id, obligation.scenario_name, obligation.suggested_selector
+        ));
+    }
+    out
+}
+
+fn cmd_requirements_questions(
+    knowledge: &Path,
+    specs: &Path,
+    format: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let plan = crate::spec_knowledge::build_requirement_plan(knowledge, specs);
+    let lint_diagnostics = crate::spec_knowledge::collect_clarification_lint_diagnostics(knowledge);
+    let questions = crate::spec_knowledge::build_clarification_questions(&plan, &lint_diagnostics);
+    match format {
+        "json" => println!("{}", serde_json::to_string_pretty(&questions)?),
+        _ => {
+            println!("clarification questions: {}", questions.len());
+            for question in questions {
+                println!(
+                    "{} [{}] {}: {}",
+                    question.id, question.diagnostic_code, question.target_id, question.prompt
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn cmd_requirements_work_units(
+    knowledge: &Path,
+    out: Option<&Path>,
+    format: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut graph = crate::spec_knowledge::build_requirement_graph(knowledge);
+    graph
+        .diagnostics
+        .extend(crate::spec_knowledge::validate_requirement_graph(&graph));
+    let units = crate::spec_knowledge::build_work_units(&graph);
+    let body = match format {
+        "text" => format_work_units_text(&units),
+        _ => serde_json::to_string_pretty(&units)?,
+    };
+    if let Some(path) = out {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, body)?;
+    } else {
+        print!("{body}");
+    }
+    Ok(())
+}
+
+fn cmd_requirements_draft_specs(
+    knowledge: &Path,
+    out: &Path,
+    check: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut graph = crate::spec_knowledge::build_requirement_graph(knowledge);
+    graph
+        .diagnostics
+        .extend(crate::spec_knowledge::validate_requirement_graph(&graph));
+    let units = crate::spec_knowledge::build_work_units(&graph);
+    let mut rendered = Vec::new();
+    for unit in units
+        .units
+        .iter()
+        .filter(|unit| unit.status == crate::spec_knowledge::WorkUnitStatus::Ready)
+    {
+        let Some(node) = graph.node(&unit.requirement_id) else {
+            continue;
+        };
+        if let Some(draft) = crate::spec_knowledge::render_draft_spec(node, unit) {
+            rendered.push((out.join(draft.filename), draft.content));
+        }
+    }
+
+    if check {
+        for (path, content) in rendered {
+            let actual = std::fs::read_to_string(&path).unwrap_or_default();
+            if actual != content {
+                return Err(format!("generated draft spec drifted: {}", path.display()).into());
+            }
+        }
+        return Ok(());
+    }
+
+    std::fs::create_dir_all(out)?;
+    for (path, content) in rendered {
+        std::fs::write(path, content)?;
+    }
+    Ok(())
+}
+
+fn cmd_wiki(action: WikiCommands) -> Result<(), Box<dyn std::error::Error>> {
+    match action {
+        WikiCommands::Init {
+            code,
+            wiki,
+            format,
+            check,
+        } => cmd_wiki_init(&code, &wiki, check, &format),
+        WikiCommands::Status { code, wiki, format } => cmd_wiki_status(&code, &wiki, &format),
+        WikiCommands::Inventory { code, format } => cmd_wiki_inventory(&code, &format),
+        WikiCommands::Index { wiki, format } => cmd_wiki_index(&wiki, &format),
+        WikiCommands::Lint { code, wiki, format } => cmd_wiki_lint(&code, &wiki, &format),
+        WikiCommands::Check { code, wiki, format } => cmd_wiki_live_check(&code, &wiki, &format),
+        WikiCommands::Seed {
+            code,
+            wiki,
+            format,
+            check,
+        } => cmd_wiki_seed(&code, &wiki, check, &format),
+        WikiCommands::Query {
+            query,
+            wiki,
+            format,
+        } => cmd_wiki_query(&wiki, &query, &format),
+        WikiCommands::Inspect {
+            path,
+            code,
+            wiki,
+            format,
+        } => cmd_wiki_inspect(&code, &wiki, &path, &format),
+        WikiCommands::ProjectMap {
+            code,
+            wiki,
+            format,
+            out,
+            check,
+        } => cmd_wiki_project_map(&code, &wiki, &format, out.as_deref(), check),
+        WikiCommands::InspectProject {
+            project_id,
+            code,
+            wiki,
+            format,
+        } => cmd_wiki_inspect_project(&project_id, &code, &wiki, &format),
+        WikiCommands::Meta { action } => cmd_wiki_meta(action),
+    }
+}
+
+fn cmd_wiki_init(
+    code: &Path,
+    wiki: &Path,
+    check: bool,
+    format: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if check {
+        let temp = unique_temp_dir("agent-spec-wiki-live-init")?;
+        let _temp_cleanup = TempDirCleanup::new(temp.clone());
+        for maintained_dir in ["projects", "flows"] {
+            let source = wiki.join(maintained_dir);
+            if !source.is_dir() {
+                return Err(format!(
+                    "target wiki is missing maintained directory: {maintained_dir}"
+                )
+                .into());
+            }
+            copy_file_tree(&source, &temp.join(maintained_dir))?;
+        }
+        let report = crate::spec_wiki::init_live_wiki(code, &temp)?;
+        let files_to_compare = report
+            .files_written
+            .iter()
+            .filter(|path| path.as_path() != Path::new("_index.md"))
+            .cloned()
+            .collect::<Vec<_>>();
+        compare_generated_file_subset(&temp, wiki, &files_to_compare, "code live wiki")?;
+        match format {
+            "json" => println!("{}", serde_json::to_string_pretty(&report)?),
+            _ => println!("wiki init check: {} files", report.files_written.len()),
+        }
+        if report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.severity == "error")
+        {
+            return Err("wiki init check failed".into());
+        }
+        return Ok(());
+    }
+
+    let report = crate::spec_wiki::init_live_wiki(code, wiki)?;
+    match format {
+        "json" => println!("{}", serde_json::to_string_pretty(&report)?),
+        _ => {
+            println!(
+                "wiki initialized: {} files in {}",
+                report.files_written.len(),
+                wiki.display()
+            );
+            print_wiki_diagnostics_text("wiki init", &report.diagnostics);
+        }
+    }
+    if report
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.severity == "error")
+    {
+        return Err("wiki init failed".into());
+    }
+    Ok(())
+}
+
+fn cmd_wiki_status(
+    code: &Path,
+    wiki: &Path,
+    format: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let report = crate::spec_wiki::wiki_status(code, wiki);
+    match format {
+        "json" => println!("{}", serde_json::to_string_pretty(&report)?),
+        _ => {
+            if report.first_run {
+                println!("wiki status: first run or missing _meta.json");
+            } else {
+                println!(
+                    "wiki status: {} changed files, {} stale articles",
+                    report.changed_files.len(),
+                    report.stale_articles.len()
+                );
+            }
+            for article in &report.stale_articles {
+                println!(
+                    "  stale {} ({})",
+                    article.path.display(),
+                    article
+                        .changed_files
+                        .iter()
+                        .map(|path| path.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
+            print_wiki_diagnostics_text("wiki status", &report.diagnostics);
+        }
+    }
+    Ok(())
+}
+
+fn cmd_wiki_inventory(code: &Path, format: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let inventory = crate::spec_wiki::build_architecture_inventory(code);
+    match format {
+        "mermaid" | "mmd" => println!(
+            "{}",
+            crate::spec_wiki::render_architecture_mermaid(&inventory)
+        ),
+        "json" => println!("{}", serde_json::to_string_pretty(&inventory)?),
+        _ => {
+            println!(
+                "wiki inventory: provider={}, packages={}, dependencies={}",
+                inventory.provider,
+                inventory.packages.len(),
+                inventory.dependencies.len()
+            );
+            print_wiki_diagnostics_text("wiki inventory", &inventory.diagnostics);
+        }
+    }
+    Ok(())
+}
+
+fn cmd_wiki_index(wiki: &Path, format: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let diagnostics = crate::spec_wiki::write_wiki_index(wiki)?;
+    match format {
+        "json" => println!("{}", serde_json::to_string_pretty(&diagnostics)?),
+        _ => {
+            println!("wiki index: {}", wiki.join("_index.md").display());
+            print_wiki_diagnostics_text("wiki index", &diagnostics);
+        }
+    }
+    if diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.severity == "error")
+    {
+        return Err("wiki index failed".into());
+    }
+    Ok(())
+}
+
+fn cmd_wiki_lint(code: &Path, wiki: &Path, format: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let report = crate::spec_wiki::lint_live_wiki(code, wiki);
+    match format {
+        "json" => println!("{}", serde_json::to_string_pretty(&report)?),
+        _ => print_wiki_diagnostics_text("wiki lint", &report.diagnostics),
+    }
+    if !report.passed() {
+        return Err("wiki lint failed".into());
+    }
+    Ok(())
+}
+
+fn cmd_wiki_live_check(
+    code: &Path,
+    wiki: &Path,
+    format: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let report = crate::spec_wiki::check_live_wiki(code, wiki);
+    match format {
+        "json" => println!("{}", serde_json::to_string_pretty(&report)?),
+        _ => print_wiki_diagnostics_text("wiki check", &report.diagnostics),
+    }
+    if !report.passed() {
+        return Err("wiki check failed".into());
+    }
+    Ok(())
+}
+
+fn cmd_wiki_seed(
+    code: &Path,
+    wiki: &Path,
+    check: bool,
+    format: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let report = if check {
+        crate::spec_wiki::seed_live_wiki_check(code, wiki)
+    } else {
+        crate::spec_wiki::seed_live_wiki(code, wiki)?
+    };
+    match format {
+        "json" => println!("{}", serde_json::to_string_pretty(&report)?),
+        _ => {
+            println!(
+                "wiki seed: {} written, {} missing",
+                report.files_written.len(),
+                report.missing_pages.len()
+            );
+            print_wiki_diagnostics_text("wiki seed", &report.diagnostics);
+        }
+    }
+    if check && !report.diagnostics.is_empty() {
+        return Err("wiki seed check failed".into());
+    }
+    Ok(())
+}
+
+fn cmd_wiki_query(
+    wiki: &Path,
+    query: &str,
+    format: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let report = crate::spec_wiki::query_live_wiki(wiki, query);
+    match format {
+        "json" => println!("{}", serde_json::to_string_pretty(&report)?),
+        _ => {
+            println!(
+                "wiki query: {} matches for `{}`",
+                report.matches.len(),
+                report.query
+            );
+            for item in &report.matches {
+                println!("  {} ({})", item.path.display(), item.title);
+            }
+            print_wiki_diagnostics_text("wiki query", &report.diagnostics);
+        }
+    }
+    Ok(())
+}
+
+fn cmd_wiki_inspect(
+    code: &Path,
+    wiki: &Path,
+    path: &Path,
+    format: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let report = crate::spec_wiki::inspect_live_wiki_path(code, wiki, path);
+    match format {
+        "json" => println!("{}", serde_json::to_string_pretty(&report)?),
+        _ => {
+            println!("wiki inspect: {}", report.input_path.display());
+            for article in &report.wiki_articles {
+                println!("  wiki {} ({})", article.path.display(), article.title);
+            }
+            for requirement in &report.requirements {
+                println!(
+                    "  requirement {} ({})",
+                    requirement.id,
+                    requirement.path.display()
+                );
+            }
+            for spec in &report.specs {
+                println!("  spec {} ({})", spec.name, spec.path.display());
+            }
+            for trace in &report.trace_records {
+                println!(
+                    "  trace {} {} {} {:?} {}",
+                    trace.requirement_id,
+                    trace.run_id,
+                    trace.scenario_name,
+                    trace.test_selector,
+                    trace.verdict
+                );
+            }
+            print_wiki_diagnostics_text("wiki inspect", &report.diagnostics);
+        }
+    }
+    Ok(())
+}
+
+fn cmd_wiki_project_map(
+    code: &Path,
+    wiki: &Path,
+    format: &str,
+    out: Option<&Path>,
+    check: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if check && out.is_none() {
+        return Err("wiki project-map --check requires --out".into());
+    }
+    let map = crate::spec_wiki::build_project_map(code, wiki);
+    let rendered = match format {
+        "mermaid" | "mmd" => crate::spec_wiki::render_project_map_mermaid(&map),
+        "json" => serde_json::to_string_pretty(&map)?,
+        other => return Err(format!("unsupported wiki project-map format: {other}").into()),
+    };
+    if let Some(out_path) = out {
+        if check {
+            if map
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.severity == "error")
+            {
+                return Err("project map contains error diagnostics".into());
+            }
+            let actual = std::fs::read_to_string(out_path).unwrap_or_default();
+            if actual != rendered {
+                return Err(format!("project map drifted: {}", out_path.display()).into());
+            }
+            return Ok(());
+        }
+        if let Some(parent) = out_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(out_path, rendered)?;
+        return Ok(());
+    }
+    print!("{rendered}");
+    Ok(())
+}
+
+fn cmd_wiki_inspect_project(
+    project_id: &str,
+    code: &Path,
+    wiki: &Path,
+    format: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let report = crate::spec_wiki::inspect_wiki_project(code, wiki, project_id);
+    match format {
+        "json" => println!("{}", serde_json::to_string_pretty(&report)?),
+        "text" => {
+            println!("wiki inspect-project: {}", report.project_id);
+            if let Some(project) = &report.project {
+                println!("  project {} ({})", project.id, project.path.display());
+                println!("  repo {}", project.repo);
+                if !project.external_sources.is_empty() {
+                    println!(
+                        "  external_sources: {}",
+                        project.external_sources.join(", ")
+                    );
+                }
+            }
+            for flow in &report.flows {
+                println!("  flow {} ({})", flow.id, flow.path.display());
+                println!("    projects: {}", flow.projects.join(", "));
+                println!("    protocols: {}", flow.protocols.join(", "));
+                if !flow.requirements.is_empty() {
+                    println!("    requirements: {}", flow.requirements.join(", "));
+                }
+                if !flow.specs.is_empty() {
+                    println!(
+                        "    specs: {}",
+                        flow.specs
+                            .iter()
+                            .map(|path| path.display().to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                }
+                if !flow.external_sources.is_empty() {
+                    println!("    external_sources: {}", flow.external_sources.join(", "));
+                }
+            }
+            print_wiki_diagnostics_text("wiki inspect-project", &report.diagnostics);
+        }
+        other => return Err(format!("unsupported wiki inspect-project format: {other}").into()),
+    }
+    if report
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.severity == "error")
+    {
+        return Err("wiki inspect-project failed".into());
+    }
+    Ok(())
+}
+
+fn cmd_wiki_meta(action: WikiMetaCommands) -> Result<(), Box<dyn std::error::Error>> {
+    match action {
+        WikiMetaCommands::Update { code, wiki, format } => {
+            let meta = crate::spec_wiki::update_wiki_meta(&code, &wiki)?;
+            match format.as_str() {
+                "json" => println!("{}", serde_json::to_string_pretty(&meta)?),
+                _ => println!(
+                    "wiki meta update: {}",
+                    meta.last_compiled_commit
+                        .as_deref()
+                        .unwrap_or("(no git commit)")
+                ),
+            }
+            Ok(())
+        }
+    }
+}
+
+fn print_wiki_diagnostics_text(prefix: &str, diagnostics: &[crate::spec_wiki::WikiDiagnostic]) {
+    if diagnostics.is_empty() {
+        println!("{prefix}: no diagnostics");
+        return;
+    }
+    for diagnostic in diagnostics {
+        let path = diagnostic
+            .path
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "(wiki)".into());
+        println!(
+            "[{}] {} {}: {}",
+            diagnostic.severity, diagnostic.code, path, diagnostic.message
+        );
+    }
+}
+
+fn compare_generated_file_subset(
+    expected_dir: &Path,
+    actual_dir: &Path,
+    files: &[PathBuf],
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !actual_dir.exists() {
+        return Err(format!("{label} missing: {}", actual_dir.display()).into());
+    }
+    for path in files {
+        let expected_path = expected_dir.join(path);
+        let actual_path = actual_dir.join(path);
+        if !actual_path.exists() {
+            return Err(format!("{label} missing generated file: {}", path.display()).into());
+        }
+        let expected_content = std::fs::read(&expected_path)?;
+        let actual_content = std::fs::read(&actual_path)?;
+        if actual_content != expected_content {
+            return Err(format!("{label} drifted: {}", path.display()).into());
+        }
+    }
+    Ok(())
+}
+
+fn copy_file_tree(source: &Path, destination: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    if std::fs::symlink_metadata(source)?.file_type().is_symlink() {
+        return Err(format!(
+            "wiki init check rejects symlinked maintained entry: {}",
+            source.display()
+        )
+        .into());
+    }
+    std::fs::create_dir_all(destination)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        if file_type.is_symlink() {
+            return Err(format!(
+                "wiki init check rejects symlinked maintained entry: {}",
+                source_path.display()
+            )
+            .into());
+        } else if file_type.is_dir() {
+            copy_file_tree(&source_path, &destination_path)?;
+        } else if file_type.is_file() {
+            std::fs::copy(source_path, destination_path)?;
+        }
+    }
+    Ok(())
+}
+
+fn unique_temp_dir(prefix: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let nanos = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(duration) => duration.as_nanos(),
+        Err(_) => 0,
+    };
+    let dir = std::env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
+struct TempDirCleanup {
+    path: PathBuf,
+}
+
+impl TempDirCleanup {
+    fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+}
+
+impl Drop for TempDirCleanup {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+fn print_requirement_graph_text(graph: &crate::spec_knowledge::RequirementGraph) {
+    println!(
+        "requirements: {} nodes, {} diagnostics, {} parse errors",
+        graph.nodes.len(),
+        graph.diagnostics.len(),
+        graph.parse_errors.len()
+    );
+    for err in &graph.parse_errors {
+        println!("parse-error {}: {}", err.path.display(), err.message);
+    }
+    for diag in &graph.diagnostics {
+        let id = diag.requirement_id.as_deref().unwrap_or("(graph)");
+        println!("[{}] {} {}: {}", diag.severity, id, diag.code, diag.message);
+    }
+    for node in &graph.nodes {
+        println!(
+            "{} {} scenarios={} deps={}",
+            node.id,
+            node.title,
+            node.scenarios.len(),
+            node.dependencies.len()
+        );
+    }
+}
+
+fn print_requirement_plan_text(plan: &crate::spec_knowledge::RequirementPlan) {
+    println!(
+        "requirements plan: {} requirements, {} batches, {} diagnostics, {} parse errors",
+        plan.requirements.len(),
+        plan.batches.len(),
+        plan.diagnostics.len(),
+        plan.parse_errors.len()
+    );
+    for diagnostic in &plan.diagnostics {
+        let id = diagnostic.requirement_id.as_deref().unwrap_or("(plan)");
+        println!(
+            "[{}] {} {}: {}",
+            diagnostic.severity, id, diagnostic.code, diagnostic.message
+        );
+    }
+    for batch in &plan.batches {
+        println!(
+            "batch {}: {}",
+            batch.order,
+            batch.requirement_ids.join(", ")
+        );
+    }
+}
+
+fn format_work_units_text(units: &crate::spec_knowledge::WorkUnitSet) -> String {
+    let mut out = format!(
+        "work units: {} units, {} diagnostics\n",
+        units.units.len(),
+        units.diagnostics.len()
+    );
+    for diag in &units.diagnostics {
+        let id = diag.requirement_id.as_deref().unwrap_or("(graph)");
+        out.push_str(&format!(
+            "[{}] {} {}: {}\n",
+            diag.severity, id, diag.code, diag.message
+        ));
+    }
+    for unit in &units.units {
+        out.push_str(&format!(
+            "{} {} mode={:?} status={:?} scenarios={}\n",
+            unit.id, unit.title, unit.mode, unit.status, unit.scenario_count
+        ));
+    }
+    out
+}
+
+fn cmd_mcp(
+    knowledge: PathBuf,
+    specs: PathBuf,
+    code: PathBuf,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = crate::spec_mcp::McpContext {
+        knowledge,
+        specs,
+        code,
+    };
+    crate::spec_mcp::serve(&ctx)?;
+    Ok(())
+}
+
+fn cmd_trace(
+    id: &str,
+    knowledge: &Path,
+    specs: &Path,
+    code: &Path,
+    format: &str,
+    gate: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::spec_knowledge::model::Liveness;
+
+    let target = id.to_ascii_uppercase();
+
+    let decision = find_trace_artifact(knowledge, &target)?;
+
+    let index = crate::spec_knowledge::build_satisfies_index(specs);
+    let report = crate::spec_knowledge::build_trace(&decision, &index, |spec_path| {
+        crate::spec_knowledge::trace::verify_spec_rollup(spec_path, code)
+    });
+
+    match format {
+        "json" => println!("{}", serde_json::to_string_pretty(&report)?),
+        _ => print!("{}", crate::spec_knowledge::format_trace_text(&report)),
+    }
+
+    if gate {
+        match report.liveness {
+            Liveness::Violated => {
+                eprintln!("gate: decision {} is VIOLATED", report.decision_id);
+                std::process::exit(2);
+            }
+            Liveness::Unproven => {
+                eprintln!(
+                    "gate (warning): decision {} is UNPROVEN",
+                    report.decision_id
+                );
+            }
+            Liveness::Honored | Liveness::Na => {}
+        }
+    }
+    Ok(())
+}
+
+fn cmd_archive(
+    spec_dir: &Path,
+    archive_dir: &Path,
+    summary: &Path,
+    run_log_dir: &Path,
+    dry_run: bool,
+    check: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let plan =
+        crate::spec_archive::build_archive_plan_with_history(spec_dir, archive_dir, run_log_dir);
+    let summary_body = crate::spec_archive::render_archive_summary(&plan);
+
+    if check {
+        let actual = std::fs::read_to_string(summary).unwrap_or_default();
+        if actual != summary_body {
+            return Err(format!("archive summary drifted: {}", summary.display()).into());
+        }
+        return Ok(());
+    }
+
+    print!("{summary_body}");
+    if dry_run {
+        return Ok(());
+    }
+
+    if plan
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.severity == "error")
+    {
+        return Err("archive plan contains blocking diagnostics".into());
+    }
+    if let Some(parent) = summary.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let summary_tmp = summary.with_extension("tmp");
+    std::fs::write(&summary_tmp, summary_body)?;
+    if let Err(error) = crate::spec_archive::apply_archive_plan(&plan) {
+        std::fs::remove_file(&summary_tmp).ok();
+        return Err(error);
+    }
+    std::fs::rename(summary_tmp, summary)?;
+    Ok(())
+}
+
+fn find_trace_artifact(
+    knowledge: &Path,
+    target_id: &str,
+) -> Result<crate::spec_knowledge::DecisionDoc, Box<dyn std::error::Error>> {
+    let collection = crate::spec_knowledge::collect_knowledge_checked(knowledge);
+    for doc in collection.docs {
+        if matches!(
+            doc.meta.kind,
+            crate::spec_knowledge::KnowledgeKind::Decision
+                | crate::spec_knowledge::KnowledgeKind::Requirement
+        ) && doc.meta.id == target_id
+        {
+            return Ok(doc);
+        }
+    }
+    for err in collection.parse_errors {
+        if crate::spec_knowledge::resolve_decision_id(None, &err.path).as_deref() == Some(target_id)
+        {
+            return Err(format!(
+                "cannot parse knowledge artifact {target_id} at {}: {}",
+                err.path.display(),
+                err.message
+            )
+            .into());
+        }
+    }
+    Err(format!(
+        "no decision or requirement with id {target_id} in {}",
+        knowledge.display()
+    )
+    .into())
+}
+
+fn find_decision(
+    dir: &Path,
+    target_id: &str,
+) -> Result<crate::spec_knowledge::DecisionDoc, Box<dyn std::error::Error>> {
+    let mut files = Vec::new();
+    collect_decision_files(dir, &mut files)
+        .map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
+    files.sort();
+    for p in files {
+        match crate::spec_knowledge::parse_decision(&p) {
+            Ok(doc) if doc.meta.id == target_id => return Ok(doc),
+            Ok(_) => {}
+            Err(e) => {
+                if crate::spec_knowledge::resolve_decision_id(None, &p).as_deref()
+                    == Some(target_id)
+                {
+                    return Err(format!(
+                        "cannot parse decision {target_id} at {}: {e}",
+                        p.display()
+                    )
+                    .into());
+                }
+            }
+        }
+    }
+    Err(format!("no decision with id {target_id} in {}", dir.display()).into())
+}
+
+fn collect_decision_files(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let p = entry.path();
+        if p.is_dir() {
+            collect_decision_files(&p, out)?;
+            continue;
+        }
+        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+        if name.ends_with(".md") || name.ends_with(".spec") {
+            out.push(p);
+        }
+    }
+    Ok(())
 }
 
 fn cmd_init_at(
@@ -3191,7 +5576,10 @@ mod tests {
     use super::{
         ScenarioAiDecision, assemble_explain_markdown, build_matrix_for, merge_ai_decisions,
     };
-    use super::{examples_all_pass, rule_scenarios, upsert_capability_rule};
+    use super::{
+        cmd_requirements_graph, cmd_requirements_import, cmd_requirements_work_units,
+        examples_all_pass, rule_scenarios, upsert_capability_rule,
+    };
 
     // ---- Phase 3: promote ----
 
@@ -3405,6 +5793,1242 @@ name: "退款"
             Some(crate::spec_core::Verdict::Skip)
         );
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_find_decision_recurses_into_nested_directories() {
+        let dir = make_temp_dir("agent-spec-kll-trace");
+        let decisions = dir.join("knowledge").join("decisions").join("security");
+        fs::create_dir_all(&decisions).unwrap();
+        fs::write(
+            decisions.join("adr-042-auth.md"),
+            "---\nkind: decision\nid: ADR-042\n---\n## Context\nc\n## Decision\nd\n## Consequences\nGood, because x. Bad, because y.\n",
+        )
+        .unwrap();
+
+        let doc = super::find_decision(&dir.join("knowledge").join("decisions"), "ADR-042")
+            .expect("nested decision should be found");
+
+        assert_eq!(doc.meta.id, "ADR-042");
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_find_decision_reports_parse_error_for_matching_bad_file() {
+        let dir = make_temp_dir("agent-spec-kll-trace-bad");
+        let decisions = dir.join("knowledge").join("decisions");
+        fs::create_dir_all(&decisions).unwrap();
+        fs::write(
+            decisions.join("adr-099-bad.md"),
+            "---\nkind: decision\nid: ADR-099\nliveness: forever\n---\n## Context\nbad\n",
+        )
+        .unwrap();
+
+        let err = super::find_decision(&decisions, "ADR-099").unwrap_err();
+        let msg = err.to_string();
+
+        assert!(msg.contains("cannot parse decision ADR-099"), "{msg}");
+        assert!(msg.contains("unknown liveness"), "{msg}");
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_trace_accepts_requirement_artifact() {
+        let dir = make_temp_dir("agent-spec-kll-trace-requirement");
+        let knowledge = dir.join("knowledge");
+        let requirements = knowledge.join("requirements");
+        let specs = dir.join("specs");
+        fs::create_dir_all(&requirements).unwrap();
+        fs::create_dir_all(&specs).unwrap();
+        fs::write(
+            requirements.join("req-101-login.md"),
+            "---\nkind: requirement\nid: REQ-101\ntitle: \"User Login\"\n---\n## Problem\nLogin.\n## Requirements\n[REQ-101] The service MUST log users in.\n",
+        )
+        .unwrap();
+
+        let result = super::cmd_trace("REQ-101", &knowledge, &specs, Path::new("."), "json", false);
+        assert!(
+            result.is_ok(),
+            "trace must accept requirement artifacts: {result:?}"
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_gen_integrations_with_guidance_reports_parse_errors() {
+        let dir = make_temp_dir("agent-spec-kll-guidance-bad");
+        let knowledge = dir.join("knowledge");
+        let out = dir.join("out");
+        fs::create_dir_all(knowledge.join("guidance")).unwrap();
+        fs::create_dir_all(&out).unwrap();
+        fs::write(
+            knowledge.join("guidance/g-099-bad.md"),
+            "---\nkind: guidance\nid: G-099\nliveness: forever\n---\n## Scope\ns\n",
+        )
+        .unwrap();
+
+        let err = super::cmd_gen_integrations("agents", &out, false, Some(&knowledge)).unwrap_err();
+        let msg = err.to_string();
+
+        assert!(msg.contains("knowledge-parse-error"), "{msg}");
+        assert!(msg.contains("g-099-bad.md"), "{msg}");
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_requirements_import_command_writes_artifact() {
+        let dir = make_temp_dir("requirements-import-cli");
+        let source = dir.join("issue.md");
+        let out = dir.join("knowledge/requirements");
+        fs::write(
+            &source,
+            "<!-- agent-spec:requirement id=REQ-101 title=\"User Login\" tags=auth source=issue:#123 -->\n## Problem\nLogin.\n\n## Requirements\n\n[REQ-101] The authentication service MUST create a login session.\n\n## Scenarios\n\nScenario: Valid login\n  Given a valid account\n  When valid credentials are submitted\n  Then a session is created\n\n## Open Questions\n\nNone.\n<!-- /agent-spec:requirement -->\n",
+        )
+        .unwrap();
+
+        cmd_requirements_import(&source, &out, false, None).unwrap();
+        let artifact = out.join("req-101-user-login.md");
+        assert!(artifact.exists());
+        let body = fs::read_to_string(artifact).unwrap();
+        assert!(body.contains("kind: requirement"));
+        assert!(body.contains("id: REQ-101"));
+        assert!(body.contains("title: \"User Login\""));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_requirements_work_units_command_writes_json() {
+        let dir = make_temp_dir("requirements-work-units-cli");
+        let knowledge = dir.join("knowledge");
+        fs::create_dir_all(knowledge.join("requirements")).unwrap();
+        fs::write(
+            knowledge.join("requirements/req-101-login.md"),
+            "---\nkind: requirement\nid: REQ-101\ntitle: \"User Login\"\n---\n## Problem\nLogin.\n## Requirements\n[REQ-101] The authentication service MUST create a login session.\n## Scenarios\nScenario: Valid login\n  Given a valid account\n  When valid credentials are submitted\n  Then a session is created\n## Open Questions\nNone.\n",
+        )
+        .unwrap();
+        let out = dir.join(".agent-spec/work_units.json");
+
+        cmd_requirements_work_units(&knowledge, Some(&out), "json").unwrap();
+        let json = fs::read_to_string(out).unwrap();
+        assert!(
+            json.contains("\"requirement_id\":\"REQ-101\"")
+                || json.contains("\"requirement_id\": \"REQ-101\"")
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_requirements_graph_gate_fails_on_parse_error() {
+        let dir = make_temp_dir("requirements-graph-gate-parse-error");
+        let knowledge = dir.join("knowledge");
+        fs::create_dir_all(knowledge.join("requirements")).unwrap();
+        fs::write(
+            knowledge.join("requirements/req-999-bad.md"),
+            "---\nkind: requirement\nid: REQ-999\nliveness: forever\n---\n## Problem\nbad\n",
+        )
+        .unwrap();
+
+        let err = cmd_requirements_graph(&knowledge, "text", true).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("requirement graph gate failed"), "{msg}");
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_requirements_gates_reject_missing_roots() {
+        let dir = make_temp_dir("requirements-missing-roots");
+        let missing_knowledge = dir.join("missing-knowledge");
+        let missing_specs = dir.join("missing-specs");
+
+        assert!(cmd_requirements_graph(&missing_knowledge, "json", true).is_err());
+        assert!(
+            super::cmd_requirements_plan(&missing_knowledge, &missing_specs, "json", true).is_err()
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_requirements_plan_cli_parses_nested_subcommand() {
+        let cli = super::Cli::parse_from([
+            "agent-spec",
+            "requirements",
+            "plan",
+            "--knowledge",
+            "knowledge",
+            "--specs",
+            "specs",
+            "--format",
+            "json",
+            "--gate",
+        ]);
+
+        match cli.command {
+            super::Commands::Requirements {
+                action:
+                    super::RequirementCommands::Plan {
+                        knowledge,
+                        specs,
+                        format,
+                        gate,
+                    },
+            } => {
+                assert_eq!(knowledge, PathBuf::from("knowledge"));
+                assert_eq!(specs, PathBuf::from("specs"));
+                assert_eq!(format, "json");
+                assert!(gate);
+            }
+            _ => panic!("expected requirements plan command"),
+        }
+    }
+
+    #[test]
+    fn test_requirements_plan_json_includes_batches_edges_and_coverage() {
+        let dir = make_temp_dir("requirements-plan-cli-json");
+        let knowledge = dir.join("knowledge");
+        let specs = dir.join("specs");
+        fs::create_dir_all(knowledge.join("requirements")).unwrap();
+        fs::create_dir_all(&specs).unwrap();
+
+        fs::write(
+            knowledge.join("requirements/req-a.md"),
+            "---\nkind: requirement\nid: REQ-A\ntitle: \"A\"\nliveness: auto\n---\n## Problem\nA.\n## Requirements\n[REQ-A] The system MUST do A.\n## Scenarios\nScenario: A\n  Given input A\n  When A runs\n  Then output A is visible\n## Source Trace\n- test\n## Open Questions\nNone.\n",
+        )
+        .unwrap();
+        fs::write(
+            specs.join("task-a.spec.md"),
+            "spec: task\nname: \"A\"\nsatisfies: [REQ-A]\n---\n## Intent\nA.\n## Completion Criteria\nScenario: A\n  Test: test_a\n  Given A\n  When A\n  Then A\n",
+        )
+        .unwrap();
+
+        let plan = crate::spec_knowledge::build_requirement_plan(&knowledge, &specs);
+        let json = serde_json::to_string_pretty(&plan).unwrap();
+        assert!(json.contains("\"requirements\""));
+        assert!(json.contains("\"work_units\""));
+        assert!(json.contains("\"batches\""));
+        assert!(json.contains("\"coverage\""));
+        assert!(json.contains("REQ-A"));
+        assert!(json.contains("WU-REQ-A"));
+        assert!(json.contains("\"kind\": \"work_unit\""));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_requirements_plan_gate_fails_on_dangling_dependency() {
+        let dir = make_temp_dir("requirements-plan-cli-gate");
+        let knowledge = dir.join("knowledge");
+        let specs = dir.join("specs");
+        fs::create_dir_all(knowledge.join("requirements")).unwrap();
+        fs::create_dir_all(&specs).unwrap();
+
+        fs::write(
+            knowledge.join("requirements/req-a.md"),
+            "---\nkind: requirement\nid: REQ-A\ntitle: \"A\"\nliveness: auto\n---\n## Problem\nA.\n## Requirements\n[REQ-A] The system MUST do A.\n## Dependencies\n- REQ-MISSING\n## Scenarios\nScenario: A\n  Given input A\n  When A runs\n  Then output A is visible\n## Source Trace\n- test\n## Open Questions\nNone.\n",
+        )
+        .unwrap();
+
+        let err = super::cmd_requirements_plan(&knowledge, &specs, "text", true).unwrap_err();
+        assert!(err.to_string().contains("requirements plan gate failed"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_requirements_test_obligations_cli_parses_nested_subcommand() {
+        let cli = super::Cli::parse_from([
+            "agent-spec",
+            "requirements",
+            "test-obligations",
+            "--knowledge",
+            "knowledge",
+            "--specs",
+            "specs",
+            "--format",
+            "json",
+            "--out",
+            ".agent-spec/test_obligations.json",
+        ]);
+
+        match cli.command {
+            super::Commands::Requirements {
+                action:
+                    super::RequirementCommands::TestObligations {
+                        knowledge,
+                        specs,
+                        format,
+                        out,
+                    },
+            } => {
+                assert_eq!(knowledge, PathBuf::from("knowledge"));
+                assert_eq!(specs, PathBuf::from("specs"));
+                assert_eq!(format, "json");
+                assert_eq!(
+                    out,
+                    Some(PathBuf::from(".agent-spec/test_obligations.json"))
+                );
+            }
+            _ => panic!("expected requirements test-obligations command"),
+        }
+    }
+
+    #[test]
+    fn test_requirements_test_obligations_json_contains_spec_derived_obligations() {
+        let dir = make_temp_dir("requirements-test-obligations-cli-json");
+        let knowledge = dir.join("knowledge");
+        let specs = dir.join("specs");
+        fs::create_dir_all(knowledge.join("requirements")).unwrap();
+        fs::create_dir_all(&specs).unwrap();
+
+        fs::write(
+            knowledge.join("requirements/req-note-create.md"),
+            "---\nkind: requirement\nid: REQ-NOTE-CREATE\ntitle: \"Create Note\"\nliveness: auto\n---\n## Problem\nCreate notes.\n## Requirements\n[REQ-NOTE-CREATE] The note store MUST create notes.\n## Scenarios\nScenario: Create note\n  Given an empty store\n  When a note is created\n  Then the returned note appears in the list\n## Source Trace\n- test\n## Open Questions\nNone.\n",
+        )
+        .unwrap();
+        fs::write(
+            specs.join("task-note-create.spec.md"),
+            "spec: task\nname: \"Create Note\"\nsatisfies: [REQ-NOTE-CREATE]\nrisk: C\n---\n## Intent\nCreate note.\n## Completion Criteria\nScenario: Create note\n  Test: note_create_adds_note\n  Given an empty store\n  When a note is created\n  Then the returned note appears in the list\n",
+        )
+        .unwrap();
+        let out = dir.join(".agent-spec/test_obligations.json");
+
+        super::cmd_requirements_test_obligations(&knowledge, &specs, "json", Some(&out)).unwrap();
+        let json = fs::read_to_string(out).unwrap();
+        assert!(json.contains("\"requirement_id\": \"REQ-NOTE-CREATE\""));
+        assert!(json.contains("\"suggested_selector\": \"note_create_adds_note\""));
+        assert!(json.contains("\"required_evidence\""));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_requirements_questions_cli_parses_nested_subcommand() {
+        let cli = super::Cli::parse_from([
+            "agent-spec",
+            "requirements",
+            "questions",
+            "--knowledge",
+            "knowledge",
+            "--specs",
+            "specs",
+            "--format",
+            "json",
+        ]);
+
+        match cli.command {
+            super::Commands::Requirements {
+                action:
+                    super::RequirementCommands::Questions {
+                        knowledge,
+                        specs,
+                        format,
+                    },
+            } => {
+                assert_eq!(knowledge, PathBuf::from("knowledge"));
+                assert_eq!(specs, PathBuf::from("specs"));
+                assert_eq!(format, "json");
+            }
+            _ => panic!("expected requirements questions command"),
+        }
+    }
+
+    #[test]
+    fn test_requirements_worktrees_cli_parses_nested_subcommand() {
+        let cli = super::Cli::parse_from([
+            "agent-spec",
+            "requirements",
+            "worktrees",
+            "--knowledge",
+            "knowledge",
+            "--specs",
+            "specs",
+            "--base",
+            "main",
+            "--path-prefix",
+            "../worktrees",
+            "--format",
+            "json",
+            "--out",
+            ".agent-spec/worktrees.json",
+        ]);
+
+        match cli.command {
+            super::Commands::Requirements {
+                action:
+                    super::RequirementCommands::Worktrees {
+                        knowledge,
+                        specs,
+                        base,
+                        path_prefix,
+                        format,
+                        out,
+                    },
+            } => {
+                assert_eq!(knowledge, PathBuf::from("knowledge"));
+                assert_eq!(specs, PathBuf::from("specs"));
+                assert_eq!(base, "main");
+                assert_eq!(path_prefix, PathBuf::from("../worktrees"));
+                assert_eq!(format, "json");
+                assert_eq!(out, Some(PathBuf::from(".agent-spec/worktrees.json")));
+            }
+            _ => panic!("expected requirements worktrees command"),
+        }
+    }
+
+    #[test]
+    fn test_requirements_trace_cli_parses_nested_subcommand() {
+        let cli = super::Cli::parse_from([
+            "agent-spec",
+            "requirements",
+            "trace",
+            "REQ-NOTE-CREATE",
+            "--trace-dir",
+            ".agent-spec/trace",
+            "--format",
+            "json",
+        ]);
+
+        match cli.command {
+            super::Commands::Requirements {
+                action:
+                    super::RequirementCommands::Trace {
+                        id,
+                        trace_dir,
+                        code,
+                        wiki,
+                        format,
+                    },
+            } => {
+                assert_eq!(id, "REQ-NOTE-CREATE");
+                assert_eq!(trace_dir, PathBuf::from(".agent-spec/trace"));
+                assert_eq!(code, PathBuf::from("."));
+                assert_eq!(wiki, PathBuf::from(".agent-spec/wiki"));
+                assert_eq!(format, "json");
+            }
+            _ => panic!("expected requirements trace command"),
+        }
+    }
+
+    #[test]
+    fn test_requirements_replay_cli_parses_nested_subcommand() {
+        let cli = super::Cli::parse_from([
+            "agent-spec",
+            "requirements",
+            "replay",
+            "REQ-NOTE-CREATE",
+            "--trace-dir",
+            ".agent-spec/trace",
+            "--format",
+            "json",
+        ]);
+
+        match cli.command {
+            super::Commands::Requirements {
+                action:
+                    super::RequirementCommands::Replay {
+                        id,
+                        trace_dir,
+                        format,
+                    },
+            } => {
+                assert_eq!(id, "REQ-NOTE-CREATE");
+                assert_eq!(trace_dir, PathBuf::from(".agent-spec/trace"));
+                assert_eq!(format, "json");
+            }
+            _ => panic!("expected requirements replay command"),
+        }
+    }
+
+    #[test]
+    fn test_wiki_project_map_cli_parses_nested_subcommand() {
+        let cli = super::Cli::parse_from([
+            "agent-spec",
+            "wiki",
+            "project-map",
+            "--code",
+            ".",
+            "--wiki",
+            ".agent-spec/wiki",
+            "--format",
+            "json",
+            "--out",
+            ".agent-spec/wiki/architecture/project-map.json",
+            "--check",
+        ]);
+
+        match cli.command {
+            super::Commands::Wiki {
+                action:
+                    super::WikiCommands::ProjectMap {
+                        code,
+                        wiki,
+                        format,
+                        out,
+                        check,
+                    },
+            } => {
+                assert_eq!(code, PathBuf::from("."));
+                assert_eq!(wiki, PathBuf::from(".agent-spec/wiki"));
+                assert_eq!(format, "json");
+                assert_eq!(
+                    out,
+                    Some(PathBuf::from(
+                        ".agent-spec/wiki/architecture/project-map.json"
+                    ))
+                );
+                assert!(check);
+            }
+            _ => panic!("expected wiki project-map command"),
+        }
+    }
+
+    #[test]
+    fn test_wiki_inspect_project_cli_parses_nested_subcommand() {
+        let cli = super::Cli::parse_from([
+            "agent-spec",
+            "wiki",
+            "inspect-project",
+            "brain-rs",
+            "--code",
+            "fixtures/wiki-cross-project",
+            "--wiki",
+            ".agent-spec/wiki",
+            "--format",
+            "json",
+        ]);
+
+        match cli.command {
+            super::Commands::Wiki {
+                action:
+                    super::WikiCommands::InspectProject {
+                        project_id,
+                        code,
+                        wiki,
+                        format,
+                    },
+            } => {
+                assert_eq!(project_id, "brain-rs");
+                assert_eq!(code, PathBuf::from("fixtures/wiki-cross-project"));
+                assert_eq!(wiki, PathBuf::from(".agent-spec/wiki"));
+                assert_eq!(format, "json");
+            }
+            _ => panic!("expected wiki inspect-project command"),
+        }
+    }
+
+    #[test]
+    fn test_wiki_project_map_check_requires_out() {
+        let result = super::Cli::try_parse_from(["agent-spec", "wiki", "project-map", "--check"]);
+
+        assert!(result.is_err(), "--check without --out must be rejected");
+
+        let dir = make_temp_dir("wiki-project-map-check-without-out");
+        let wiki = dir.join(".agent-spec/wiki");
+        fs::create_dir_all(wiki.join("projects")).unwrap();
+        fs::create_dir_all(wiki.join("flows")).unwrap();
+        assert!(super::cmd_wiki_project_map(&dir, &wiki, "json", None, true).is_err());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_wiki_cli_rejects_removed_generated_wiki_commands() {
+        for command in [
+            "plan",
+            "generate",
+            "legacy-check",
+            "export-github",
+            "install-ci",
+        ] {
+            assert!(
+                super::Cli::try_parse_from(["agent-spec", "wiki", command]).is_err(),
+                "removed wiki command `{command}` must not remain callable"
+            );
+        }
+    }
+
+    #[test]
+    fn test_requirements_explain_failure_cli_parses_nested_subcommand() {
+        let cli = super::Cli::parse_from([
+            "agent-spec",
+            "requirements",
+            "explain-failure",
+            "REQ-NOTE-CREATE",
+            "--trace-dir",
+            ".agent-spec/trace",
+            "--format",
+            "json",
+        ]);
+
+        match cli.command {
+            super::Commands::Requirements {
+                action:
+                    super::RequirementCommands::ExplainFailure {
+                        id,
+                        trace_dir,
+                        code,
+                        wiki,
+                        format,
+                    },
+            } => {
+                assert_eq!(id, "REQ-NOTE-CREATE");
+                assert_eq!(trace_dir, PathBuf::from(".agent-spec/trace"));
+                assert_eq!(code, PathBuf::from("."));
+                assert_eq!(wiki, PathBuf::from(".agent-spec/wiki"));
+                assert_eq!(format, "json");
+            }
+            _ => panic!("expected requirements explain-failure command"),
+        }
+    }
+
+    #[test]
+    fn test_requirements_trace_graph_cli_parses_nested_subcommand() {
+        let cli = super::Cli::parse_from([
+            "agent-spec",
+            "requirements",
+            "trace-graph",
+            "REQ-NOTE-CREATE",
+            "--trace-dir",
+            ".agent-spec/trace",
+            "--format",
+            "mermaid",
+        ]);
+
+        match cli.command {
+            super::Commands::Requirements {
+                action:
+                    super::RequirementCommands::TraceGraph {
+                        id,
+                        trace_dir,
+                        format,
+                    },
+            } => {
+                assert_eq!(id, "REQ-NOTE-CREATE");
+                assert_eq!(trace_dir, PathBuf::from(".agent-spec/trace"));
+                assert_eq!(format, "mermaid");
+            }
+            _ => panic!("expected requirements trace-graph command"),
+        }
+    }
+
+    #[test]
+    fn test_requirements_questions_json_reports_open_question() {
+        let plan = crate::spec_knowledge::RequirementPlan {
+            version: 1,
+            requirements: vec![crate::spec_knowledge::RequirementPlanNode {
+                id: "REQ-NOTE-EXPORT".into(),
+                title: "Export Notes".into(),
+                source_path: PathBuf::from("knowledge/requirements/req-note-export.md"),
+                status: crate::spec_knowledge::RequirementPlanStatus::Blocked,
+                mode: "blocked_questions".into(),
+                scenario_count: 1,
+                blocked_by: vec!["Should export support CSV?".into()],
+            }],
+            work_units: Vec::new(),
+            specs: Vec::new(),
+            edges: Vec::new(),
+            batches: Vec::new(),
+            coverage: Vec::new(),
+            diagnostics: Vec::new(),
+            parse_errors: Vec::new(),
+        };
+
+        let questions = crate::spec_knowledge::build_clarification_questions(&plan, &[]);
+        let json = serde_json::to_string_pretty(&questions).unwrap();
+
+        assert!(json.contains("REQ-NOTE-EXPORT"));
+        assert!(json.contains("blocked-open-questions"));
+        assert!(json.contains("Should export support CSV?"));
+    }
+
+    #[test]
+    fn test_requirements_worktrees_json_maps_ready_units_only() {
+        let plan = crate::spec_knowledge::RequirementPlan {
+            version: 1,
+            requirements: vec![
+                crate::spec_knowledge::RequirementPlanNode {
+                    id: "REQ-NOTE-CREATE".into(),
+                    title: "Create Note".into(),
+                    source_path: PathBuf::from("knowledge/requirements/req-note-create.md"),
+                    status: crate::spec_knowledge::RequirementPlanStatus::Ready,
+                    mode: "leaf_full".into(),
+                    scenario_count: 1,
+                    blocked_by: Vec::new(),
+                },
+                crate::spec_knowledge::RequirementPlanNode {
+                    id: "REQ-NOTE-EXPORT".into(),
+                    title: "Export Notes".into(),
+                    source_path: PathBuf::from("knowledge/requirements/req-note-export.md"),
+                    status: crate::spec_knowledge::RequirementPlanStatus::Blocked,
+                    mode: "blocked_questions".into(),
+                    scenario_count: 1,
+                    blocked_by: vec!["Should export support CSV?".into()],
+                },
+            ],
+            work_units: Vec::new(),
+            specs: Vec::new(),
+            edges: Vec::new(),
+            batches: vec![crate::spec_knowledge::RequirementPlanBatch {
+                order: 1,
+                requirement_ids: vec!["REQ-NOTE-CREATE".into(), "REQ-NOTE-EXPORT".into()],
+            }],
+            coverage: vec![crate::spec_knowledge::RequirementSpecCoverage {
+                requirement_id: "REQ-NOTE-CREATE".into(),
+                spec_paths: vec![PathBuf::from("specs/task-req-note-create.spec.md")],
+                spec_depends: Vec::new(),
+            }],
+            diagnostics: Vec::new(),
+            parse_errors: Vec::new(),
+        };
+
+        let manifest = crate::spec_knowledge::build_worktree_manifest(
+            &plan,
+            "main",
+            Path::new("../agent-spec-worktrees"),
+        );
+        let json = serde_json::to_string_pretty(&manifest).unwrap();
+
+        assert!(json.contains("REQ-NOTE-CREATE"));
+        assert!(json.contains("feat/wu-req-note-create"));
+        assert!(json.contains("../agent-spec-worktrees/wu-req-note-create"));
+        assert!(!json.contains("REQ-NOTE-EXPORT"));
+    }
+
+    #[test]
+    fn test_requirements_compiler_plan_dag_self_hosting_contract_is_traced() {
+        let root = repo_root();
+        let plan = crate::spec_knowledge::build_requirement_plan(
+            &root.join("knowledge"),
+            &root.join("specs"),
+        );
+
+        assert!(plan.requirements.iter().any(|node| {
+            node.id == "REQ-REQUIREMENTS-COMPILER-PLAN-DAG"
+                && node.status == crate::spec_knowledge::RequirementPlanStatus::Ready
+        }));
+        assert!(plan.coverage.iter().any(|coverage| {
+            coverage.requirement_id == "REQ-REQUIREMENTS-COMPILER-PLAN-DAG"
+                && coverage
+                    .spec_paths
+                    .iter()
+                    .any(|path| path.ends_with("specs/task-requirements-compiler-plan-dag.spec.md"))
+        }));
+        let spec =
+            fs::read_to_string(root.join("specs/task-requirements-compiler-plan-dag.spec.md"))
+                .unwrap();
+        assert!(spec.contains("satisfies: [REQ-REQUIREMENTS-COMPILER-PLAN-DAG]"));
+        assert!(spec.contains("requirements trace"));
+        assert!(spec.contains("requirements replay"));
+        assert!(spec.contains("requirements trace-graph"));
+    }
+
+    #[test]
+    fn test_requirements_compiler_schema_files_and_fixture_golden_outputs_are_stable() {
+        let root = repo_root();
+        let schema_dir = root.join("docs/intent-compiler/schemas");
+        for (file_name, root_type) in [
+            ("requirements-plan-v1.schema.json", "object"),
+            ("test-obligations-v1.schema.json", "object"),
+            ("worktree-manifest-v1.schema.json", "object"),
+            ("clarification-questions-v1.schema.json", "array"),
+            ("requirement-trace-ledger-v1.schema.json", "object"),
+        ] {
+            let schema_path = schema_dir.join(file_name);
+            let schema_json: serde_json::Value =
+                serde_json::from_str(&fs::read_to_string(&schema_path).unwrap()).unwrap();
+            assert_eq!(
+                schema_json.get("$schema").and_then(|value| value.as_str()),
+                Some("https://json-schema.org/draft/2020-12/schema")
+            );
+            assert!(
+                schema_json
+                    .get("$id")
+                    .and_then(|value| value.as_str())
+                    .is_some_and(|id| {
+                        id.contains("agent-spec/intent-compiler/") && id.ends_with(file_name)
+                    }),
+                "schema {file_name} must have a stable intent compiler $id"
+            );
+            assert_eq!(
+                schema_json.get("type").and_then(|value| value.as_str()),
+                Some(root_type),
+                "schema {file_name} root type drifted"
+            );
+        }
+
+        let fixture = PathBuf::from("fixtures/requirements-noteapp");
+        let knowledge = fixture.join("knowledge");
+        let specs = fixture.join("specs");
+        let golden_dir = root.join("fixtures/requirements-noteapp/.agent-spec");
+
+        let plan = crate::spec_knowledge::build_requirement_plan(&knowledge, &specs);
+        assert_eq!(
+            pretty_json(&plan),
+            fs::read_to_string(golden_dir.join("requirements-plan.json")).unwrap()
+        );
+
+        let obligations = crate::spec_knowledge::build_test_obligations(&knowledge, &specs);
+        assert_eq!(
+            pretty_json(&obligations),
+            fs::read_to_string(golden_dir.join("test_obligations.json")).unwrap()
+        );
+
+        let worktrees = crate::spec_knowledge::build_worktree_manifest(
+            &plan,
+            "main",
+            Path::new("../agent-spec-worktrees"),
+        );
+        assert_eq!(
+            pretty_json(&worktrees),
+            fs::read_to_string(golden_dir.join("worktrees.json")).unwrap()
+        );
+
+        let lint_diagnostics =
+            crate::spec_knowledge::collect_clarification_lint_diagnostics(&knowledge);
+        let questions =
+            crate::spec_knowledge::build_clarification_questions(&plan, &lint_diagnostics);
+        assert_eq!(
+            pretty_json(&questions),
+            fs::read_to_string(golden_dir.join("questions.json")).unwrap()
+        );
+    }
+
+    fn pretty_json<T: serde::Serialize>(value: &T) -> String {
+        let mut json = serde_json::to_string_pretty(value).unwrap();
+        json.push('\n');
+        json
+    }
+
+    fn sample_requirement_trace_record(
+        req_id: &str,
+        verdict: crate::spec_core::Verdict,
+    ) -> crate::spec_knowledge::RequirementTraceRecord {
+        crate::spec_knowledge::RequirementTraceRecord {
+            run_id: "run-1".into(),
+            requirement_id: req_id.into(),
+            requirement_source: PathBuf::from("knowledge/requirements/req-note-create.md"),
+            work_unit_id: format!("WU-{req_id}"),
+            spec_path: PathBuf::from("specs/task-req-note-create.spec.md"),
+            scenario_name: "Create note".into(),
+            test_selector: Some("note_create_adds_note".into()),
+            code_targets: vec!["src/lib.rs".into()],
+            verdict,
+            evidence: vec![crate::spec_knowledge::RequirementTraceEvidence {
+                kind: "test_output".into(),
+                summary: "note_create_adds_note failed".into(),
+            }],
+            worktree_path: Some(PathBuf::from("../agent-spec-worktrees/wu-req-note-create")),
+            branch: Some("feat/wu-req-note-create".into()),
+            vcs: None,
+            wiki_articles: Vec::new(),
+            timestamp: 1,
+        }
+    }
+
+    #[test]
+    fn test_requirements_trace_records_include_related_wiki_articles() {
+        let dir = make_temp_dir("requirements-trace-wiki-links");
+        let wiki = dir.join(".agent-spec/wiki");
+        fs::create_dir_all(wiki.join("modules")).unwrap();
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("src/lib.rs"), "pub fn add() -> i32 { 1 }\n").unwrap();
+        fs::write(
+            wiki.join("modules/lib.md"),
+            "---\ntitle: \"Library\"\ntype: module\nsource_files:\n  - src/lib.rs\ntags:\n  - rust\nstatus: draft\n---\n\n# Library\n",
+        )
+        .unwrap();
+        let mut records = vec![sample_requirement_trace_record(
+            "REQ-NOTE-CREATE",
+            crate::spec_core::Verdict::Pass,
+        )];
+
+        super::attach_wiki_articles_to_trace_records(&mut records, &dir, &wiki);
+
+        assert_eq!(
+            records[0].wiki_articles,
+            vec![PathBuf::from("modules/lib.md")]
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_lifecycle_requirement_trace_writes_to_code_root_trace_dir() {
+        let dir = make_temp_dir("requirements-lifecycle-trace-root");
+        fs::create_dir_all(dir.join("knowledge/requirements")).unwrap();
+        fs::create_dir_all(dir.join("specs")).unwrap();
+        fs::write(
+            dir.join("knowledge/requirements/req-auto-trace.md"),
+            "---\nkind: requirement\nid: REQ-AUTO-TRACE\ntitle: \"Auto Trace\"\nliveness: auto\n---\n## Problem\nNeed trace.\n## Requirements\n[REQ-AUTO-TRACE] The lifecycle MUST write requirement trace evidence.\n## Scenarios\nScenario: Auto trace\n  Given a passing lifecycle report\n  When trace is written\n  Then the trace file appears under the project trace directory\n## Source Trace\n- test\n## Open Questions\nNone.\n",
+        )
+        .unwrap();
+        let spec_path = dir.join("specs/task-auto-trace.spec.md");
+        let spec = "spec: task\nname: \"Auto Trace\"\nsatisfies: [REQ-AUTO-TRACE]\n---\n## Intent\nTrace.\n## Completion Criteria\nScenario: Auto trace\n  Test: auto_trace_records\n  Given a passing lifecycle report\n  When trace is written\n  Then the trace file appears under the project trace directory\n";
+        fs::write(&spec_path, spec).unwrap();
+        let gw = crate::spec_gateway::SpecGateway::from_input(spec).unwrap();
+        let report = crate::spec_core::VerificationReport::from_results(
+            "Auto Trace".into(),
+            vec![crate::spec_core::ScenarioResult {
+                scenario_name: "Auto trace".into(),
+                verdict: crate::spec_core::Verdict::Pass,
+                step_results: Vec::new(),
+                evidence: vec![crate::spec_core::Evidence::TestOutput {
+                    test_name: "auto_trace_records".into(),
+                    stdout: "ok".into(),
+                    passed: true,
+                    package: None,
+                    level: None,
+                    test_double: None,
+                    targets: Some("src/lib.rs".into()),
+                }],
+                duration_ms: 1,
+                provenance: None,
+            }],
+        );
+        let run_log_dir = dir.join(".agent-spec/runs");
+
+        let trace_path = super::write_lifecycle_requirement_trace(
+            &spec_path,
+            &dir,
+            &run_log_dir,
+            &gw,
+            &report,
+            42,
+            None,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert!(trace_path.starts_with(dir.join(".agent-spec/trace")));
+        assert!(trace_path.exists());
+        assert!(!run_log_dir.join(".agent-spec/trace").exists());
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_requirements_explain_failure_suggests_related_wiki_articles() {
+        let dir = make_temp_dir("requirements-failure-wiki-links");
+        let wiki = dir.join(".agent-spec/wiki");
+        fs::create_dir_all(wiki.join("modules")).unwrap();
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("src/lib.rs"), "pub fn add() -> i32 { 1 }\n").unwrap();
+        fs::write(
+            wiki.join("modules/lib.md"),
+            "---\ntitle: \"Library\"\ntype: module\nsource_files:\n  - src/lib.rs\ntags:\n  - rust\nstatus: draft\n---\n\n# Library\n",
+        )
+        .unwrap();
+        let mut explanation = crate::spec_knowledge::RequirementFailureExplanation {
+            requirement_id: "REQ-NOTE-CREATE".into(),
+            non_pass_records: vec![sample_requirement_trace_record(
+                "REQ-NOTE-CREATE",
+                crate::spec_core::Verdict::Fail,
+            )],
+            diagnostics: Vec::new(),
+        };
+
+        super::attach_wiki_articles_to_failure_explanation(&mut explanation, &dir, &wiki);
+
+        assert_eq!(
+            explanation.non_pass_records[0].wiki_articles,
+            vec![PathBuf::from("modules/lib.md")]
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_docs_describe_requirements_compiler_plan_and_questions() {
+        let readme = include_str!("../README.md");
+        let agents = include_str!("../AGENTS.md");
+        let skill = include_str!("../skills/agent-spec-tool-first/SKILL.md");
+        let commands = include_str!("../skills/agent-spec-tool-first/references/commands.md");
+
+        for content in [readme, agents, skill, commands] {
+            assert!(content.contains("requirements plan"));
+            assert!(content.contains("requirements test-obligations"));
+            assert!(content.contains("requirements worktrees"));
+            assert!(content.contains("requirements trace"));
+            assert!(content.contains("requirements replay"));
+            assert!(content.contains("requirements explain-failure"));
+            assert!(content.contains("requirements trace-graph"));
+            assert!(content.contains("requirements questions"));
+            assert!(content.contains("--run-log-dir"));
+            assert!(content.contains("QA class"));
+            assert!(content.contains("state-machine"));
+            assert!(content.contains("deterministic"));
+            assert!(content.contains("reverse interview"));
+            assert!(content.contains("archive"));
+            assert!(content.contains("archive diagnostic"));
+            assert!(content.contains("active specs"));
+            assert!(content.contains("dogfood"));
+        }
+    }
+
+    #[test]
+    fn test_requirements_compiler_skill_defines_prd_intake_and_reverse_interview_contract() {
+        let skill = include_str!("../skills/agent-spec-intent-compiler/SKILL.md");
+
+        for term in [
+            "PRD Intake Output Contract",
+            "Candidate Requirement Block",
+            "source excerpt",
+            "confidence",
+            "Open Questions",
+            "Reverse Interview Loop",
+            "Answer Integration",
+            "human-confirmed",
+            "Do not treat a model inference as accepted",
+        ] {
+            assert!(
+                skill.contains(term),
+                "missing requirements skill term {term}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_docs_engineering_standards_include_lore_practices() {
+        let doc_types = include_str!("../knowledge/standards/canon/doc-types.md");
+        let language = include_str!("../knowledge/standards/canon/language.md");
+        let format = include_str!("../knowledge/standards/canon/format.md");
+        let checklist = include_str!("../knowledge/standards/operational/review-checklist.md");
+        let tools = include_str!("../knowledge/standards/tools/README.md");
+        let proposal = include_str!("../knowledge/proposals/proposal-template.md");
+        let script = include_str!("../scripts/docs-lint.sh");
+
+        for term in [
+            "Tutorial",
+            "How-To",
+            "Reference",
+            "Explanation",
+            "Internals",
+            "ADR",
+            "Code-Standard",
+            "Landing",
+        ] {
+            assert!(doc_types.contains(term), "missing doc type {term}");
+        }
+
+        for content in [doc_types, language, format, checklist, tools, proposal] {
+            assert!(content.contains("Lore"));
+            assert!(content.contains("agent-spec"));
+        }
+
+        for term in ["canon", "operational", "pre-publish", "rendered preview"] {
+            assert!(checklist.contains(term), "missing checklist term {term}");
+        }
+
+        for tool in ["Harper", "Chinese docs lint", "markdownlint", "lychee"] {
+            assert!(tools.contains(tool), "missing tool doc {tool}");
+        }
+
+        for call in [
+            "harper-cli",
+            "run_chinese_lint",
+            "zh-no-fullwidth-space",
+            "zh-no-replacement-char",
+            "zh-no-unresolved-placeholder",
+            "markdownlint-cli2",
+            "lychee",
+            "DOCS_LINT_REQUIRE_EXTERNAL=all",
+        ] {
+            assert!(script.contains(call), "missing script call {call}");
+        }
+
+        for section in [
+            "Motivation",
+            "Goals",
+            "Non-Goals",
+            "Compatibility",
+            "Migration Plan",
+            "Security Considerations",
+            "Privacy Considerations",
+            "Risks and Assumptions",
+            "Alternatives Considered",
+            "Unresolved Questions",
+        ] {
+            assert!(
+                proposal.contains(section),
+                "missing proposal section {section}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_docs_lint_ci_installs_and_requires_all_docs_tools() {
+        let workflow = include_str!("../.github/workflows/docs-lint.yml");
+
+        for term in [
+            "name: Documentation Lint",
+            "cargo install harper-cli lychee",
+            "npm install -g markdownlint-cli2",
+            "DOCS_LINT_REQUIRE_EXTERNAL=all",
+            "bash scripts/docs-lint.sh",
+            "pull_request",
+            "push",
+        ] {
+            assert!(workflow.contains(term), "missing docs lint CI term {term}");
+        }
+    }
+
+    #[test]
+    fn test_reference_validation_matrix_covers_borrowed_invariants() {
+        let matrix = include_str!("../docs/intent-compiler/reference-validation-matrix.md");
+
+        for reference in [
+            "ticketbooking-demo/requirements.yaml",
+            "traceability/service.py",
+            "agent-runtime `traceability.py`",
+            "test_generator.py",
+            "templates/web/backend",
+            "templates/android/app/src/test",
+        ] {
+            assert!(
+                matrix.contains(reference),
+                "missing matrix reference {reference}"
+            );
+        }
+
+        for invariant in [
+            "requirement tree",
+            "FOLDER",
+            "ATOMIC",
+            "dependencies",
+            "scenarios",
+            "negative cases",
+            "test-first obligations",
+            "traceability queries",
+            "requirement-to-evidence",
+            "non-goal",
+        ] {
+            assert!(matrix.contains(invariant), "missing invariant {invariant}");
+        }
+
+        for gate in [
+            "requirements graph",
+            "requirements plan",
+            "requirements test-obligations",
+            "requirements replay",
+            "requirements explain-failure",
+            "requirements trace-graph",
+        ] {
+            assert!(matrix.contains(gate), "missing agent-spec gate {gate}");
+        }
+
+        for structure in [
+            "## Validation Rows",
+            "Reference method",
+            "Borrowed invariant",
+            "agent-spec evidence",
+            "Status",
+        ] {
+            assert!(
+                matrix.contains(structure),
+                "missing matrix structure {structure}"
+            );
+        }
+
+        for evidence_test in [
+            "test_requirement_graph_extracts_dependencies_scenarios_and_open_questions",
+            "test_requirement_graph_reports_dangling_dependency_and_cycle",
+            "test_requirements_plan_json_includes_batches_edges_and_coverage",
+            "test_requirements_plan_gate_fails_on_dangling_dependency",
+            "test_lint_requirement_warns_when_negative_behavior_lacks_negative_scenario",
+            "test_requirements_test_obligations_json_contains_spec_derived_obligations",
+            "test_qa_class_a_requires_lifecycle_trace_targeted_tests_and_adversarial_review",
+            "test_requirements_replay_uses_latest_trace_record_for_requirement",
+            "test_requirements_explain_failure_reports_non_pass_chain",
+            "test_requirements_trace_graph_mermaid_contains_evidence_nodes",
+        ] {
+            assert!(
+                matrix.contains(evidence_test),
+                "missing matrix evidence test {evidence_test}"
+            );
+        }
+
+        for non_goal in [
+            "Non-goal: execute reference-project runtime tests",
+            "Non-goal: depend on reference-project Python, Node, Playwright, VS Code, or Android runtime dependencies",
+            "Non-goal: parse reference-project YAML directly in the CLI",
+        ] {
+            assert!(
+                matrix.contains(non_goal),
+                "missing matrix non-goal {non_goal}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_noteapp_fixture_documents_end_to_end_requirements_compiler_demo() {
+        let readme = include_str!("../fixtures/requirements-noteapp/README.md");
+
+        for term in [
+            "Raw PRD",
+            "knowledge/requirements",
+            "requirements-plan.json",
+            "test_obligations.json",
+            "worktrees.json",
+            "questions.json",
+            "task-req-note-create.spec.md",
+            "cargo test --manifest-path fixtures/requirements-noteapp/Cargo.toml --quiet",
+            "requirements import --check",
+            "lint-knowledge",
+            "requirements graph",
+            "requirements plan",
+            "requirements test-obligations",
+            "requirements worktrees",
+            "requirements questions",
+            "lifecycle fixtures/requirements-noteapp/specs/task-req-note-create.spec.md",
+            "requirements replay REQ-NOTE-CREATE",
+            "requirements trace-graph REQ-NOTE-CREATE",
+            "not the self-hosting dogfood gate",
+        ] {
+            assert!(
+                readme.contains(term),
+                "missing noteapp fixture demo term {term}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_archive_cli_parses_dry_run_and_check() {
+        let cli = super::Cli::parse_from([
+            "agent-spec",
+            "archive",
+            "--spec-dir",
+            "specs",
+            "--archive-dir",
+            ".agent-spec/archive/specs",
+            "--summary",
+            "knowledge/context/spec-archives.md",
+            "--run-log-dir",
+            ".",
+            "--dry-run",
+            "--check",
+        ]);
+
+        match cli.command {
+            super::Commands::Archive {
+                spec_dir,
+                archive_dir,
+                summary,
+                run_log_dir,
+                dry_run,
+                check,
+            } => {
+                assert_eq!(spec_dir, PathBuf::from("specs"));
+                assert_eq!(archive_dir, PathBuf::from(".agent-spec/archive/specs"));
+                assert_eq!(summary, PathBuf::from("knowledge/context/spec-archives.md"));
+                assert_eq!(run_log_dir, PathBuf::from("."));
+                assert!(dry_run);
+                assert!(check);
+            }
+            _ => panic!("expected archive command"),
+        }
     }
 
     #[test]
@@ -3953,6 +7577,7 @@ Scenario: Contract alias
                 lang,
                 template,
                 name,
+                workspace: _,
             } => {
                 assert_eq!(level, "task");
                 assert_eq!(lang, "en");
@@ -4070,11 +7695,11 @@ Scenario: verification metadata stays visible
     #[test]
     fn test_roadmap_phase_zero_and_one_specs_exist_and_capture_priorities() {
         let phase0 = fs::read_to_string(
-            repo_root().join("specs/roadmap/task-phase0-contract-fidelity.spec.md"),
+            repo_root().join(".agent-spec/archive/specs/task-phase0-contract-fidelity.spec.md"),
         )
         .unwrap();
         let phase1 = fs::read_to_string(
-            repo_root().join("specs/roadmap/task-phase1-contract-review-loop.spec.md"),
+            repo_root().join(".agent-spec/archive/specs/task-phase1-contract-review-loop.spec.md"),
         )
         .unwrap();
 
@@ -4091,23 +7716,26 @@ Scenario: verification metadata stays visible
     #[test]
     fn test_roadmap_later_phase_specs_exist_and_are_split_by_concern() {
         let phase2 = fs::read_to_string(
-            repo_root().join("specs/roadmap/task-phase2-run-history-and-vcs-context.spec.md"),
+            repo_root()
+                .join(".agent-spec/archive/specs/task-phase2-run-history-and-vcs-context.spec.md"),
         )
         .unwrap();
         let phase3 = fs::read_to_string(
-            repo_root().join("specs/roadmap/task-phase3-spec-governance.spec.md"),
+            repo_root().join(".agent-spec/archive/specs/task-phase3-spec-governance.spec.md"),
         )
         .unwrap();
         let phase4 = fs::read_to_string(
-            repo_root().join("specs/roadmap/task-phase4-ai-verification-expansion.spec.md"),
+            repo_root()
+                .join(".agent-spec/archive/specs/task-phase4-ai-verification-expansion.spec.md"),
         )
         .unwrap();
         let phase5 = fs::read_to_string(
-            repo_root().join("specs/roadmap/task-phase5-ecosystem-integrations.spec.md"),
+            repo_root()
+                .join(".agent-spec/archive/specs/task-phase5-ecosystem-integrations.spec.md"),
         )
         .unwrap();
         let phase6 = fs::read_to_string(
-            repo_root().join("specs/roadmap/task-phase6-advanced-verification.spec.md"),
+            repo_root().join(".agent-spec/archive/specs/task-phase6-advanced-verification.spec.md"),
         )
         .unwrap();
 
@@ -4269,6 +7897,8 @@ Scenario: verification metadata stays visible
 
         let entry = RunLogEntry {
             spec_name: "test-contract".into(),
+            spec_path: PathBuf::new(),
+            spec_fingerprint: String::new(),
             passing: true,
             summary: "3/3 passed, 0 failed, 0 skipped, 0 uncertain".into(),
             timestamp: 1700000000,
@@ -4304,6 +7934,50 @@ Scenario: verification metadata stays visible
     }
 
     #[test]
+    fn test_lifecycle_writes_requirement_trace_record() {
+        let run_dir = make_temp_dir("agent-spec-requirement-trace");
+        let fixture = repo_root().join("fixtures/requirements-noteapp");
+        let spec = fixture.join("specs/task-req-note-create.spec.md");
+        let trace_dir = fixture.join(".agent-spec/trace");
+        let _ = fs::remove_dir_all(&trace_dir);
+
+        let result = super::cmd_lifecycle(
+            &spec,
+            &fixture,
+            &[],
+            "none",
+            "off",
+            0.0,
+            "json",
+            Some(&run_dir),
+            false,
+            None,
+            None,
+            "auto",
+        );
+        assert!(result.is_ok(), "lifecycle should pass: {result:?}");
+
+        let files = fs::read_dir(&trace_dir)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .collect::<Vec<_>>();
+        assert!(
+            !files.is_empty(),
+            "trace directory should contain JSON ledgers"
+        );
+
+        let ledger = crate::spec_knowledge::read_requirement_trace_ledgers(&trace_dir);
+        assert!(ledger.records.iter().any(|record| {
+            record.requirement_id == "REQ-NOTE-CREATE"
+                && record.scenario_name == "Create note"
+                && record.verdict == crate::spec_core::Verdict::Pass
+        }));
+
+        let _ = fs::remove_dir_all(trace_dir);
+        let _ = fs::remove_dir_all(run_dir);
+    }
+
+    #[test]
     fn test_explain_history_reads_run_log_summary() {
         let dir = make_temp_dir("agent-spec-explain-history");
         let runs_dir = dir.join(".agent-spec/runs");
@@ -4313,6 +7987,8 @@ Scenario: verification metadata stays visible
         for (i, passing) in [false, false, true].iter().enumerate() {
             let entry = RunLogEntry {
                 spec_name: "history-contract".into(),
+                spec_path: PathBuf::new(),
+                spec_fingerprint: String::new(),
                 passing: *passing,
                 summary: format!("run {}", i + 1),
                 timestamp: 1700000000 + i as u64,
@@ -4418,6 +8094,60 @@ Scenario: verification metadata stays visible
             }
             _ => panic!("expected Lifecycle command"),
         }
+    }
+
+    #[test]
+    fn test_lifecycle_qa_gate_rejects_missing_class_a_evidence_and_invalid_risk() {
+        let report = crate::spec_core::VerificationReport::from_results(
+            "High Risk".into(),
+            vec![crate::spec_core::ScenarioResult {
+                scenario_name: "High risk behavior".into(),
+                verdict: crate::spec_core::Verdict::Pass,
+                step_results: Vec::new(),
+                evidence: vec![crate::spec_core::Evidence::TestOutput {
+                    test_name: "high_risk_behavior".into(),
+                    stdout: String::new(),
+                    passed: true,
+                    package: None,
+                    level: Some("integration".into()),
+                    test_double: None,
+                    targets: Some("src/lib.rs".into()),
+                }],
+                duration_ms: 1,
+                provenance: None,
+            }],
+        );
+        let scenarios = vec![crate::spec_core::Scenario {
+            name: "High risk behavior".into(),
+            steps: Vec::new(),
+            test_selector: None,
+            tags: Vec::new(),
+            review: crate::spec_core::ReviewMode::Auto,
+            depends_on: Vec::new(),
+            mode: crate::spec_core::ScenarioMode::Standard,
+            rule: None,
+            span: crate::spec_core::Span::default(),
+        }];
+
+        let missing =
+            super::lifecycle_qa_missing_evidence(Some("A"), &scenarios, &report, false, false)
+                .unwrap();
+        assert_eq!(
+            missing,
+            vec![
+                crate::spec_qa::QaEvidenceKind::Trace,
+                crate::spec_qa::QaEvidenceKind::AdversarialReview,
+            ]
+        );
+        assert!(
+            super::lifecycle_qa_missing_evidence(Some("D"), &scenarios, &report, true, true)
+                .is_err()
+        );
+        assert!(
+            super::lifecycle_qa_missing_evidence(None, &scenarios, &report, false, false)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     // === Phase 5 Tests ===
@@ -4683,6 +8413,8 @@ Scenario: verification metadata stays visible
     fn test_run_log_entry_serialises_vcs_context() {
         let entry = RunLogEntry {
             spec_name: "vcs-test".into(),
+            spec_path: PathBuf::new(),
+            spec_fingerprint: String::new(),
             passing: true,
             summary: "3/3 passed".into(),
             timestamp: 1700000000,
@@ -4729,6 +8461,8 @@ Scenario: verification metadata stays visible
         // Write two run log entries with jj operation IDs
         let entry1 = RunLogEntry {
             spec_name: "jj-diff-contract".into(),
+            spec_path: PathBuf::new(),
+            spec_fingerprint: String::new(),
             passing: false,
             summary: "1/3 passed".into(),
             timestamp: 1700000001,
@@ -4740,6 +8474,8 @@ Scenario: verification metadata stays visible
         };
         let entry2 = RunLogEntry {
             spec_name: "jj-diff-contract".into(),
+            spec_path: PathBuf::new(),
+            spec_fingerprint: String::new(),
             passing: true,
             summary: "3/3 passed".into(),
             timestamp: 1700000002,
@@ -4784,6 +8520,8 @@ Scenario: verification metadata stays visible
         for (i, passing) in [false, true].iter().enumerate() {
             let entry = RunLogEntry {
                 spec_name: "degrade-contract".into(),
+                spec_path: PathBuf::new(),
+                spec_fingerprint: String::new(),
                 passing: *passing,
                 summary: format!("run {}", i + 1),
                 timestamp: 1700000010 + i as u64,
@@ -4824,6 +8562,1115 @@ Scenario: verification metadata stays visible
         let dir = std::env::temp_dir().join(format!("{prefix}-{stamp}"));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    fn make_wiki_fixture(prefix: &str) -> PathBuf {
+        let dir = make_temp_dir(prefix);
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::create_dir_all(dir.join("knowledge/requirements")).unwrap();
+        fs::create_dir_all(dir.join("specs")).unwrap();
+        fs::create_dir_all(dir.join(".agent-spec/trace")).unwrap();
+        fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"wiki_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("src/lib.rs"),
+            "pub fn add(left: i32, right: i32) -> i32 { left + right }\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("knowledge/requirements/req-add.md"),
+            "---\nkind: requirement\nid: REQ-ADD\ntitle: \"Add\"\nliveness: auto\n---\n# Add\n\n## Requirements\n\n[REQ-ADD] The system MUST add two numbers.\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("specs/task-add.spec.md"),
+            "spec: task\nname: \"Add\"\nsatisfies: [REQ-ADD]\n---\n## Intent\nAdd numbers.\n## Completion Criteria\nScenario: Add\n  Test: test_add\n  Given two numbers\n  When add runs\n  Then the sum is returned\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join(".agent-spec/trace/run.json"),
+            "{\"version\":1,\"records\":[],\"diagnostics\":[]}",
+        )
+        .unwrap();
+        dir
+    }
+
+    #[test]
+    fn test_wiki_init_writes_live_wiki_scaffold_inventory_and_index() {
+        let dir = make_wiki_fixture("wiki-live-init");
+        let wiki = dir.join(".agent-spec/wiki");
+
+        super::cmd_wiki_init(&dir, &wiki, false, "json").unwrap();
+
+        assert!(wiki.join("_index.md").exists());
+        assert!(wiki.join("_architecture.md").exists());
+        assert!(wiki.join("_patterns.md").exists());
+        assert!(wiki.join("_log.md").exists());
+        assert!(wiki.join("_meta.json").exists());
+        assert!(wiki.join("architecture/inventory.json").exists());
+        assert!(wiki.join("architecture/workspace.mmd").exists());
+        assert!(wiki.join("architecture/project-map.json").exists());
+        assert!(wiki.join("architecture/project-map.mmd").exists());
+        assert!(wiki.join("modules").is_dir());
+        assert!(wiki.join("concepts").is_dir());
+        assert!(wiki.join("decisions").is_dir());
+        assert!(wiki.join("learnings").is_dir());
+        assert!(wiki.join("queries").is_dir());
+        assert!(wiki.join("projects").is_dir());
+        assert!(wiki.join("flows").is_dir());
+
+        let architecture = fs::read_to_string(wiki.join("_architecture.md")).unwrap();
+        assert!(architecture.contains("source_files:"));
+        assert!(architecture.contains("architecture/inventory.json"));
+        assert!(architecture.contains("architecture/project-map.mmd"));
+        assert!(architecture.contains("architecture/project-map.json"));
+        let mermaid = fs::read_to_string(wiki.join("architecture/workspace.mmd")).unwrap();
+        assert!(mermaid.contains("graph TD"));
+        assert!(mermaid.contains("wiki_fixture"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_wiki_init_check_allows_seeded_extra_pages() {
+        let dir = make_wiki_fixture("wiki-live-init-check");
+        let wiki = dir.join(".agent-spec/wiki");
+
+        super::cmd_wiki_init(&dir, &wiki, false, "json").unwrap();
+        fs::create_dir_all(wiki.join("modules")).unwrap();
+        fs::write(
+            wiki.join("modules/custom.md"),
+            "---\ntitle: \"Custom\"\ntype: module\nsource_files:\n  - src/lib.rs\n---\n# Custom\n",
+        )
+        .unwrap();
+
+        super::cmd_wiki_init(&dir, &wiki, true, "json").unwrap();
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_wiki_init_check_preserves_maintained_project_articles() {
+        let dir = make_wiki_fixture("wiki-live-init-check-projects");
+        let wiki = dir.join(".agent-spec/wiki");
+        super::cmd_wiki_init(&dir, &wiki, false, "json").unwrap();
+        for id in ["main", "dependency"] {
+            fs::write(
+                wiki.join("projects").join(format!("{id}.md")),
+                format!(
+                    "---\ntitle: \"{id}\"\ntype: external-project\nproject_id: {id}\nrepo: .\nrole: project\ninterfaces: [cli]\nprotocols: [filesystem]\nstatus: active\nsource_files: [src/lib.rs]\nexternal_sources: [example/{id}]\n---\n# {id}\n"
+                ),
+            )
+            .unwrap();
+        }
+        fs::write(
+            wiki.join("flows/main-to-dependency.md"),
+            "---\ntitle: \"Main to dependency\"\ntype: project-flow\nflow_id: main-to-dependency\nprojects: [main, dependency]\nkind: calls\nprotocols: [filesystem]\nrequirements: [REQ-ADD]\nspecs: [specs/task-add.spec.md]\nsource_files: [src/lib.rs]\nexternal_sources: [example/dependency]\n---\n# Flow\n",
+        )
+        .unwrap();
+        crate::spec_wiki::write_wiki_index(&wiki).unwrap();
+        crate::spec_wiki::write_project_map_artifacts(&dir, &wiki).unwrap();
+
+        super::cmd_wiki_init(&dir, &wiki, true, "json").unwrap();
+
+        assert!(wiki.join("projects/main.md").exists());
+        assert!(wiki.join("flows/main-to-dependency.md").exists());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_wiki_init_check_rejects_missing_maintained_directories() {
+        let dir = make_wiki_fixture("wiki-live-init-check-missing-maintained-dir");
+        let wiki = dir.join(".agent-spec/wiki");
+        super::cmd_wiki_init(&dir, &wiki, false, "json").unwrap();
+        fs::remove_dir_all(wiki.join("flows")).unwrap();
+
+        let error = super::cmd_wiki_init(&dir, &wiki, true, "json").unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("target wiki is missing maintained directory: flows"),
+            "{error}"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_wiki_init_check_rejects_project_map_diagnostics() {
+        let dir = make_wiki_fixture("wiki-live-init-check-project-errors");
+        let wiki = dir.join(".agent-spec/wiki");
+        super::cmd_wiki_init(&dir, &wiki, false, "json").unwrap();
+        fs::write(
+            wiki.join("projects/main.md"),
+            "---\ntitle: \"main\"\ntype: external-project\nproject_id: main\nrepo: .\nrole: main\ninterfaces: [cli]\nprotocols: [filesystem]\nstatus: active\nsource_files:\n  - src/lib.rs\n---\n# Main\n",
+        )
+        .unwrap();
+        fs::write(
+            wiki.join("flows/broken.md"),
+            "---\ntitle: \"broken\"\ntype: project-flow\nflow_id: broken\nprojects: [main, missing]\nkind: calls\nprotocols: [filesystem]\nsource_files:\n  - src/lib.rs\n---\n# Broken\n",
+        )
+        .unwrap();
+        crate::spec_wiki::write_project_map_artifacts(&dir, &wiki).unwrap();
+
+        assert!(super::cmd_wiki_init(&dir, &wiki, true, "json").is_err());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_temp_dir_cleanup_removes_directory_on_drop() {
+        let dir = make_temp_dir("wiki-temp-dir-cleanup");
+
+        {
+            let _cleanup = super::TempDirCleanup::new(dir.clone());
+            assert!(dir.exists());
+        }
+
+        assert!(!dir.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_wiki_init_check_rejects_symlinked_maintained_article() {
+        use std::os::unix::fs::symlink;
+
+        let dir = make_wiki_fixture("wiki-live-init-check-symlink");
+        let wiki = dir.join(".agent-spec/wiki");
+        super::cmd_wiki_init(&dir, &wiki, false, "json").unwrap();
+        fs::write(
+            wiki.join("main.md"),
+            "---\ntitle: \"main\"\ntype: external-project\nproject_id: main\nrepo: .\nrole: main\ninterfaces: [cli]\nprotocols: [filesystem]\nstatus: active\nsource_files: [src/lib.rs]\n---\n# Main\n",
+        )
+        .unwrap();
+        symlink("../main.md", wiki.join("projects/main.md")).unwrap();
+
+        let error = super::cmd_wiki_init(&dir, &wiki, true, "json").unwrap_err();
+
+        assert!(
+            error.to_string().contains("symlinked maintained entry"),
+            "{error}"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_copy_file_tree_rejects_symlinked_root() {
+        use std::os::unix::fs::symlink;
+
+        let dir = make_temp_dir("wiki-copy-tree-symlink-root");
+        let source = dir.join("real-projects");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("main.md"), "# Main\n").unwrap();
+        let source_link = dir.join("projects");
+        symlink("real-projects", &source_link).unwrap();
+
+        let error = super::copy_file_tree(&source_link, &dir.join("copied")).unwrap_err();
+
+        assert!(
+            error.to_string().contains("symlinked maintained entry"),
+            "{error}"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_wiki_inventory_reads_rust_workspace_dependencies() {
+        let dir = make_temp_dir("wiki-rust-inventory");
+        fs::create_dir_all(dir.join("app/src")).unwrap();
+        fs::create_dir_all(dir.join("core/src")).unwrap();
+        fs::write(
+            dir.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"app\", \"core\"]\nresolver = \"2\"\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("app/Cargo.toml"),
+            "[package]\nname = \"wiki-app\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\nwiki-core = { path = \"../core\" }\n",
+        )
+        .unwrap();
+        fs::write(dir.join("app/src/lib.rs"), "pub fn run() {}\n").unwrap();
+        fs::write(
+            dir.join("core/Cargo.toml"),
+            "[package]\nname = \"wiki-core\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .unwrap();
+        fs::write(dir.join("core/src/lib.rs"), "pub fn value() -> u8 { 1 }\n").unwrap();
+
+        let inventory = crate::spec_wiki::build_architecture_inventory(&dir);
+
+        assert!(inventory.packages.iter().any(|pkg| pkg.name == "wiki-app"));
+        assert!(inventory.packages.iter().any(|pkg| pkg.name == "wiki-core"));
+        assert!(
+            inventory.dependencies.iter().any(|dep| {
+                dep.from == "wiki-app" && dep.to == "wiki-core" && dep.kind == "local"
+            })
+        );
+        assert_eq!(inventory.provider, "rust-cargo");
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_wiki_status_marks_articles_stale_when_source_files_changed() {
+        let dir = make_temp_dir("wiki-status-stale");
+        let wiki = dir.join(".agent-spec/wiki");
+        fs::create_dir_all(wiki.join("modules")).unwrap();
+        fs::write(
+            wiki.join("modules/lib.md"),
+            "---\ntitle: \"Lib\"\ntype: module\nsource_files:\n  - src/lib.rs\n---\n# Lib\n",
+        )
+        .unwrap();
+
+        let report =
+            crate::spec_wiki::status_from_changed_paths(&wiki, &[PathBuf::from("src/lib.rs")]);
+
+        assert!(report.stale_articles.iter().any(|article| {
+            article.path == Path::new("modules/lib.md")
+                && article.source_files == vec![PathBuf::from("src/lib.rs")]
+        }));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_wiki_status_clean_checkout_does_not_diff_against_historical_meta_commit() {
+        let dir = make_wiki_fixture("wiki-status-clean-checkout");
+        let wiki = dir.join(".agent-spec/wiki");
+
+        run_git(&dir, &["init"]);
+        run_git(&dir, &["config", "user.email", "test@example.com"]);
+        run_git(&dir, &["config", "user.name", "Test User"]);
+        run_git(&dir, &["add", "."]);
+        run_git(&dir, &["commit", "-m", "base"]);
+        super::cmd_wiki_init(&dir, &wiki, false, "json").unwrap();
+        run_git(&dir, &["add", ".agent-spec/wiki"]);
+        run_git(&dir, &["commit", "-m", "wiki"]);
+
+        fs::write(
+            dir.join("src/lib.rs"),
+            "pub fn add(left: i32, right: i32) -> i32 { left + right + 0 }\n",
+        )
+        .unwrap();
+        super::cmd_wiki_init(&dir, &wiki, false, "json").unwrap();
+        run_git(&dir, &["add", "."]);
+        run_git(&dir, &["commit", "-m", "change code and wiki"]);
+
+        let report = crate::spec_wiki::wiki_status(&dir, &wiki);
+
+        assert!(
+            report.stale_articles.is_empty(),
+            "clean checkout should not be stale solely because _meta.json was generated before the commit existed: {:?}",
+            report.stale_articles
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_wiki_lint_requires_source_files_and_live_files() {
+        let dir = make_temp_dir("wiki-lint-source-files");
+        let wiki = dir.join(".agent-spec/wiki");
+        fs::create_dir_all(wiki.join("modules")).unwrap();
+        fs::write(wiki.join("_index.md"), "# Index\n").unwrap();
+        fs::write(wiki.join("_architecture.md"), "---\ntitle: \"Architecture\"\ntype: architecture\nsource_files:\n  - src/lib.rs\n---\n# Architecture\n").unwrap();
+        fs::write(wiki.join("_patterns.md"), "---\ntitle: \"Patterns\"\ntype: patterns\nsource_files:\n  - src/lib.rs\n---\n# Patterns\n").unwrap();
+        fs::write(wiki.join("_log.md"), "# Log\n").unwrap();
+        fs::write(wiki.join("_meta.json"), "{}").unwrap();
+        fs::write(
+            wiki.join("modules/lib.md"),
+            "---\ntitle: \"Lib\"\ntype: module\n---\n# Lib\n",
+        )
+        .unwrap();
+
+        let report = crate::spec_wiki::lint_live_wiki(&dir, &wiki);
+
+        assert!(report.diagnostics.iter().any(|diag| {
+            diag.code == "wiki-source-files-missing"
+                && diag.path.as_deref() == Some(Path::new("modules/lib.md"))
+        }));
+        assert!(!report.passed());
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_wiki_lint_reports_project_map_diagnostics() {
+        let dir = make_temp_dir("wiki-project-map-lint");
+        let wiki = dir.join(".agent-spec/wiki");
+        fs::create_dir_all(wiki.join("projects")).unwrap();
+        fs::create_dir_all(wiki.join("flows")).unwrap();
+        fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname=\"main\"\nversion=\"0.1.0\"\nedition=\"2024\"\n",
+        )
+        .unwrap();
+        fs::write(wiki.join("_index.md"), "# Code Live Wiki\n\n").unwrap();
+        fs::write(
+            wiki.join("projects/main.md"),
+            "---\ntitle: \"main\"\ntype: external-project\nproject_id: main\nrepo: .\nrole: \"main\"\ninterfaces:\n  - cli\nprotocols:\n  - filesystem\nstatus: active\nsource_files:\n  - Cargo.toml\nexternal_sources:\n  - example/main\n---\n# main\n",
+        )
+        .unwrap();
+        fs::write(
+            wiki.join("flows/broken.md"),
+            "---\ntitle: \"Broken\"\ntype: project-flow\nflow_id: broken\nprojects:\n  - main\n  - missing\nkind: calls\nprotocols:\n  - stdio\nrequirements:\n  - REQ-TEST\nspecs:\n  - specs/task-test.spec.md\nsource_files:\n  - Cargo.toml\nexternal_sources:\n  - example/missing\n---\n# Broken\n",
+        )
+        .unwrap();
+
+        let report = crate::spec_wiki::lint_live_wiki(&dir, &wiki);
+
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "wiki-project-flow-unknown-project")
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_wiki_lint_reports_project_map_artifact_drift() {
+        let dir = make_wiki_fixture("wiki-project-map-artifact-drift");
+        let wiki = dir.join(".agent-spec/wiki");
+        crate::spec_wiki::init_live_wiki(&dir, &wiki).unwrap();
+        fs::write(
+            wiki.join("projects/main.md"),
+            "---\ntitle: \"main\"\ntype: external-project\nproject_id: main\nrepo: .\nrole: main\ninterfaces: [cli]\nprotocols: [filesystem]\nstatus: active\nsource_files: [src/lib.rs]\n---\n# Main\n",
+        )
+        .unwrap();
+        crate::spec_wiki::write_wiki_index(&wiki).unwrap();
+        fs::remove_file(wiki.join("architecture/project-map.json")).unwrap();
+        fs::write(
+            wiki.join("architecture/project-map.mmd"),
+            "flowchart LR\n  stale[\"stale\"]\n",
+        )
+        .unwrap();
+
+        let report = crate::spec_wiki::lint_live_wiki(&dir, &wiki);
+        let codes = report
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(
+            codes.contains(&"wiki-project-map-json-missing"),
+            "{codes:?}"
+        );
+        assert!(
+            codes.contains(&"wiki-project-map-mermaid-drift"),
+            "{codes:?}"
+        );
+
+        let check = crate::spec_wiki::check_live_wiki_with_changed_paths(&dir, &wiki, &[]);
+        let check_codes = check
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            check_codes.contains(&"wiki-project-map-json-missing"),
+            "{check_codes:?}"
+        );
+        assert!(
+            check_codes.contains(&"wiki-project-map-mermaid-drift"),
+            "{check_codes:?}"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_wiki_inspect_project_reports_related_flows() {
+        let dir = make_temp_dir("wiki-inspect-project");
+        let wiki = dir.join(".agent-spec/wiki");
+        fs::create_dir_all(wiki.join("projects")).unwrap();
+        fs::create_dir_all(wiki.join("flows")).unwrap();
+        fs::create_dir_all(dir.join("knowledge/requirements")).unwrap();
+        fs::create_dir_all(dir.join("specs")).unwrap();
+        fs::write(dir.join("only-in-root.txt"), "root-local\n").unwrap();
+        fs::write(
+            dir.join("knowledge/requirements/req-cross-project-wiki.md"),
+            "---\nkind: requirement\nid: REQ-CROSS-PROJECT-WIKI\ntitle: \"Cross Project Wiki\"\n---\n# Requirement\n\n## Requirements\n\n[REQ-CROSS-PROJECT-WIKI] The system MUST map projects.\n\n## Scenarios\n\nScenario: Map\n  Given projects\n  When mapped\n  Then they are present\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("specs/task-cross-project-wiki.spec.md"),
+            "spec: task\nname: \"Cross Project Wiki\"\nsatisfies: [REQ-CROSS-PROJECT-WIKI]\n---\n\n## Intent\n\nMap projects.\n\n## Completion Criteria\n\nScenario: Map\n  Test: test_map\n  Given projects\n  When mapped\n  Then they are present\n",
+        )
+        .unwrap();
+        fs::write(
+            wiki.join("projects/agent-spec.md"),
+            "---\ntitle: \"agent-spec\"\ntype: external-project\nproject_id: agent-spec\nrepo: .\nrole: \"main\"\ninterfaces:\n  - cli\nprotocols:\n  - filesystem\nstatus: active\nsource_files:\n  - only-in-root.txt\nexternal_sources:\n  - ./README.md\n---\n# agent-spec\n",
+        )
+        .unwrap();
+        fs::write(
+            wiki.join("projects/brain-rs.md"),
+            "---\ntitle: \"brain-rs\"\ntype: external-project\nproject_id: brain-rs\nrepo: /Users/example/brain-rs\nrole: \"context provider\"\ninterfaces:\n  - cli\nprotocols:\n  - stdio\nstatus: active\nsource_files:\n  - only-in-root.txt\nexternal_sources:\n  - /Users/example/brain-rs/README.md\n---\n# brain-rs\n",
+        )
+        .unwrap();
+        fs::write(
+            wiki.join("flows/main-to-brain.md"),
+            "---\ntitle: \"Main to brain-rs context flow\"\ntype: project-flow\nflow_id: main-to-brain\nprojects:\n  - agent-spec\n  - brain-rs\nkind: calls\nprotocols:\n  - stdio\nrequirements:\n  - REQ-CROSS-PROJECT-WIKI\nspecs:\n  - specs/task-cross-project-wiki.spec.md\nsource_files:\n  - only-in-root.txt\nexternal_sources:\n  - /Users/example/brain-rs/src/lib.rs\n---\n# Flow\n",
+        )
+        .unwrap();
+
+        let report = crate::spec_wiki::inspect_wiki_project(&dir, &wiki, "brain-rs");
+
+        assert_eq!(report.project_id, "brain-rs");
+        assert_eq!(
+            report.project.as_ref().map(|project| project.id.as_str()),
+            Some("brain-rs")
+        );
+        assert_eq!(report.flows.len(), 1);
+        assert_eq!(report.flows[0].id, "main-to-brain");
+        assert!(report.flows[0].protocols.contains(&"stdio".to_string()));
+        assert!(
+            report.flows[0]
+                .requirements
+                .contains(&"REQ-CROSS-PROJECT-WIKI".to_string())
+        );
+        assert!(
+            report.flows[0]
+                .specs
+                .contains(&PathBuf::from("specs/task-cross-project-wiki.spec.md"))
+        );
+        assert!(
+            report.flows[0]
+                .external_sources
+                .contains(&"/Users/example/brain-rs/src/lib.rs".to_string())
+        );
+        assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_wiki_inspect_project_uses_explicit_code_root() {
+        let dir = make_temp_dir("wiki-inspect-project-explicit-root");
+        let wiki = dir.join(".agent-spec/wiki");
+        fs::create_dir_all(wiki.join("projects")).unwrap();
+        fs::create_dir_all(wiki.join("flows")).unwrap();
+        fs::write(dir.join("only-in-root.txt"), "root-local\n").unwrap();
+        fs::write(
+            wiki.join("projects/main.md"),
+            "---\ntitle: \"main\"\ntype: external-project\nproject_id: main\nrepo: .\nrole: main\ninterfaces: [cli]\nprotocols: [filesystem]\nstatus: active\nsource_files: [only-in-root.txt]\nexternal_sources: [example/main]\n---\n# Main\n",
+        )
+        .unwrap();
+
+        let report = crate::spec_wiki::inspect_wiki_project(&dir, &wiki, "main");
+
+        assert!(report.project.is_some());
+        assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_wiki_project_map_command_writes_and_checks_artifact() {
+        let root = repo_root().join("fixtures/wiki-cross-project");
+        let wiki = root.join(".agent-spec/wiki");
+        let out_dir = make_temp_dir("wiki-project-map-command-check");
+        let out = out_dir.join("project-map.json");
+
+        super::cmd_wiki_project_map(&root, &wiki, "json", Some(&out), false).unwrap();
+        super::cmd_wiki_project_map(&root, &wiki, "json", Some(&out), true).unwrap();
+        fs::write(&out, "stale\n").unwrap();
+        assert!(super::cmd_wiki_project_map(&root, &wiki, "json", Some(&out), true).is_err());
+
+        let _ = fs::remove_dir_all(out_dir);
+    }
+
+    #[test]
+    fn test_wiki_project_map_check_rejects_error_diagnostics() {
+        let dir = make_temp_dir("wiki-project-map-command-errors");
+        let wiki = dir.join(".agent-spec/wiki");
+        fs::create_dir_all(wiki.join("projects")).unwrap();
+        fs::create_dir_all(wiki.join("flows")).unwrap();
+        fs::write(dir.join("source.txt"), "source\n").unwrap();
+        fs::write(
+            wiki.join("projects/main.md"),
+            "---\ntitle: \"main\"\ntype: external-project\nproject_id: main\nrepo: .\nrole: main\ninterfaces: [cli]\nprotocols: [filesystem]\nstatus: active\nsource_files: [source.txt]\n---\n# Main\n",
+        )
+        .unwrap();
+        fs::write(
+            wiki.join("flows/broken.md"),
+            "---\ntitle: \"broken\"\ntype: project-flow\nflow_id: broken\nprojects: [main, missing]\nkind: calls\nprotocols: [filesystem]\nsource_files: [source.txt]\n---\n# Broken\n",
+        )
+        .unwrap();
+        let out = dir.join("project-map.json");
+        let map = crate::spec_wiki::build_project_map(&dir, &wiki);
+        fs::write(&out, serde_json::to_string_pretty(&map).unwrap()).unwrap();
+
+        assert!(super::cmd_wiki_project_map(&dir, &wiki, "json", Some(&out), true).is_err());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_cross_project_wiki_fixture_builds_project_map() {
+        let root = repo_root().join("fixtures/wiki-cross-project");
+        let wiki = root.join(".agent-spec/wiki");
+
+        let map = crate::spec_wiki::build_project_map(&root, &wiki);
+
+        assert!(
+            map.projects
+                .iter()
+                .any(|project| project.id == "agent-spec")
+        );
+        assert!(map.projects.iter().any(|project| project.id == "brain-rs"));
+        assert!(
+            map.edges
+                .iter()
+                .any(|edge| edge.from == "agent-spec" && edge.to == "brain-rs")
+        );
+        assert!(map.diagnostics.is_empty(), "{:?}", map.diagnostics);
+    }
+
+    #[test]
+    fn test_docs_describe_cross_project_wiki_authoring() {
+        let readme = include_str!("../README.md");
+        let agents = include_str!("../AGENTS.md");
+        let skill = include_str!("../skills/agent-spec-wiki/SKILL.md");
+
+        for content in [readme, agents, skill] {
+            for term in [
+                "project articles",
+                "flow articles",
+                "regular Markdown files",
+                "required and non-empty",
+                "type: external-project",
+                "project_id:",
+                "type: project-flow",
+                "flow_id:",
+                "projects:",
+                "source_files",
+                "external_sources",
+                "project-map JSON",
+                "Mermaid",
+                "no external repository scan by default",
+            ] {
+                assert!(
+                    content.contains(term),
+                    "missing cross-project wiki term {term}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_agent_spec_wiki_tracks_project_map_artifacts() {
+        let root = repo_root();
+        let wiki = root.join(".agent-spec/wiki");
+        let map = crate::spec_wiki::build_project_map(&root, &wiki);
+
+        let tracked_map: crate::spec_wiki::WikiProjectMap = serde_json::from_str(
+            &fs::read_to_string(wiki.join("architecture/project-map.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(tracked_map, map);
+        assert_eq!(
+            fs::read_to_string(wiki.join("architecture/project-map.mmd")).unwrap(),
+            crate::spec_wiki::render_project_map_mermaid(&map)
+        );
+        for project_id in ["agent-spec", "codewiki", "symposium"] {
+            assert!(
+                map.projects.iter().any(|project| project.id == project_id),
+                "missing dogfood project {project_id}: {:?}",
+                map.projects
+            );
+        }
+        for (to, kind) in [
+            ("codewiki", "adapts-methodology-from"),
+            ("symposium", "adapts-metadata-from"),
+        ] {
+            let edge = map
+                .edges
+                .iter()
+                .find(|edge| edge.from == "agent-spec" && edge.to == to && edge.kind == kind)
+                .unwrap_or_else(|| panic!("missing dogfood edge agent-spec -> {to}"));
+            let flow = map
+                .flows
+                .iter()
+                .find(|flow| flow.id == edge.flow_id)
+                .unwrap_or_else(|| panic!("missing dogfood flow {}", edge.flow_id));
+            assert_eq!(flow.requirements, vec!["REQ-CODE-LIVE-WIKI"]);
+            assert_eq!(
+                flow.specs,
+                vec![PathBuf::from("specs/task-code-live-wiki.spec.md")]
+            );
+            assert!(!flow.source_files.is_empty());
+            assert!(!flow.external_sources.is_empty());
+        }
+        assert!(map.diagnostics.is_empty(), "{:?}", map.diagnostics);
+    }
+
+    #[test]
+    fn test_gitignore_tracks_only_live_wiki_state() {
+        let ignore = fs::read_to_string(".gitignore").unwrap();
+
+        assert!(ignore.contains(".agent-spec/*"));
+        assert!(ignore.contains("!.agent-spec/wiki/"));
+        assert!(ignore.contains("!.agent-spec/wiki/**"));
+    }
+
+    #[test]
+    fn test_wiki_lint_rejects_unsafe_source_files_and_broken_links() {
+        let dir = make_temp_dir("wiki-lint-unsafe-sources");
+        let wiki = dir.join(".agent-spec/wiki");
+        fs::create_dir_all(wiki.join("modules")).unwrap();
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("src/lib.rs"), "pub fn lib() {}\n").unwrap();
+        crate::spec_wiki::init_live_wiki(&dir, &wiki).unwrap();
+        fs::write(
+            wiki.join("modules/bad.md"),
+            "---\ntitle: \"Bad\"\ntype: module\nsource_files:\n  - /tmp/outside.rs\n  - ../outside.rs\n  - src/lib.rs\n---\n# Bad\n\n[Missing](missing.md)\n",
+        )
+        .unwrap();
+
+        let report = crate::spec_wiki::lint_live_wiki(&dir, &wiki);
+        let codes = report
+            .diagnostics
+            .iter()
+            .map(|diag| diag.code.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(codes.contains(&"wiki-source-file-absolute"));
+        assert!(codes.contains(&"wiki-source-file-outside-root"));
+        assert!(codes.contains(&"wiki-internal-link-broken"));
+        assert!(!report.passed());
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_wiki_lint_reports_stale_index() {
+        let dir = make_temp_dir("wiki-lint-stale-index");
+        let wiki = dir.join(".agent-spec/wiki");
+        fs::create_dir_all(wiki.join("modules")).unwrap();
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("src/lib.rs"), "pub fn lib() {}\n").unwrap();
+        crate::spec_wiki::init_live_wiki(&dir, &wiki).unwrap();
+        fs::write(
+            wiki.join("modules/new.md"),
+            "---\ntitle: \"New\"\ntype: module\nsource_files:\n  - src/lib.rs\n---\n# New\n",
+        )
+        .unwrap();
+
+        let report = crate::spec_wiki::lint_live_wiki(&dir, &wiki);
+
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|diag| diag.code == "wiki-index-stale")
+        );
+        assert!(!report.passed());
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_wiki_status_includes_dirty_staged_and_untracked_changes() {
+        let dir = make_temp_dir("wiki-status-worktree");
+        let wiki = dir.join(".agent-spec/wiki");
+        fs::create_dir_all(wiki.join("modules")).unwrap();
+        for (name, source) in [
+            ("dirty.md", "src/dirty.rs"),
+            ("staged.md", "src/staged.rs"),
+            ("untracked.md", "src/untracked.rs"),
+        ] {
+            fs::write(
+                wiki.join("modules").join(name),
+                format!(
+                    "---\ntitle: \"{name}\"\ntype: module\nsource_files:\n  - {source}\n---\n# {name}\n"
+                ),
+            )
+            .unwrap();
+        }
+
+        let report = crate::spec_wiki::status_from_changed_paths(
+            &wiki,
+            &[
+                PathBuf::from("src/dirty.rs"),
+                PathBuf::from("src/staged.rs"),
+                PathBuf::from("src/untracked.rs"),
+            ],
+        );
+
+        assert_eq!(report.stale_articles.len(), 3);
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_wiki_live_check_combines_index_lint_and_status() {
+        let dir = make_temp_dir("wiki-live-check");
+        let wiki = dir.join(".agent-spec/wiki");
+        fs::create_dir_all(wiki.join("modules")).unwrap();
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("src/lib.rs"), "pub fn lib() {}\n").unwrap();
+        crate::spec_wiki::init_live_wiki(&dir, &wiki).unwrap();
+        fs::write(
+            wiki.join("modules/new.md"),
+            "---\ntitle: \"New\"\ntype: module\nsource_files:\n  - src/lib.rs\n---\n# New\n",
+        )
+        .unwrap();
+
+        let report = crate::spec_wiki::check_live_wiki_with_changed_paths(
+            &dir,
+            &wiki,
+            &[PathBuf::from("src/lib.rs")],
+        );
+
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|diag| diag.code == "wiki-index-stale")
+        );
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|diag| diag.code == "wiki-article-stale")
+        );
+        assert!(!report.passed());
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_wiki_seed_writes_missing_pages_without_overwriting_existing() {
+        let dir = make_wiki_fixture("wiki-seed-write");
+        let wiki = dir.join(".agent-spec/wiki");
+        fs::write(dir.join("src/main.rs"), "fn main() {}\n").unwrap();
+        fs::write(dir.join("README.md"), "# Fixture\n").unwrap();
+        fs::write(dir.join("AGENTS.md"), "# Agents\n").unwrap();
+        fs::write(
+            dir.join(".gitignore"),
+            ".agent-spec/*\n!.agent-spec/wiki/\n!.agent-spec/wiki/**\n",
+        )
+        .unwrap();
+        fs::create_dir_all(dir.join("skills/agent-spec-tool-first")).unwrap();
+        fs::write(
+            dir.join("skills/agent-spec-tool-first/SKILL.md"),
+            "# Tool First\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("knowledge/requirements/req-code-live-wiki.md"),
+            "---\nkind: requirement\nid: REQ-CODE-LIVE-WIKI\ntitle: \"Code Live Wiki\"\n---\n## Problem\nWiki.\n",
+        )
+        .unwrap();
+        crate::spec_wiki::init_live_wiki(&dir, &wiki).unwrap();
+        fs::create_dir_all(wiki.join("modules")).unwrap();
+        let existing = wiki.join("modules/spec-wiki.md");
+        fs::write(
+            &existing,
+            "---\ntitle: \"Spec Wiki\"\ntype: module\nsource_files:\n  - src/lib.rs\ntags:\n  - existing\nstatus: maintained\n---\n# Existing\n",
+        )
+        .unwrap();
+
+        let report = crate::spec_wiki::seed_live_wiki(&dir, &wiki).unwrap();
+        let existing_after = fs::read_to_string(&existing).unwrap();
+
+        assert!(existing_after.contains("# Existing"));
+        assert!(wiki.join("modules/main-cli.md").exists());
+        assert!(wiki.join("concepts/task-contract.md").exists());
+        assert!(wiki.join("decisions/wiki-path.md").exists());
+        assert!(
+            report
+                .files_written
+                .iter()
+                .any(|path| path == Path::new("modules/main-cli.md"))
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_wiki_seed_check_reports_missing_pages_without_writing() {
+        let dir = make_wiki_fixture("wiki-seed-check");
+        let wiki = dir.join(".agent-spec/wiki");
+        fs::write(dir.join("src/main.rs"), "fn main() {}\n").unwrap();
+        crate::spec_wiki::init_live_wiki(&dir, &wiki).unwrap();
+
+        let report = crate::spec_wiki::seed_live_wiki_check(&dir, &wiki);
+
+        assert!(
+            report
+                .missing_pages
+                .iter()
+                .any(|path| path == Path::new("modules/main-cli.md"))
+        );
+        assert!(!wiki.join("modules/main-cli.md").exists());
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|diag| diag.code == "wiki-seed-page-missing")
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_live_wiki_fixture_covers_init_seed_index_lint_status_check() {
+        let fixture = repo_root().join("fixtures/wiki-mini");
+        let wiki = fixture.join(".agent-spec/wiki");
+
+        assert!(wiki.join("architecture/inventory.json").exists());
+        assert!(wiki.join("architecture/workspace.mmd").exists());
+        assert!(wiki.join("architecture/modules.mmd").exists());
+        assert!(wiki.join("concepts/knowledge-liveness-layer.md").exists());
+
+        let (expected_index, index_diagnostics) = crate::spec_wiki::render_wiki_index(&wiki);
+        assert!(index_diagnostics.is_empty());
+        assert_eq!(
+            fs::read_to_string(wiki.join("_index.md")).unwrap(),
+            expected_index
+        );
+
+        let lint = crate::spec_wiki::lint_live_wiki(&fixture, &wiki);
+        assert!(lint.passed(), "{:?}", lint.diagnostics);
+
+        let status =
+            crate::spec_wiki::status_from_changed_paths(&wiki, &[PathBuf::from("src/lib.rs")]);
+        assert!(
+            status
+                .stale_articles
+                .iter()
+                .any(|article| article.path == Path::new("_architecture.md"))
+        );
+
+        let check = crate::spec_wiki::check_live_wiki_with_changed_paths(&fixture, &wiki, &[]);
+        assert!(check.passed(), "{:?}", check.diagnostics);
+    }
+
+    #[test]
+    fn test_wiki_inventory_extracts_rust_modules_edges_and_entrypoints() {
+        let dir = make_temp_dir("wiki-rust-module-graph");
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"wiki_module_graph\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("src/main.rs"),
+            "mod parser;\nuse crate::parser::parse;\nfn main() { parse(); }\n",
+        )
+        .unwrap();
+        fs::write(dir.join("src/parser.rs"), "pub fn parse() {}\n").unwrap();
+
+        let inventory = crate::spec_wiki::build_architecture_inventory(&dir);
+
+        assert!(inventory.modules.iter().any(|module| module.name == "main"));
+        assert!(
+            inventory
+                .modules
+                .iter()
+                .any(|module| module.name == "parser")
+        );
+        assert!(
+            inventory.module_edges.iter().any(|edge| {
+                edge.from == "main" && edge.to == "parser" && edge.kind == "declares"
+            })
+        );
+        assert!(
+            inventory
+                .entrypoints
+                .iter()
+                .any(|entrypoint| entrypoint.path == Path::new("src/main.rs"))
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_wiki_init_writes_layered_architecture_diagrams() {
+        let dir = make_wiki_fixture("wiki-layered-architecture");
+        let wiki = dir.join(".agent-spec/wiki");
+
+        crate::spec_wiki::init_live_wiki(&dir, &wiki).unwrap();
+
+        let architecture = fs::read_to_string(wiki.join("_architecture.md")).unwrap();
+        assert!(wiki.join("architecture/workspace.mmd").exists());
+        assert!(wiki.join("architecture/modules.mmd").exists());
+        assert!(architecture.contains("architecture/workspace.mmd"));
+        assert!(architecture.contains("architecture/modules.mmd"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_wiki_query_searches_title_tags_sources_and_body() {
+        let dir = make_temp_dir("wiki-query");
+        let wiki = dir.join(".agent-spec/wiki");
+        fs::create_dir_all(wiki.join("modules")).unwrap();
+        fs::write(
+            wiki.join("modules/lifecycle.md"),
+            "---\ntitle: \"Verification Lifecycle\"\ntype: module\nsource_files:\n  - src/spec_verify/mod.rs\ntags:\n  - lifecycle\n---\n# Verification Lifecycle\n\nLifecycle checks contracts.\n",
+        )
+        .unwrap();
+
+        let report = crate::spec_wiki::query_live_wiki(&wiki, "lifecycle");
+
+        assert_eq!(report.matches.len(), 1);
+        assert_eq!(report.matches[0].path, Path::new("modules/lifecycle.md"));
+        assert!(
+            report.matches[0]
+                .source_files
+                .contains(&PathBuf::from("src/spec_verify/mod.rs"))
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_wiki_inspect_maps_source_to_articles_requirements_and_specs() {
+        let dir = make_temp_dir("wiki-inspect");
+        let wiki = dir.join(".agent-spec/wiki");
+        fs::create_dir_all(wiki.join("modules")).unwrap();
+        fs::create_dir_all(dir.join("src/spec_wiki")).unwrap();
+        fs::create_dir_all(dir.join("knowledge/requirements")).unwrap();
+        fs::create_dir_all(dir.join("specs")).unwrap();
+        fs::create_dir_all(dir.join(".agent-spec/trace")).unwrap();
+        fs::write(dir.join("src/spec_wiki/live.rs"), "pub fn live() {}\n").unwrap();
+        fs::write(
+            wiki.join("modules/code-live-wiki.md"),
+            "---\ntitle: \"Code Live Wiki\"\ntype: module\nsource_files:\n  - src/spec_wiki/live.rs\ntags:\n  - wiki\n---\n# Code Live Wiki\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("knowledge/requirements/req-wiki.md"),
+            "---\nkind: requirement\nid: REQ-WIKI\ntitle: \"Wiki\"\n---\n## Problem\nWiki.\n## Requirements\n[REQ-WIKI] The system MUST maintain src/spec_wiki/live.rs.\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("specs/task-wiki.spec.md"),
+            "spec: task\nname: \"Wiki\"\nsatisfies: [REQ-WIKI]\n---\n## Intent\nWiki.\n## Completion Criteria\nScenario: Wiki\n  Test: wiki_test\n  Given wiki\n  When checked\n  Then it passes\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join(".agent-spec/trace/run.json"),
+            r#"{
+  "version": 1,
+  "records": [
+    {
+      "run_id": "run-1",
+      "requirement_id": "REQ-WIKI",
+      "requirement_source": "knowledge/requirements/req-wiki.md",
+      "work_unit_id": "WU-REQ-WIKI",
+      "spec_path": "specs/task-wiki.spec.md",
+      "scenario_name": "Wiki",
+      "test_selector": "wiki_test",
+      "code_targets": ["src/spec_wiki/live.rs"],
+      "verdict": "pass",
+      "evidence": [],
+      "worktree_path": null,
+      "branch": null,
+      "vcs": null,
+      "timestamp": 7
+    }
+  ],
+  "diagnostics": []
+}"#,
+        )
+        .unwrap();
+
+        let report = crate::spec_wiki::inspect_live_wiki_path(
+            &dir,
+            &wiki,
+            Path::new("src/spec_wiki/live.rs"),
+        );
+
+        assert_eq!(report.wiki_articles.len(), 1);
+        assert!(report.requirements.iter().any(|req| req.id == "REQ-WIKI"));
+        assert!(
+            report
+                .specs
+                .iter()
+                .any(|spec| spec.path == Path::new("specs/task-wiki.spec.md"))
+        );
+        assert!(
+            report.trace_records.iter().any(|trace| {
+                trace.requirement_id == "REQ-WIKI"
+                    && trace.run_id == "run-1"
+                    && trace.scenario_name == "Wiki"
+                    && trace.test_selector.as_deref() == Some("wiki_test")
+                    && trace.verdict == "pass"
+            }),
+            "inspect should include related trace records: {report:?}"
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_docs_describe_code_live_wiki_workflow() {
+        let docs = [
+            include_str!("../README.md"),
+            include_str!("../AGENTS.md"),
+            include_str!("../skills/agent-spec-wiki/SKILL.md"),
+        ];
+        for content in docs {
+            for command in [
+                "wiki init",
+                "wiki status",
+                "wiki inventory",
+                "wiki index",
+                "wiki lint",
+            ] {
+                assert!(content.contains(command), "missing `{command}`");
+            }
+            assert!(content.contains("code live wiki"));
+            assert!(content.contains(".agent-spec/wiki"));
+        }
+    }
+
+    #[test]
+    fn test_docs_describe_deepened_live_wiki_workflow() {
+        let readme = include_str!("../README.md");
+        let agents = include_str!("../AGENTS.md");
+        let skill = include_str!("../skills/agent-spec-tool-first/SKILL.md");
+        let commands = include_str!("../skills/agent-spec-tool-first/references/commands.md");
+        let wiki_skill = include_str!("../skills/agent-spec-wiki/SKILL.md");
+        let claude_skill = include_str!("../.claude/skills/agent-spec-tool-first/SKILL.md");
+        let claude_commands =
+            include_str!("../.claude/skills/agent-spec-tool-first/references/commands.md");
+
+        for content in [
+            readme,
+            agents,
+            skill,
+            commands,
+            wiki_skill,
+            claude_skill,
+            claude_commands,
+        ] {
+            assert!(content.contains("wiki init"));
+            assert!(content.contains("wiki seed"));
+            assert!(content.contains("wiki status"));
+            assert!(content.contains("wiki query"));
+            assert!(content.contains("wiki inspect"));
+            assert!(content.contains("wiki inventory"));
+            assert!(content.contains("wiki index"));
+            assert!(content.contains("wiki lint"));
+            assert!(content.contains("wiki check"));
+            assert!(content.contains("code live wiki"));
+            assert!(content.contains(".agent-spec/wiki"));
+            assert!(content.contains("source_files"));
+            assert!(content.contains("Rust architecture inventory"));
+            assert!(content.contains("tracked"));
+            assert!(content.contains("archive"));
+            assert!(content.contains("Non-goals"));
+            assert!(content.contains("no built-in LLM"));
+            assert!(content.contains("no web UI"));
+        }
     }
 
     // === Caller Mode AI Tests ===
@@ -5454,5 +10301,302 @@ Scenario: pass
         );
 
         let _ = fs::remove_dir_all(dir);
+    }
+
+    fn atlas_fixture_copy(name: &str) -> (PathBuf, PathBuf) {
+        let base = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let code = base.join("code");
+        fs::create_dir_all(code.join("src")).unwrap();
+        let fixture = repo_root().join("fixtures/atlas/basic");
+        for rel in ["Cargo.toml", "src/lib.rs", "src/store.rs", "src/service.rs"] {
+            fs::copy(fixture.join(rel), code.join(rel)).unwrap();
+        }
+        (code, base.join("graph"))
+    }
+
+    #[test]
+    fn test_atlas_check_reports_stale_files() {
+        let (code, graph) = atlas_fixture_copy("atlas-cli-check");
+        rust_atlas::build(&code, &graph, &rust_atlas::BuildOptions::default()).unwrap();
+
+        // fresh graph: check succeeds
+        super::cmd_atlas(super::AtlasCommands::Check {
+            code: code.clone(),
+            graph: graph.clone(),
+        })
+        .unwrap();
+
+        let service = code.join("src/service.rs");
+        let mut text = fs::read_to_string(&service).unwrap();
+        text.push_str("\npub fn extra() -> usize {\n    3\n}\n");
+        fs::write(&service, text).unwrap();
+
+        let err = super::cmd_atlas(super::AtlasCommands::Check {
+            code: code.clone(),
+            graph: graph.clone(),
+        })
+        .unwrap_err();
+        let text = err.to_string();
+        assert!(
+            text.contains("src/service.rs"),
+            "stale list must name the file: {text}"
+        );
+        assert!(text.contains("stale"), "{text}");
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_mcp_atlas_query_returns_symbol_json() {
+        let (code, graph) = atlas_fixture_copy("atlas-mcp-query");
+        rust_atlas::build(&code, &graph, &rust_atlas::BuildOptions::default()).unwrap();
+        // MCP reads the graph at <code>/.agent-spec/graph
+        let target = code.join(".agent-spec");
+        fs::create_dir_all(&target).unwrap();
+        fs::rename(&graph, target.join("graph")).unwrap();
+
+        let ctx = crate::spec_mcp::McpContext {
+            knowledge: code.join("knowledge"),
+            specs: code.join("specs"),
+            code: code.clone(),
+        };
+        let result = crate::spec_mcp::dispatch(
+            "atlas_query",
+            &serde_json::json!({"symbol": "atlas_basic::store::MemStore"}),
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(result["node"]["kind"], "struct");
+        assert_eq!(result["node"]["id"], "atlas_basic::store::MemStore");
+        assert!(
+            result["node"]["file"]
+                .as_str()
+                .unwrap()
+                .ends_with("src/store.rs")
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_mcp_atlas_tools_report_missing_graph() {
+        let base = std::env::temp_dir().join(format!("atlas-mcp-missing-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        let ctx = crate::spec_mcp::McpContext {
+            knowledge: base.join("knowledge"),
+            specs: base.join("specs"),
+            code: base.clone(),
+        };
+        let err =
+            crate::spec_mcp::dispatch("atlas_status", &serde_json::json!({}), &ctx).unwrap_err();
+        assert!(
+            err.contains("atlas build"),
+            "must name the first step: {err}"
+        );
+        fs::remove_dir_all(base).ok();
+    }
+
+    // ── legacy roadmap triage: history summary ──────────────────
+
+    fn write_history_logs(dir: &Path, name: &str, summaries: &[(bool, &str)]) {
+        let runs_dir = dir.join(".agent-spec/runs");
+        fs::create_dir_all(&runs_dir).unwrap();
+        for (i, (passing, summary)) in summaries.iter().enumerate() {
+            let entry = RunLogEntry {
+                spec_name: name.into(),
+                spec_path: PathBuf::new(),
+                spec_fingerprint: String::new(),
+                passing: *passing,
+                summary: (*summary).to_string(),
+                timestamp: 1700000000 + i as u64,
+                vcs: None,
+            };
+            fs::write(
+                runs_dir.join(format!("h{}.json", 1700000000 + i as u64)),
+                serde_json::to_string_pretty(&entry).unwrap(),
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn test_history_outputs_tabular_summary() {
+        let dir = make_temp_dir("agent-spec-history-table");
+        write_history_logs(
+            &dir,
+            "tabular",
+            &[
+                (false, "2/5 passed, 3 failed, 0 skipped, 0 uncertain"),
+                (false, "4/5 passed, 1 failed, 0 skipped, 0 uncertain"),
+                (true, "5/5 passed, 0 failed, 0 skipped, 0 uncertain"),
+            ],
+        );
+        let rows = super::history_rows(&dir, "tabular");
+        assert_eq!(rows.len(), 3);
+        for row in &rows {
+            assert!(row.counts.is_some(), "each row parses counts: {row:?}");
+        }
+        let text = super::read_run_log_history(&dir, "tabular");
+        assert_eq!(
+            text.lines().filter(|l| l.contains("| run #")).count(),
+            3,
+            "three table rows: {text}"
+        );
+        assert!(text.contains("pass"), "{text}");
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn test_history_delta_shows_diff_from_previous() {
+        let dir = make_temp_dir("agent-spec-history-delta");
+        write_history_logs(
+            &dir,
+            "delta",
+            &[
+                (false, "2/5 passed, 3 failed, 0 skipped, 0 uncertain"),
+                (false, "4/5 passed, 1 failed, 0 skipped, 0 uncertain"),
+            ],
+        );
+        let rows = super::history_rows(&dir, "delta");
+        let second = rows[1].delta.as_ref().unwrap();
+        assert_eq!(second.passed, 2, "{second:?}");
+        assert_eq!(second.failed, -2, "{second:?}");
+        let text = super::read_run_log_history(&dir, "delta");
+        assert!(text.contains("+2 pass"), "{text}");
+        assert!(text.contains("-2 fail"), "{text}");
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn test_history_single_run_no_delta() {
+        let dir = make_temp_dir("agent-spec-history-single");
+        write_history_logs(
+            &dir,
+            "single",
+            &[(true, "3/3 passed, 0 failed, 0 skipped, 0 uncertain")],
+        );
+        let rows = super::history_rows(&dir, "single");
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].delta.is_none(), "first run has no delta");
+        let text = super::read_run_log_history(&dir, "single");
+        assert!(
+            !text.contains("+"),
+            "no delta markers for a single run: {text}"
+        );
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn test_history_json_format_output() {
+        let dir = make_temp_dir("agent-spec-history-json");
+        write_history_logs(
+            &dir,
+            "jsonh",
+            &[
+                (false, "1/2 passed, 1 failed, 0 skipped, 0 uncertain"),
+                (true, "2/2 passed, 0 failed, 0 skipped, 0 uncertain"),
+            ],
+        );
+        let value = super::history_json(&dir, "jsonh");
+        let rows = value.as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["counts"]["passed"], 1);
+        assert_eq!(rows[1]["delta"]["passed"], 1);
+        assert!(rows[0]["delta"].is_null());
+        fs::remove_dir_all(dir).ok();
+    }
+
+    // ── legacy roadmap triage: context fidelity + status file ───
+
+    #[test]
+    fn test_existing_json_format_unchanged() {
+        let dir = make_temp_dir("agent-spec-json-stable");
+        fs::create_dir_all(dir.join("specs")).unwrap();
+        let spec = dir.join("specs/task-json-stable.spec.md");
+        fs::write(
+            &spec,
+            "spec: task\nname: \"Json Stable\"\ntags: [done]\n---\n## Intent\nStable.\n## Completion Criteria\nScenario: stable\n  Test: test_history_single_run_no_delta\n  Given a spec\n  When verified\n  Then it passes\n",
+        )
+        .unwrap();
+        let gw = crate::spec_gateway::SpecGateway::load(&spec).unwrap();
+        let report = gw.verify(Path::new(".")).unwrap();
+        let value = serde_json::to_value(&report).unwrap();
+        for key in ["spec_name", "results", "summary"] {
+            assert!(
+                value.get(key).is_some(),
+                "lifecycle json keeps top-level key {key}: {value}"
+            );
+        }
+        let summary = &value["summary"];
+        for key in ["passed", "failed", "skipped", "uncertain", "total"] {
+            assert!(summary.get(key).is_some(), "summary keeps {key}");
+        }
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn test_no_status_file_flag_produces_no_file() {
+        let dir = make_temp_dir("agent-spec-no-status-file");
+        fs::create_dir_all(dir.join("specs")).unwrap();
+        let spec = dir.join("specs/task-nostatus.spec.md");
+        fs::write(
+            &spec,
+            "spec: task\nname: \"No Status\"\ntags: []\n---\n## Intent\nn.\n## Completion Criteria\nScenario: s\n  Test: test_history_single_run_no_delta\n  Given a\n  When b\n  Then c\n",
+        )
+        .unwrap();
+        let before: std::collections::BTreeSet<PathBuf> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        let _ = super::cmd_lifecycle(
+            &spec,
+            &dir,
+            &[],
+            "none",
+            "off",
+            0.0,
+            "json",
+            None,
+            false,
+            None,
+            None,
+            "auto",
+        );
+        let after: std::collections::BTreeSet<PathBuf> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        let new_files: Vec<_> = after.difference(&before).collect();
+        assert!(
+            new_files
+                .iter()
+                .all(|p| !p.to_string_lossy().contains("status")),
+            "no status file without the flag: {new_files:?}"
+        );
+        fs::remove_dir_all(dir).ok();
+    }
+
+    // ── legacy roadmap triage: rewrite/parity skill guidance ────
+
+    #[test]
+    fn test_skill_guidance_rejects_parity_contracts_missing_behavior_matrix() {
+        let skill = include_str!("../skills/agent-spec-tool-first/SKILL.md");
+        assert!(skill.contains("rewrite, migration, or parity"));
+        assert!(
+            skill.contains("switch back to authoring mode and add scenarios before coding"),
+            "parity contracts with unbound observable behavior are not deliverable as-is"
+        );
+        let authoring = include_str!("../skills/agent-spec-authoring/SKILL.md");
+        assert!(authoring.contains("Behavior Surface Checklist"));
+        assert!(authoring.contains("treat this as mandatory"));
+    }
+
+    #[test]
+    fn test_skill_guidance_does_not_require_behavior_matrix_for_non_parity_tasks() {
+        let authoring = include_str!("../skills/agent-spec-authoring/SKILL.md");
+        assert!(
+            authoring.contains("not required for ordinary incremental tasks"),
+            "non-parity tasks must be exempt from the behavior matrix"
+        );
     }
 }

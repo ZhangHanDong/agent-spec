@@ -63,18 +63,14 @@ impl Verifier for TestVerifier {
             } else {
                 format!("{stdout}\n{stderr}")
             };
+            let executed_tests = cargo_test_executed_count(&combined);
 
-            let verdict = if output.status.success() {
-                if scenario.review == ReviewMode::Human {
-                    Verdict::PendingReview
-                } else {
-                    Verdict::Pass
-                }
-            } else {
-                Verdict::Fail
-            };
+            let verdict =
+                test_run_verdict(output.status.success(), executed_tests, scenario.review);
             let selector_label = binding.selector.label();
-            let reason = if output.status.success() {
+            let reason = if output.status.success() && executed_tests == 0 {
+                format!("test selector `{selector_label}` matched zero tests")
+            } else if output.status.success() {
                 match binding.source {
                     BindingSource::ExplicitScenarioSelector => {
                         format!("covered by explicit test `{selector_label}`")
@@ -111,7 +107,7 @@ impl Verifier for TestVerifier {
                 evidence: vec![Evidence::TestOutput {
                     test_name: selector_label,
                     stdout: combined,
-                    passed: output.status.success(),
+                    passed: output.status.success() && executed_tests > 0,
                     package: binding.selector.package.clone(),
                     level: binding.selector.level.clone(),
                     test_double: binding.selector.test_double.clone(),
@@ -200,6 +196,32 @@ fn build_cargo_test_args(selector: &TestSelector) -> Vec<String> {
     args
 }
 
+fn cargo_test_executed_count(output: &str) -> usize {
+    output
+        .lines()
+        .filter_map(|line| {
+            let count = line
+                .trim()
+                .strip_prefix("running ")?
+                .split_whitespace()
+                .next()?;
+            count.parse::<usize>().ok()
+        })
+        .sum()
+}
+
+fn test_run_verdict(success: bool, executed_tests: usize, review: ReviewMode) -> Verdict {
+    if !success {
+        Verdict::Fail
+    } else if executed_tests == 0 {
+        Verdict::Skip
+    } else if review == ReviewMode::Human {
+        Verdict::PendingReview
+    } else {
+        Verdict::Pass
+    }
+}
+
 fn collect_rust_files(dir: &Path, files: &mut Vec<PathBuf>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
@@ -207,14 +229,20 @@ fn collect_rust_files(dir: &Path, files: &mut Vec<PathBuf>) {
 
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_dir() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
             if let Some(name) = path.file_name().and_then(|name| name.to_str())
                 && (name.starts_with('.') || name == "target")
             {
                 continue;
             }
             collect_rust_files(&path, files);
-        } else if path.extension().is_some_and(|ext| ext == "rs") {
+        } else if file_type.is_file() && path.extension().is_some_and(|ext| ext == "rs") {
             files.push(path);
         }
     }
@@ -275,9 +303,35 @@ fn extract_fn_name(line: &str) -> Option<String> {
 mod tests {
     use std::collections::HashMap;
 
-    use crate::spec_core::{Scenario, Span, TestSelector};
+    use crate::spec_core::{ReviewMode, Scenario, Span, TestSelector, Verdict};
 
-    use super::{BindingSource, build_cargo_test_args, extract_bindings, resolve_test_binding};
+    use super::{
+        BindingSource, build_cargo_test_args, cargo_test_executed_count, extract_bindings,
+        resolve_test_binding, test_run_verdict,
+    };
+
+    #[test]
+    fn test_cargo_test_executed_count_distinguishes_zero_match_from_mixed_targets() {
+        assert_eq!(
+            cargo_test_executed_count(
+                "running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 10 filtered out"
+            ),
+            0
+        );
+        assert_eq!(
+            cargo_test_executed_count(
+                "running 1 test\n.\ntest result: ok\n\nrunning 0 tests\ntest result: ok"
+            ),
+            1
+        );
+    }
+
+    #[test]
+    fn test_zero_match_cargo_test_is_skip() {
+        assert_eq!(test_run_verdict(true, 0, ReviewMode::Auto), Verdict::Skip);
+        assert_eq!(test_run_verdict(true, 1, ReviewMode::Auto), Verdict::Pass);
+        assert_eq!(test_run_verdict(false, 0, ReviewMode::Auto), Verdict::Fail);
+    }
 
     #[test]
     fn extracts_spec_bindings_from_test_comments() {

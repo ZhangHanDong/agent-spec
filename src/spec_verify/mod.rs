@@ -188,6 +188,8 @@ mod tests {
                         depends: vec![],
                         estimate: None,
                         capability: None,
+                        satisfies: vec![],
+                        risk: None,
                     },
                     sections: vec![Section::AcceptanceCriteria {
                         scenarios: vec![scenario.clone()],
@@ -271,6 +273,8 @@ mod tests {
                         depends: vec![],
                         estimate: None,
                         capability: None,
+                        satisfies: vec![],
+                        risk: None,
                     },
                     sections: vec![],
                     lint_acks: vec![],

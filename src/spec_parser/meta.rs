@@ -10,6 +10,8 @@ pub fn parse_meta(lines: &[&str]) -> Result<SpecMeta, String> {
     let mut depends = Vec::new();
     let mut estimate = None;
     let mut capability = None;
+    let mut satisfies = Vec::new();
+    let mut risk = None;
 
     for line in lines {
         let trimmed = line.trim();
@@ -81,6 +83,21 @@ pub fn parse_meta(lines: &[&str]) -> Result<SpecMeta, String> {
                     capability = Some(v.to_string());
                 }
             }
+            "satisfies" => {
+                let value = value.trim_start_matches('[').trim_end_matches(']');
+                for id in value.split(',') {
+                    let s = id.trim().trim_matches('"').to_ascii_uppercase();
+                    if !s.is_empty() {
+                        satisfies.push(s);
+                    }
+                }
+            }
+            "risk" => {
+                let v = value.trim();
+                if !v.is_empty() {
+                    risk = Some(v.to_ascii_uppercase());
+                }
+            }
             _ => {} // ignore unknown keys
         }
     }
@@ -98,6 +115,8 @@ pub fn parse_meta(lines: &[&str]) -> Result<SpecMeta, String> {
         depends,
         estimate,
         capability,
+        satisfies,
+        risk,
     })
 }
 
@@ -160,6 +179,13 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_spec_risk_class_field() {
+        let lines = vec!["spec: task", r#"name: "High Risk""#, "risk: A"];
+        let meta = parse_meta(&lines).unwrap();
+        assert_eq!(meta.risk.as_deref(), Some("A"));
+    }
+
+    #[test]
     fn test_parse_meta_no_depends_no_estimate() {
         let lines = vec!["spec: task", r#"name: "无依赖""#];
         let meta = parse_meta(&lines).unwrap();
@@ -187,5 +213,28 @@ mod tests {
         let meta =
             parse_meta(&["spec: task", r#"name: "t""#, "capability: ecosystem-import"]).unwrap();
         assert_eq!(meta.capability, Some("ecosystem-import".to_string()));
+    }
+
+    // ---- KLL: satisfies edge ----
+
+    #[test]
+    fn test_parse_satisfies_array() {
+        let lines = vec![
+            "spec: task",
+            r#"name: "X""#,
+            "satisfies: [adr-001, REQ-002]",
+        ];
+        let meta = parse_meta(&lines).unwrap();
+        assert_eq!(
+            meta.satisfies,
+            vec!["ADR-001".to_string(), "REQ-002".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_satisfies_defaults_empty() {
+        let lines = vec!["spec: task", r#"name: "X""#];
+        let meta = parse_meta(&lines).unwrap();
+        assert!(meta.satisfies.is_empty());
     }
 }

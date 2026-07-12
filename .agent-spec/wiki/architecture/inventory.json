@@ -1,0 +1,1284 @@
+{
+  "provider": "rust-cargo",
+  "root": ".",
+  "packages": [
+    {
+      "id": "path+.#0.4.0",
+      "name": "agent-spec",
+      "version": "0.4.0",
+      "path": ".",
+      "language": "rust",
+      "kind": "workspace-member"
+    }
+  ],
+  "targets": [
+    {
+      "package": "agent-spec",
+      "name": "agent-spec",
+      "kind": "bin",
+      "src_path": "src/main.rs"
+    }
+  ],
+  "dependencies": [
+    {
+      "from": "agent-spec",
+      "to": "clap",
+      "kind": "external",
+      "source": "cargo-metadata"
+    },
+    {
+      "from": "agent-spec",
+      "to": "serde",
+      "kind": "external",
+      "source": "cargo-metadata"
+    },
+    {
+      "from": "agent-spec",
+      "to": "serde_json",
+      "kind": "external",
+      "source": "cargo-metadata"
+    },
+    {
+      "from": "agent-spec",
+      "to": "thiserror",
+      "kind": "external",
+      "source": "cargo-metadata"
+    },
+    {
+      "from": "agent-spec",
+      "to": "tokio",
+      "kind": "external",
+      "source": "cargo-metadata"
+    }
+  ],
+  "modules": [
+    {
+      "name": "main",
+      "path": "src/main.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_archive",
+      "path": "src/spec_archive.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_core",
+      "path": "src/spec_core/mod.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_core::ast",
+      "path": "src/spec_core/ast.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_core::error",
+      "path": "src/spec_core/error.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_core::lint",
+      "path": "src/spec_core/lint.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_core::verify",
+      "path": "src/spec_core/verify.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_gateway",
+      "path": "src/spec_gateway/mod.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_gateway::brief",
+      "path": "src/spec_gateway/brief.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_gateway::lifecycle",
+      "path": "src/spec_gateway/lifecycle.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_gateway::plan",
+      "path": "src/spec_gateway/plan.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_knowledge",
+      "path": "src/spec_knowledge/mod.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_knowledge::context",
+      "path": "src/spec_knowledge/context.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_knowledge::draft_specs",
+      "path": "src/spec_knowledge/draft_specs.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_knowledge::governance",
+      "path": "src/spec_knowledge/governance.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_knowledge::guidance",
+      "path": "src/spec_knowledge/guidance.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_knowledge::index",
+      "path": "src/spec_knowledge/index.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_knowledge::intake",
+      "path": "src/spec_knowledge/intake.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_knowledge::lint",
+      "path": "src/spec_knowledge/lint.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_knowledge::liveness",
+      "path": "src/spec_knowledge/liveness.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_knowledge::model",
+      "path": "src/spec_knowledge/model.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_knowledge::parser",
+      "path": "src/spec_knowledge/parser.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_knowledge::project",
+      "path": "src/spec_knowledge/project.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_knowledge::proposal",
+      "path": "src/spec_knowledge/proposal.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_knowledge::questions",
+      "path": "src/spec_knowledge/questions.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_knowledge::requirement",
+      "path": "src/spec_knowledge/requirement.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_knowledge::requirement_graph",
+      "path": "src/spec_knowledge/requirement_graph.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_knowledge::requirement_plan",
+      "path": "src/spec_knowledge/requirement_plan.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_knowledge::sarif",
+      "path": "src/spec_knowledge/sarif.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_knowledge::scaffold",
+      "path": "src/spec_knowledge/scaffold.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_knowledge::test_obligations",
+      "path": "src/spec_knowledge/test_obligations.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_knowledge::trace",
+      "path": "src/spec_knowledge/trace.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_knowledge::trace_ledger",
+      "path": "src/spec_knowledge/trace_ledger.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_knowledge::work_units",
+      "path": "src/spec_knowledge/work_units.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_knowledge::worktrees",
+      "path": "src/spec_knowledge/worktrees.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_lint",
+      "path": "src/spec_lint/mod.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_lint::linters",
+      "path": "src/spec_lint/linters.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_lint::pipeline",
+      "path": "src/spec_lint/pipeline.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_mcp",
+      "path": "src/spec_mcp/mod.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_mcp::tools",
+      "path": "src/spec_mcp/tools.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_parser",
+      "path": "src/spec_parser/mod.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_parser::keywords",
+      "path": "src/spec_parser/keywords.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_parser::meta",
+      "path": "src/spec_parser/meta.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_parser::parser",
+      "path": "src/spec_parser/parser.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_parser::resolver",
+      "path": "src/spec_parser/resolver.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_qa",
+      "path": "src/spec_qa.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_report",
+      "path": "src/spec_report/mod.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_report::audit",
+      "path": "src/spec_report/audit.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_report::coverage",
+      "path": "src/spec_report/coverage.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_report::discover",
+      "path": "src/spec_report/discover.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_report::integrations",
+      "path": "src/spec_report/integrations.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_report::structural",
+      "path": "src/spec_report/structural.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_verify",
+      "path": "src/spec_verify/mod.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_verify::ai_verifier",
+      "path": "src/spec_verify/ai_verifier.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_verify::boundaries",
+      "path": "src/spec_verify/boundaries.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_verify::complexity",
+      "path": "src/spec_verify/complexity.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_verify::structural",
+      "path": "src/spec_verify/structural.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_verify::test_verifier",
+      "path": "src/spec_verify/test_verifier.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_wiki",
+      "path": "src/spec_wiki/mod.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_wiki::architecture",
+      "path": "src/spec_wiki/architecture.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_wiki::assets",
+      "path": "src/spec_wiki/assets.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_wiki::check",
+      "path": "src/spec_wiki/check.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_wiki::ci",
+      "path": "src/spec_wiki/ci.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_wiki::github",
+      "path": "src/spec_wiki/github.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_wiki::live",
+      "path": "src/spec_wiki/live.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_wiki::model",
+      "path": "src/spec_wiki/model.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_wiki::plan",
+      "path": "src/spec_wiki/plan.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_wiki::project_map",
+      "path": "src/spec_wiki/project_map.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_wiki::render",
+      "path": "src/spec_wiki/render.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_wiki::sources",
+      "path": "src/spec_wiki/sources.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "vcs",
+      "path": "src/vcs.rs",
+      "kind": "rust-module"
+    }
+  ],
+  "module_edges": [
+    {
+      "from": "main",
+      "to": "spec_archive",
+      "kind": "declares",
+      "source": "src/main.rs"
+    },
+    {
+      "from": "main",
+      "to": "spec_core",
+      "kind": "declares",
+      "source": "src/main.rs"
+    },
+    {
+      "from": "main",
+      "to": "spec_core",
+      "kind": "uses",
+      "source": "src/main.rs"
+    },
+    {
+      "from": "main",
+      "to": "spec_gateway",
+      "kind": "declares",
+      "source": "src/main.rs"
+    },
+    {
+      "from": "main",
+      "to": "spec_knowledge",
+      "kind": "declares",
+      "source": "src/main.rs"
+    },
+    {
+      "from": "main",
+      "to": "spec_knowledge",
+      "kind": "uses",
+      "source": "src/main.rs"
+    },
+    {
+      "from": "main",
+      "to": "spec_lint",
+      "kind": "declares",
+      "source": "src/main.rs"
+    },
+    {
+      "from": "main",
+      "to": "spec_mcp",
+      "kind": "declares",
+      "source": "src/main.rs"
+    },
+    {
+      "from": "main",
+      "to": "spec_parser",
+      "kind": "declares",
+      "source": "src/main.rs"
+    },
+    {
+      "from": "main",
+      "to": "spec_qa",
+      "kind": "declares",
+      "source": "src/main.rs"
+    },
+    {
+      "from": "main",
+      "to": "spec_report",
+      "kind": "declares",
+      "source": "src/main.rs"
+    },
+    {
+      "from": "main",
+      "to": "spec_report",
+      "kind": "uses",
+      "source": "src/main.rs"
+    },
+    {
+      "from": "main",
+      "to": "spec_verify",
+      "kind": "declares",
+      "source": "src/main.rs"
+    },
+    {
+      "from": "main",
+      "to": "spec_wiki",
+      "kind": "declares",
+      "source": "src/main.rs"
+    },
+    {
+      "from": "main",
+      "to": "vcs",
+      "kind": "declares",
+      "source": "src/main.rs"
+    },
+    {
+      "from": "spec_core",
+      "to": "spec_core::ast",
+      "kind": "declares",
+      "source": "src/spec_core/mod.rs"
+    },
+    {
+      "from": "spec_core",
+      "to": "spec_core::error",
+      "kind": "declares",
+      "source": "src/spec_core/mod.rs"
+    },
+    {
+      "from": "spec_core",
+      "to": "spec_core::lint",
+      "kind": "declares",
+      "source": "src/spec_core/mod.rs"
+    },
+    {
+      "from": "spec_core",
+      "to": "spec_core::verify",
+      "kind": "declares",
+      "source": "src/spec_core/mod.rs"
+    },
+    {
+      "from": "spec_core::verify",
+      "to": "spec_core",
+      "kind": "uses",
+      "source": "src/spec_core/verify.rs"
+    },
+    {
+      "from": "spec_gateway",
+      "to": "spec_gateway::brief",
+      "kind": "declares",
+      "source": "src/spec_gateway/mod.rs"
+    },
+    {
+      "from": "spec_gateway",
+      "to": "spec_gateway::lifecycle",
+      "kind": "declares",
+      "source": "src/spec_gateway/mod.rs"
+    },
+    {
+      "from": "spec_gateway",
+      "to": "spec_gateway::plan",
+      "kind": "declares",
+      "source": "src/spec_gateway/mod.rs"
+    },
+    {
+      "from": "spec_gateway::brief",
+      "to": "spec_core",
+      "kind": "uses",
+      "source": "src/spec_gateway/brief.rs"
+    },
+    {
+      "from": "spec_gateway::brief",
+      "to": "spec_parser",
+      "kind": "uses",
+      "source": "src/spec_gateway/brief.rs"
+    },
+    {
+      "from": "spec_gateway::lifecycle",
+      "to": "spec_core",
+      "kind": "uses",
+      "source": "src/spec_gateway/lifecycle.rs"
+    },
+    {
+      "from": "spec_gateway::lifecycle",
+      "to": "spec_lint",
+      "kind": "uses",
+      "source": "src/spec_gateway/lifecycle.rs"
+    },
+    {
+      "from": "spec_gateway::lifecycle",
+      "to": "spec_report",
+      "kind": "uses",
+      "source": "src/spec_gateway/lifecycle.rs"
+    },
+    {
+      "from": "spec_gateway::lifecycle",
+      "to": "spec_verify",
+      "kind": "uses",
+      "source": "src/spec_gateway/lifecycle.rs"
+    },
+    {
+      "from": "spec_gateway::plan",
+      "to": "spec_core",
+      "kind": "uses",
+      "source": "src/spec_gateway/plan.rs"
+    },
+    {
+      "from": "spec_knowledge",
+      "to": "spec_knowledge::context",
+      "kind": "declares",
+      "source": "src/spec_knowledge/mod.rs"
+    },
+    {
+      "from": "spec_knowledge",
+      "to": "spec_knowledge::draft_specs",
+      "kind": "declares",
+      "source": "src/spec_knowledge/mod.rs"
+    },
+    {
+      "from": "spec_knowledge",
+      "to": "spec_knowledge::governance",
+      "kind": "declares",
+      "source": "src/spec_knowledge/mod.rs"
+    },
+    {
+      "from": "spec_knowledge",
+      "to": "spec_knowledge::guidance",
+      "kind": "declares",
+      "source": "src/spec_knowledge/mod.rs"
+    },
+    {
+      "from": "spec_knowledge",
+      "to": "spec_knowledge::index",
+      "kind": "declares",
+      "source": "src/spec_knowledge/mod.rs"
+    },
+    {
+      "from": "spec_knowledge",
+      "to": "spec_knowledge::intake",
+      "kind": "declares",
+      "source": "src/spec_knowledge/mod.rs"
+    },
+    {
+      "from": "spec_knowledge",
+      "to": "spec_knowledge::lint",
+      "kind": "declares",
+      "source": "src/spec_knowledge/mod.rs"
+    },
+    {
+      "from": "spec_knowledge",
+      "to": "spec_knowledge::liveness",
+      "kind": "declares",
+      "source": "src/spec_knowledge/mod.rs"
+    },
+    {
+      "from": "spec_knowledge",
+      "to": "spec_knowledge::model",
+      "kind": "declares",
+      "source": "src/spec_knowledge/mod.rs"
+    },
+    {
+      "from": "spec_knowledge",
+      "to": "spec_knowledge::parser",
+      "kind": "declares",
+      "source": "src/spec_knowledge/mod.rs"
+    },
+    {
+      "from": "spec_knowledge",
+      "to": "spec_knowledge::project",
+      "kind": "declares",
+      "source": "src/spec_knowledge/mod.rs"
+    },
+    {
+      "from": "spec_knowledge",
+      "to": "spec_knowledge::proposal",
+      "kind": "declares",
+      "source": "src/spec_knowledge/mod.rs"
+    },
+    {
+      "from": "spec_knowledge",
+      "to": "spec_knowledge::questions",
+      "kind": "declares",
+      "source": "src/spec_knowledge/mod.rs"
+    },
+    {
+      "from": "spec_knowledge",
+      "to": "spec_knowledge::requirement",
+      "kind": "declares",
+      "source": "src/spec_knowledge/mod.rs"
+    },
+    {
+      "from": "spec_knowledge",
+      "to": "spec_knowledge::requirement_graph",
+      "kind": "declares",
+      "source": "src/spec_knowledge/mod.rs"
+    },
+    {
+      "from": "spec_knowledge",
+      "to": "spec_knowledge::requirement_plan",
+      "kind": "declares",
+      "source": "src/spec_knowledge/mod.rs"
+    },
+    {
+      "from": "spec_knowledge",
+      "to": "spec_knowledge::sarif",
+      "kind": "declares",
+      "source": "src/spec_knowledge/mod.rs"
+    },
+    {
+      "from": "spec_knowledge",
+      "to": "spec_knowledge::scaffold",
+      "kind": "declares",
+      "source": "src/spec_knowledge/mod.rs"
+    },
+    {
+      "from": "spec_knowledge",
+      "to": "spec_knowledge::test_obligations",
+      "kind": "declares",
+      "source": "src/spec_knowledge/mod.rs"
+    },
+    {
+      "from": "spec_knowledge",
+      "to": "spec_knowledge::trace",
+      "kind": "declares",
+      "source": "src/spec_knowledge/mod.rs"
+    },
+    {
+      "from": "spec_knowledge",
+      "to": "spec_knowledge::trace_ledger",
+      "kind": "declares",
+      "source": "src/spec_knowledge/mod.rs"
+    },
+    {
+      "from": "spec_knowledge",
+      "to": "spec_knowledge::work_units",
+      "kind": "declares",
+      "source": "src/spec_knowledge/mod.rs"
+    },
+    {
+      "from": "spec_knowledge",
+      "to": "spec_knowledge::worktrees",
+      "kind": "declares",
+      "source": "src/spec_knowledge/mod.rs"
+    },
+    {
+      "from": "spec_knowledge::draft_specs",
+      "to": "spec_knowledge",
+      "kind": "uses",
+      "source": "src/spec_knowledge/draft_specs.rs"
+    },
+    {
+      "from": "spec_knowledge::governance",
+      "to": "spec_core",
+      "kind": "uses",
+      "source": "src/spec_knowledge/governance.rs"
+    },
+    {
+      "from": "spec_knowledge::governance",
+      "to": "spec_knowledge",
+      "kind": "uses",
+      "source": "src/spec_knowledge/governance.rs"
+    },
+    {
+      "from": "spec_knowledge::guidance",
+      "to": "spec_knowledge",
+      "kind": "uses",
+      "source": "src/spec_knowledge/guidance.rs"
+    },
+    {
+      "from": "spec_knowledge::lint",
+      "to": "spec_core",
+      "kind": "uses",
+      "source": "src/spec_knowledge/lint.rs"
+    },
+    {
+      "from": "spec_knowledge::lint",
+      "to": "spec_knowledge",
+      "kind": "uses",
+      "source": "src/spec_knowledge/lint.rs"
+    },
+    {
+      "from": "spec_knowledge::liveness",
+      "to": "spec_core",
+      "kind": "uses",
+      "source": "src/spec_knowledge/liveness.rs"
+    },
+    {
+      "from": "spec_knowledge::liveness",
+      "to": "spec_knowledge",
+      "kind": "uses",
+      "source": "src/spec_knowledge/liveness.rs"
+    },
+    {
+      "from": "spec_knowledge::parser",
+      "to": "spec_knowledge",
+      "kind": "uses",
+      "source": "src/spec_knowledge/parser.rs"
+    },
+    {
+      "from": "spec_knowledge::project",
+      "to": "spec_knowledge",
+      "kind": "uses",
+      "source": "src/spec_knowledge/project.rs"
+    },
+    {
+      "from": "spec_knowledge::proposal",
+      "to": "spec_core",
+      "kind": "uses",
+      "source": "src/spec_knowledge/proposal.rs"
+    },
+    {
+      "from": "spec_knowledge::proposal",
+      "to": "spec_knowledge",
+      "kind": "uses",
+      "source": "src/spec_knowledge/proposal.rs"
+    },
+    {
+      "from": "spec_knowledge::questions",
+      "to": "spec_core",
+      "kind": "uses",
+      "source": "src/spec_knowledge/questions.rs"
+    },
+    {
+      "from": "spec_knowledge::questions",
+      "to": "spec_knowledge",
+      "kind": "uses",
+      "source": "src/spec_knowledge/questions.rs"
+    },
+    {
+      "from": "spec_knowledge::requirement",
+      "to": "spec_knowledge",
+      "kind": "uses",
+      "source": "src/spec_knowledge/requirement.rs"
+    },
+    {
+      "from": "spec_knowledge::requirement_graph",
+      "to": "spec_knowledge",
+      "kind": "uses",
+      "source": "src/spec_knowledge/requirement_graph.rs"
+    },
+    {
+      "from": "spec_knowledge::requirement_plan",
+      "to": "spec_knowledge",
+      "kind": "uses",
+      "source": "src/spec_knowledge/requirement_plan.rs"
+    },
+    {
+      "from": "spec_knowledge::sarif",
+      "to": "spec_core",
+      "kind": "uses",
+      "source": "src/spec_knowledge/sarif.rs"
+    },
+    {
+      "from": "spec_knowledge::test_obligations",
+      "to": "spec_core",
+      "kind": "uses",
+      "source": "src/spec_knowledge/test_obligations.rs"
+    },
+    {
+      "from": "spec_knowledge::test_obligations",
+      "to": "spec_knowledge",
+      "kind": "uses",
+      "source": "src/spec_knowledge/test_obligations.rs"
+    },
+    {
+      "from": "spec_knowledge::test_obligations",
+      "to": "spec_qa",
+      "kind": "uses",
+      "source": "src/spec_knowledge/test_obligations.rs"
+    },
+    {
+      "from": "spec_knowledge::trace",
+      "to": "spec_core",
+      "kind": "uses",
+      "source": "src/spec_knowledge/trace.rs"
+    },
+    {
+      "from": "spec_knowledge::trace",
+      "to": "spec_knowledge",
+      "kind": "uses",
+      "source": "src/spec_knowledge/trace.rs"
+    },
+    {
+      "from": "spec_knowledge::trace_ledger",
+      "to": "spec_core",
+      "kind": "uses",
+      "source": "src/spec_knowledge/trace_ledger.rs"
+    },
+    {
+      "from": "spec_knowledge::trace_ledger",
+      "to": "spec_knowledge",
+      "kind": "uses",
+      "source": "src/spec_knowledge/trace_ledger.rs"
+    },
+    {
+      "from": "spec_knowledge::trace_ledger",
+      "to": "vcs",
+      "kind": "uses",
+      "source": "src/spec_knowledge/trace_ledger.rs"
+    },
+    {
+      "from": "spec_knowledge::work_units",
+      "to": "spec_knowledge",
+      "kind": "uses",
+      "source": "src/spec_knowledge/work_units.rs"
+    },
+    {
+      "from": "spec_knowledge::worktrees",
+      "to": "spec_knowledge",
+      "kind": "uses",
+      "source": "src/spec_knowledge/worktrees.rs"
+    },
+    {
+      "from": "spec_lint",
+      "to": "spec_lint::linters",
+      "kind": "declares",
+      "source": "src/spec_lint/mod.rs"
+    },
+    {
+      "from": "spec_lint",
+      "to": "spec_lint::pipeline",
+      "kind": "declares",
+      "source": "src/spec_lint/mod.rs"
+    },
+    {
+      "from": "spec_lint::linters",
+      "to": "spec_core",
+      "kind": "uses",
+      "source": "src/spec_lint/linters.rs"
+    },
+    {
+      "from": "spec_lint::linters",
+      "to": "spec_parser",
+      "kind": "uses",
+      "source": "src/spec_lint/linters.rs"
+    },
+    {
+      "from": "spec_lint::pipeline",
+      "to": "spec_core",
+      "kind": "uses",
+      "source": "src/spec_lint/pipeline.rs"
+    },
+    {
+      "from": "spec_lint::pipeline",
+      "to": "spec_parser",
+      "kind": "uses",
+      "source": "src/spec_lint/pipeline.rs"
+    },
+    {
+      "from": "spec_mcp",
+      "to": "spec_mcp::tools",
+      "kind": "declares",
+      "source": "src/spec_mcp/mod.rs"
+    },
+    {
+      "from": "spec_mcp::tools",
+      "to": "spec_knowledge",
+      "kind": "uses",
+      "source": "src/spec_mcp/tools.rs"
+    },
+    {
+      "from": "spec_parser",
+      "to": "spec_parser::keywords",
+      "kind": "declares",
+      "source": "src/spec_parser/mod.rs"
+    },
+    {
+      "from": "spec_parser",
+      "to": "spec_parser::meta",
+      "kind": "declares",
+      "source": "src/spec_parser/mod.rs"
+    },
+    {
+      "from": "spec_parser",
+      "to": "spec_parser::parser",
+      "kind": "declares",
+      "source": "src/spec_parser/mod.rs"
+    },
+    {
+      "from": "spec_parser",
+      "to": "spec_parser::resolver",
+      "kind": "declares",
+      "source": "src/spec_parser/mod.rs"
+    },
+    {
+      "from": "spec_parser::keywords",
+      "to": "spec_core",
+      "kind": "uses",
+      "source": "src/spec_parser/keywords.rs"
+    },
+    {
+      "from": "spec_parser::meta",
+      "to": "spec_core",
+      "kind": "uses",
+      "source": "src/spec_parser/meta.rs"
+    },
+    {
+      "from": "spec_parser::parser",
+      "to": "spec_core",
+      "kind": "uses",
+      "source": "src/spec_parser/parser.rs"
+    },
+    {
+      "from": "spec_parser::resolver",
+      "to": "spec_core",
+      "kind": "uses",
+      "source": "src/spec_parser/resolver.rs"
+    },
+    {
+      "from": "spec_report",
+      "to": "spec_core",
+      "kind": "uses",
+      "source": "src/spec_report/mod.rs"
+    },
+    {
+      "from": "spec_report",
+      "to": "spec_report::audit",
+      "kind": "declares",
+      "source": "src/spec_report/mod.rs"
+    },
+    {
+      "from": "spec_report",
+      "to": "spec_report::coverage",
+      "kind": "declares",
+      "source": "src/spec_report/mod.rs"
+    },
+    {
+      "from": "spec_report",
+      "to": "spec_report::discover",
+      "kind": "declares",
+      "source": "src/spec_report/mod.rs"
+    },
+    {
+      "from": "spec_report",
+      "to": "spec_report::integrations",
+      "kind": "declares",
+      "source": "src/spec_report/mod.rs"
+    },
+    {
+      "from": "spec_report",
+      "to": "spec_report::structural",
+      "kind": "declares",
+      "source": "src/spec_report/mod.rs"
+    },
+    {
+      "from": "spec_report::audit",
+      "to": "spec_core",
+      "kind": "uses",
+      "source": "src/spec_report/audit.rs"
+    },
+    {
+      "from": "spec_report::audit",
+      "to": "spec_parser",
+      "kind": "uses",
+      "source": "src/spec_report/audit.rs"
+    },
+    {
+      "from": "spec_report::coverage",
+      "to": "spec_core",
+      "kind": "uses",
+      "source": "src/spec_report/coverage.rs"
+    },
+    {
+      "from": "spec_report::coverage",
+      "to": "spec_parser",
+      "kind": "uses",
+      "source": "src/spec_report/coverage.rs"
+    },
+    {
+      "from": "spec_report::discover",
+      "to": "spec_core",
+      "kind": "uses",
+      "source": "src/spec_report/discover.rs"
+    },
+    {
+      "from": "spec_report::discover",
+      "to": "spec_parser",
+      "kind": "uses",
+      "source": "src/spec_report/discover.rs"
+    },
+    {
+      "from": "spec_verify",
+      "to": "spec_core",
+      "kind": "uses",
+      "source": "src/spec_verify/mod.rs"
+    },
+    {
+      "from": "spec_verify",
+      "to": "spec_verify::ai_verifier",
+      "kind": "declares",
+      "source": "src/spec_verify/mod.rs"
+    },
+    {
+      "from": "spec_verify",
+      "to": "spec_verify::boundaries",
+      "kind": "declares",
+      "source": "src/spec_verify/mod.rs"
+    },
+    {
+      "from": "spec_verify",
+      "to": "spec_verify::complexity",
+      "kind": "declares",
+      "source": "src/spec_verify/mod.rs"
+    },
+    {
+      "from": "spec_verify",
+      "to": "spec_verify::structural",
+      "kind": "declares",
+      "source": "src/spec_verify/mod.rs"
+    },
+    {
+      "from": "spec_verify",
+      "to": "spec_verify::test_verifier",
+      "kind": "declares",
+      "source": "src/spec_verify/mod.rs"
+    },
+    {
+      "from": "spec_verify::ai_verifier",
+      "to": "spec_core",
+      "kind": "uses",
+      "source": "src/spec_verify/ai_verifier.rs"
+    },
+    {
+      "from": "spec_verify::boundaries",
+      "to": "spec_core",
+      "kind": "uses",
+      "source": "src/spec_verify/boundaries.rs"
+    },
+    {
+      "from": "spec_verify::boundaries",
+      "to": "spec_verify",
+      "kind": "uses",
+      "source": "src/spec_verify/boundaries.rs"
+    },
+    {
+      "from": "spec_verify::complexity",
+      "to": "spec_core",
+      "kind": "uses",
+      "source": "src/spec_verify/complexity.rs"
+    },
+    {
+      "from": "spec_verify::complexity",
+      "to": "spec_verify",
+      "kind": "uses",
+      "source": "src/spec_verify/complexity.rs"
+    },
+    {
+      "from": "spec_verify::structural",
+      "to": "spec_core",
+      "kind": "uses",
+      "source": "src/spec_verify/structural.rs"
+    },
+    {
+      "from": "spec_verify::test_verifier",
+      "to": "spec_core",
+      "kind": "uses",
+      "source": "src/spec_verify/test_verifier.rs"
+    },
+    {
+      "from": "spec_wiki",
+      "to": "spec_wiki::architecture",
+      "kind": "declares",
+      "source": "src/spec_wiki/mod.rs"
+    },
+    {
+      "from": "spec_wiki",
+      "to": "spec_wiki::assets",
+      "kind": "declares",
+      "source": "src/spec_wiki/mod.rs"
+    },
+    {
+      "from": "spec_wiki",
+      "to": "spec_wiki::check",
+      "kind": "declares",
+      "source": "src/spec_wiki/mod.rs"
+    },
+    {
+      "from": "spec_wiki",
+      "to": "spec_wiki::ci",
+      "kind": "declares",
+      "source": "src/spec_wiki/mod.rs"
+    },
+    {
+      "from": "spec_wiki",
+      "to": "spec_wiki::github",
+      "kind": "declares",
+      "source": "src/spec_wiki/mod.rs"
+    },
+    {
+      "from": "spec_wiki",
+      "to": "spec_wiki::live",
+      "kind": "declares",
+      "source": "src/spec_wiki/mod.rs"
+    },
+    {
+      "from": "spec_wiki",
+      "to": "spec_wiki::model",
+      "kind": "declares",
+      "source": "src/spec_wiki/mod.rs"
+    },
+    {
+      "from": "spec_wiki",
+      "to": "spec_wiki::plan",
+      "kind": "declares",
+      "source": "src/spec_wiki/mod.rs"
+    },
+    {
+      "from": "spec_wiki",
+      "to": "spec_wiki::project_map",
+      "kind": "declares",
+      "source": "src/spec_wiki/mod.rs"
+    },
+    {
+      "from": "spec_wiki",
+      "to": "spec_wiki::render",
+      "kind": "declares",
+      "source": "src/spec_wiki/mod.rs"
+    },
+    {
+      "from": "spec_wiki",
+      "to": "spec_wiki::sources",
+      "kind": "declares",
+      "source": "src/spec_wiki/mod.rs"
+    },
+    {
+      "from": "spec_wiki::architecture",
+      "to": "spec_wiki",
+      "kind": "uses",
+      "source": "src/spec_wiki/architecture.rs"
+    },
+    {
+      "from": "spec_wiki::assets",
+      "to": "spec_wiki",
+      "kind": "uses",
+      "source": "src/spec_wiki/assets.rs"
+    },
+    {
+      "from": "spec_wiki::check",
+      "to": "spec_wiki",
+      "kind": "uses",
+      "source": "src/spec_wiki/check.rs"
+    },
+    {
+      "from": "spec_wiki::ci",
+      "to": "spec_wiki",
+      "kind": "uses",
+      "source": "src/spec_wiki/ci.rs"
+    },
+    {
+      "from": "spec_wiki::github",
+      "to": "spec_wiki",
+      "kind": "uses",
+      "source": "src/spec_wiki/github.rs"
+    },
+    {
+      "from": "spec_wiki::live",
+      "to": "spec_wiki",
+      "kind": "uses",
+      "source": "src/spec_wiki/live.rs"
+    },
+    {
+      "from": "spec_wiki::plan",
+      "to": "spec_wiki",
+      "kind": "uses",
+      "source": "src/spec_wiki/plan.rs"
+    },
+    {
+      "from": "spec_wiki::project_map",
+      "to": "spec_wiki",
+      "kind": "uses",
+      "source": "src/spec_wiki/project_map.rs"
+    },
+    {
+      "from": "spec_wiki::render",
+      "to": "spec_wiki",
+      "kind": "uses",
+      "source": "src/spec_wiki/render.rs"
+    },
+    {
+      "from": "spec_wiki::sources",
+      "to": "spec_wiki",
+      "kind": "uses",
+      "source": "src/spec_wiki/sources.rs"
+    }
+  ],
+  "entrypoints": [
+    {
+      "name": "agent-spec",
+      "path": "src/main.rs",
+      "kind": "bin"
+    }
+  ],
+  "source_files": [
+    "Cargo.lock",
+    "Cargo.toml",
+    "src/main.rs"
+  ],
+  "diagnostics": []
+}

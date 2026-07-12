@@ -240,6 +240,8 @@ mod tests {
                         depends: vec![],
                         estimate: None,
                         capability: None,
+                        satisfies: vec![],
+                        risk: None,
                     },
                     sections: vec![
                         Section::Intent {

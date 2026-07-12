@@ -11,7 +11,7 @@ description: |
 
 # Agent Spec Estimate
 
-> **Version:** 1.2.0 | **Last Updated:** 2026-06-08 | **Tracks agent-spec:** 0.3.0 (BDD-spine)
+> **Version:** 1.3.0 | **Last Updated:** 2026-07-12 | **Tracks agent-spec:** 0.4.0 (KLL requirements intake)
 
 You are an expert at estimating AI agent work effort from structured Task Contracts. Help users by:
 - **Estimating specs**: Read a `.spec`/`.spec.md` file and produce a round-based effort estimate

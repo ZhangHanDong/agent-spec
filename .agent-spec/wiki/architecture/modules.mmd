@@ -1,0 +1,215 @@
+graph TD
+  main["main"]
+  spec_archive["spec_archive"]
+  spec_core["spec_core"]
+  spec_core__ast["spec_core::ast"]
+  spec_core__error["spec_core::error"]
+  spec_core__lint["spec_core::lint"]
+  spec_core__verify["spec_core::verify"]
+  spec_gateway["spec_gateway"]
+  spec_gateway__brief["spec_gateway::brief"]
+  spec_gateway__lifecycle["spec_gateway::lifecycle"]
+  spec_gateway__plan["spec_gateway::plan"]
+  spec_knowledge["spec_knowledge"]
+  spec_knowledge__context["spec_knowledge::context"]
+  spec_knowledge__draft_specs["spec_knowledge::draft_specs"]
+  spec_knowledge__governance["spec_knowledge::governance"]
+  spec_knowledge__guidance["spec_knowledge::guidance"]
+  spec_knowledge__index["spec_knowledge::index"]
+  spec_knowledge__intake["spec_knowledge::intake"]
+  spec_knowledge__lint["spec_knowledge::lint"]
+  spec_knowledge__liveness["spec_knowledge::liveness"]
+  spec_knowledge__model["spec_knowledge::model"]
+  spec_knowledge__parser["spec_knowledge::parser"]
+  spec_knowledge__project["spec_knowledge::project"]
+  spec_knowledge__proposal["spec_knowledge::proposal"]
+  spec_knowledge__questions["spec_knowledge::questions"]
+  spec_knowledge__requirement["spec_knowledge::requirement"]
+  spec_knowledge__requirement_graph["spec_knowledge::requirement_graph"]
+  spec_knowledge__requirement_plan["spec_knowledge::requirement_plan"]
+  spec_knowledge__sarif["spec_knowledge::sarif"]
+  spec_knowledge__scaffold["spec_knowledge::scaffold"]
+  spec_knowledge__test_obligations["spec_knowledge::test_obligations"]
+  spec_knowledge__trace["spec_knowledge::trace"]
+  spec_knowledge__trace_ledger["spec_knowledge::trace_ledger"]
+  spec_knowledge__work_units["spec_knowledge::work_units"]
+  spec_knowledge__worktrees["spec_knowledge::worktrees"]
+  spec_lint["spec_lint"]
+  spec_lint__linters["spec_lint::linters"]
+  spec_lint__pipeline["spec_lint::pipeline"]
+  spec_mcp["spec_mcp"]
+  spec_mcp__tools["spec_mcp::tools"]
+  spec_parser["spec_parser"]
+  spec_parser__keywords["spec_parser::keywords"]
+  spec_parser__meta["spec_parser::meta"]
+  spec_parser__parser["spec_parser::parser"]
+  spec_parser__resolver["spec_parser::resolver"]
+  spec_qa["spec_qa"]
+  spec_report["spec_report"]
+  spec_report__audit["spec_report::audit"]
+  spec_report__coverage["spec_report::coverage"]
+  spec_report__discover["spec_report::discover"]
+  spec_report__integrations["spec_report::integrations"]
+  spec_report__structural["spec_report::structural"]
+  spec_verify["spec_verify"]
+  spec_verify__ai_verifier["spec_verify::ai_verifier"]
+  spec_verify__boundaries["spec_verify::boundaries"]
+  spec_verify__complexity["spec_verify::complexity"]
+  spec_verify__structural["spec_verify::structural"]
+  spec_verify__test_verifier["spec_verify::test_verifier"]
+  spec_wiki["spec_wiki"]
+  spec_wiki__architecture["spec_wiki::architecture"]
+  spec_wiki__assets["spec_wiki::assets"]
+  spec_wiki__check["spec_wiki::check"]
+  spec_wiki__ci["spec_wiki::ci"]
+  spec_wiki__github["spec_wiki::github"]
+  spec_wiki__live["spec_wiki::live"]
+  spec_wiki__model["spec_wiki::model"]
+  spec_wiki__plan["spec_wiki::plan"]
+  spec_wiki__project_map["spec_wiki::project_map"]
+  spec_wiki__render["spec_wiki::render"]
+  spec_wiki__sources["spec_wiki::sources"]
+  vcs["vcs"]
+  main --> spec_archive
+  main --> spec_core
+  main --> spec_core
+  main --> spec_gateway
+  main --> spec_knowledge
+  main --> spec_knowledge
+  main --> spec_lint
+  main --> spec_mcp
+  main --> spec_parser
+  main --> spec_qa
+  main --> spec_report
+  main --> spec_report
+  main --> spec_verify
+  main --> spec_wiki
+  main --> vcs
+  spec_core --> spec_core__ast
+  spec_core --> spec_core__error
+  spec_core --> spec_core__lint
+  spec_core --> spec_core__verify
+  spec_core__verify --> spec_core
+  spec_gateway --> spec_gateway__brief
+  spec_gateway --> spec_gateway__lifecycle
+  spec_gateway --> spec_gateway__plan
+  spec_gateway__brief --> spec_core
+  spec_gateway__brief --> spec_parser
+  spec_gateway__lifecycle --> spec_core
+  spec_gateway__lifecycle --> spec_lint
+  spec_gateway__lifecycle --> spec_report
+  spec_gateway__lifecycle --> spec_verify
+  spec_gateway__plan --> spec_core
+  spec_knowledge --> spec_knowledge__context
+  spec_knowledge --> spec_knowledge__draft_specs
+  spec_knowledge --> spec_knowledge__governance
+  spec_knowledge --> spec_knowledge__guidance
+  spec_knowledge --> spec_knowledge__index
+  spec_knowledge --> spec_knowledge__intake
+  spec_knowledge --> spec_knowledge__lint
+  spec_knowledge --> spec_knowledge__liveness
+  spec_knowledge --> spec_knowledge__model
+  spec_knowledge --> spec_knowledge__parser
+  spec_knowledge --> spec_knowledge__project
+  spec_knowledge --> spec_knowledge__proposal
+  spec_knowledge --> spec_knowledge__questions
+  spec_knowledge --> spec_knowledge__requirement
+  spec_knowledge --> spec_knowledge__requirement_graph
+  spec_knowledge --> spec_knowledge__requirement_plan
+  spec_knowledge --> spec_knowledge__sarif
+  spec_knowledge --> spec_knowledge__scaffold
+  spec_knowledge --> spec_knowledge__test_obligations
+  spec_knowledge --> spec_knowledge__trace
+  spec_knowledge --> spec_knowledge__trace_ledger
+  spec_knowledge --> spec_knowledge__work_units
+  spec_knowledge --> spec_knowledge__worktrees
+  spec_knowledge__draft_specs --> spec_knowledge
+  spec_knowledge__governance --> spec_core
+  spec_knowledge__governance --> spec_knowledge
+  spec_knowledge__guidance --> spec_knowledge
+  spec_knowledge__lint --> spec_core
+  spec_knowledge__lint --> spec_knowledge
+  spec_knowledge__liveness --> spec_core
+  spec_knowledge__liveness --> spec_knowledge
+  spec_knowledge__parser --> spec_knowledge
+  spec_knowledge__project --> spec_knowledge
+  spec_knowledge__proposal --> spec_core
+  spec_knowledge__proposal --> spec_knowledge
+  spec_knowledge__questions --> spec_core
+  spec_knowledge__questions --> spec_knowledge
+  spec_knowledge__requirement --> spec_knowledge
+  spec_knowledge__requirement_graph --> spec_knowledge
+  spec_knowledge__requirement_plan --> spec_knowledge
+  spec_knowledge__sarif --> spec_core
+  spec_knowledge__test_obligations --> spec_core
+  spec_knowledge__test_obligations --> spec_knowledge
+  spec_knowledge__test_obligations --> spec_qa
+  spec_knowledge__trace --> spec_core
+  spec_knowledge__trace --> spec_knowledge
+  spec_knowledge__trace_ledger --> spec_core
+  spec_knowledge__trace_ledger --> spec_knowledge
+  spec_knowledge__trace_ledger --> vcs
+  spec_knowledge__work_units --> spec_knowledge
+  spec_knowledge__worktrees --> spec_knowledge
+  spec_lint --> spec_lint__linters
+  spec_lint --> spec_lint__pipeline
+  spec_lint__linters --> spec_core
+  spec_lint__linters --> spec_parser
+  spec_lint__pipeline --> spec_core
+  spec_lint__pipeline --> spec_parser
+  spec_mcp --> spec_mcp__tools
+  spec_mcp__tools --> spec_knowledge
+  spec_parser --> spec_parser__keywords
+  spec_parser --> spec_parser__meta
+  spec_parser --> spec_parser__parser
+  spec_parser --> spec_parser__resolver
+  spec_parser__keywords --> spec_core
+  spec_parser__meta --> spec_core
+  spec_parser__parser --> spec_core
+  spec_parser__resolver --> spec_core
+  spec_report --> spec_core
+  spec_report --> spec_report__audit
+  spec_report --> spec_report__coverage
+  spec_report --> spec_report__discover
+  spec_report --> spec_report__integrations
+  spec_report --> spec_report__structural
+  spec_report__audit --> spec_core
+  spec_report__audit --> spec_parser
+  spec_report__coverage --> spec_core
+  spec_report__coverage --> spec_parser
+  spec_report__discover --> spec_core
+  spec_report__discover --> spec_parser
+  spec_verify --> spec_core
+  spec_verify --> spec_verify__ai_verifier
+  spec_verify --> spec_verify__boundaries
+  spec_verify --> spec_verify__complexity
+  spec_verify --> spec_verify__structural
+  spec_verify --> spec_verify__test_verifier
+  spec_verify__ai_verifier --> spec_core
+  spec_verify__boundaries --> spec_core
+  spec_verify__boundaries --> spec_verify
+  spec_verify__complexity --> spec_core
+  spec_verify__complexity --> spec_verify
+  spec_verify__structural --> spec_core
+  spec_verify__test_verifier --> spec_core
+  spec_wiki --> spec_wiki__architecture
+  spec_wiki --> spec_wiki__assets
+  spec_wiki --> spec_wiki__check
+  spec_wiki --> spec_wiki__ci
+  spec_wiki --> spec_wiki__github
+  spec_wiki --> spec_wiki__live
+  spec_wiki --> spec_wiki__model
+  spec_wiki --> spec_wiki__plan
+  spec_wiki --> spec_wiki__project_map
+  spec_wiki --> spec_wiki__render
+  spec_wiki --> spec_wiki__sources
+  spec_wiki__architecture --> spec_wiki
+  spec_wiki__assets --> spec_wiki
+  spec_wiki__check --> spec_wiki
+  spec_wiki__ci --> spec_wiki
+  spec_wiki__github --> spec_wiki
+  spec_wiki__live --> spec_wiki
+  spec_wiki__plan --> spec_wiki
+  spec_wiki__project_map --> spec_wiki
+  spec_wiki__render --> spec_wiki
+  spec_wiki__sources --> spec_wiki

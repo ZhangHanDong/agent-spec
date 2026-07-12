@@ -1,0 +1,74 @@
+---
+title: "Verification Lifecycle"
+type: module
+source_files:
+  - src/spec_verify/mod.rs
+  - src/spec_verify/boundaries.rs
+  - src/spec_verify/test_verifier.rs
+  - src/main.rs
+  - AGENTS.md
+  - skills/agent-spec-tool-first/SKILL.md
+tags:
+  - lifecycle
+  - verification
+  - contract
+---
+
+# Verification Lifecycle
+
+## Role
+
+The lifecycle pipeline is the main quality gate for a Task Contract. It combines
+spec linting with mechanical verification and returns scenario verdicts that an
+agent can act on without changing the contract.
+
+The core runtime verifier model is small:
+
+- `VerificationContext` carries code paths, changed paths, AI mode, and the
+  resolved spec.
+- Each verifier returns scenario results.
+- `run_verification` keeps the first result for each scenario.
+- Mechanical verifiers stamp computational provenance; the AI verifier stamps
+  inferential provenance.
+- Any scenario not covered by a verifier becomes `skip`, not `pass`.
+
+## Mechanical Verifiers
+
+The boundary verifier runs only when explicit changed paths are available. It
+collects allowed and forbidden path boundaries from the task spec and compares
+them with normalized changed files. A changed file outside the allowed set, or
+inside a forbidden boundary, fails the boundary scenario.
+
+The test verifier looks for explicit scenario `Test:` selectors first, then
+falls back to legacy comment bindings. It runs Cargo tests with the selected
+filter and converts test output to scenario evidence. Successful tests produce
+`pass`, unless the scenario is human-review mode, which becomes
+`pending_review`.
+
+## Agent Loop
+
+The intended loop is:
+
+```bash
+agent-spec contract specs/task.spec.md
+agent-spec lifecycle specs/task.spec.md --code . --format json
+```
+
+When lifecycle fails, fix the implementation or tests that are bound to the
+contract. Do not weaken the spec to make verification pass. `skip`, `fail`,
+`uncertain`, and `pending_review` are distinct states and should remain distinct
+in reports, trace records, and failure explanation.
+
+## Trace Implication
+
+Lifecycle results become useful only when they remain tied to:
+
+- requirement ids from `satisfies`
+- work units from the requirement plan
+- spec scenarios
+- test selectors and test evidence
+- changed code paths or declared test targets
+- worktree, branch, and VCS reference when available
+
+That chain is what lets agent-spec answer which requirement, work unit, scenario,
+test, code path, worktree, and commit failed.

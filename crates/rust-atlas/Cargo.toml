@@ -1,0 +1,24 @@
+[package]
+name = "rust-atlas"
+description = "Incrementally invalidated Rust project graph for AI agents: syn-based symbol extraction, per-file shards with blake3 invalidation, optional SCIP reference overlay"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+repository = "https://github.com/ZhangHanDong/agent-spec"
+
+[dependencies]
+blake3 = "1"
+ignore = "0.4"
+proc-macro2 = { version = "1", features = ["span-locations"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+syn = { version = "2", features = ["full", "extra-traits"] }
+thiserror = "2"
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"

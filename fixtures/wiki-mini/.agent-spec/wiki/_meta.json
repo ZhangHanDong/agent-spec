@@ -1,0 +1,8 @@
+{
+  "project": "wiki-mini",
+  "repo_path": ".",
+  "generator": "agent-spec code live wiki",
+  "generator_version": "0.4.0",
+  "last_compiled_commit": "b239797818f2299979fc83e788b7a9488a79f655",
+  "last_compiled_at": null
+}
