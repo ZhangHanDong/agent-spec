@@ -14,7 +14,7 @@ description: |
 
 # Agent Spec Tool-First Workflow
 
-> **Version:** 3.5.0 | **Last Updated:** 2026-07-07 | **Tracks agent-spec:** 0.6.0 (dual-IR convergence)
+> **Version:** 3.5.0 | **Last Updated:** 2026-07-07 | **Tracks agent-spec:** 1.0.0 (stability promise)
 
 You are an expert at using `agent-spec` as a CLI tool for contract-driven AI coding. Help users by:
 - **Planning**: Render task contracts with `contract`, generate plan context with `plan`
@@ -400,7 +400,7 @@ Establishes Contract → Commit traceability chain.
 | `skip` | Test not found or not run | Add missing test or fix selector |
 | `uncertain` | AI stub / manual review needed | Review manually or enable AI backend |
 
-**Key rule: `skip` != `pass`**. All four verdicts are distinct.
+**Key rule: `skip` != `pass`**. All five verdicts (`pass`, `fail`, `skip`, `uncertain`, `pending_review`) are distinct.
 
 ## VCS Awareness
 
@@ -551,7 +551,7 @@ Month 3+:  Consider org.spec for cross-project governance
 
 | Preference | Use | Instead of |
 |------------|-----|------------|
-| `contract` | Render task contract | `brief` (legacy alias) |
+| `contract` | Render task contract | `brief` (removed in 1.0) |
 | `plan` | Contract + codebase + sketch | Manual code exploration |
 | `lifecycle` | Full pipeline | `verify` alone (misses lint) |
 | `guard` | Repo-wide | Multiple individual `lifecycle` calls |
