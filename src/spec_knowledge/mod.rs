@@ -23,6 +23,7 @@ pub mod questions;
 pub mod requirement;
 pub mod requirement_graph;
 pub mod requirement_plan;
+pub mod run_manifest;
 pub mod sarif;
 pub mod scaffold;
 pub mod status;
@@ -78,6 +79,10 @@ pub use requirement_plan::{
     RequirementPlan, RequirementPlanBatch, RequirementPlanDiagnostic, RequirementPlanEdge,
     RequirementPlanEdgeKind, RequirementPlanNode, RequirementPlanSpecNode, RequirementPlanStatus,
     RequirementSpecCoverage, build_requirement_plan, validate_requirement_plan,
+};
+pub use run_manifest::{
+    RUN_MANIFEST_SCHEMA_ID, RUN_MANIFEST_VERSION, RunConfigEntry, RunManifest, VerifyRunReport,
+    build_commit, render_run_artifact, verify_run, write_run_provenance,
 };
 pub use sarif::{Finding, render_sarif};
 pub use scaffold::scaffold_workspace;

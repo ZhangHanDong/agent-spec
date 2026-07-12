@@ -8,6 +8,17 @@ All notable changes to `agent-spec` are documented here. Format follows
 
 ### Added
 
+- Provenance run hardening (`REQ-PROVENANCE-RUN-HARDENING`): compilation-run
+  manifests v2 record the exact compiler build (crate version + git commit
+  embedded at build time, `unknown` fallback) and the effective command
+  configuration; `--out`-writing requirements commands (`graph`, `plan`,
+  `work-units`, `test-obligations`, `traceability`) accept `--provenance`;
+  `requirements verify-run --manifest <m>.json` replays the recorded
+  compilation in memory and byte-compares against recorded digests, exiting
+  non-zero naming each drifted output. `graph`/`plan` gain `--out`. v1
+  manifests keep verifying unchanged. Schema:
+  `docs/intent-compiler/schemas/compilation-provenance-v2.schema.json`.
+
 - Compiler machine surface (`REQ-COMPILER-MACHINE-SURFACE`, ADR-001):
   `requirements transition`/`supersede` gain `--format json` emitting the
   post-rewrite blake3 document digests (facts only — no actor, authority,

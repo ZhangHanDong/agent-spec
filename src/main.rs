@@ -666,6 +666,17 @@ enum RequirementCommands {
         /// Write the projection to a file exactly as printed
         #[arg(long)]
         out: Option<PathBuf>,
+        /// Optional compilation-run provenance manifest target (.json; requires --out and json)
+        #[arg(long)]
+        provenance: Option<PathBuf>,
+    },
+    /// Replay a recorded compilation-run manifest and byte-compare outputs
+    VerifyRun {
+        /// Path to a compilation-provenance-v2 manifest
+        #[arg(long)]
+        manifest: PathBuf,
+        #[arg(long, default_value = "text")]
+        format: String,
     },
     /// Aggregate three-axis status (governance / execution / liveness) for one requirement
     Status {
@@ -707,6 +718,12 @@ enum RequirementCommands {
         format: String,
         #[arg(long)]
         gate: bool,
+        /// Write the JSON artifact to a file (requires --format json)
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Optional compilation-run provenance manifest target (.json; requires --out)
+        #[arg(long)]
+        provenance: Option<PathBuf>,
     },
     /// Build a cross-layer requirement/work-unit/spec plan DAG
     Plan {
@@ -718,6 +735,12 @@ enum RequirementCommands {
         format: String,
         #[arg(long)]
         gate: bool,
+        /// Write the JSON artifact to a file (requires --format json)
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Optional compilation-run provenance manifest target (.json; requires --out)
+        #[arg(long)]
+        provenance: Option<PathBuf>,
     },
     /// Emit test obligations derived from requirements and specs, independent of code
     TestObligations {
@@ -729,6 +752,9 @@ enum RequirementCommands {
         format: String,
         #[arg(long)]
         out: Option<PathBuf>,
+        /// Optional compilation-run provenance manifest target (.json; requires --out and json)
+        #[arg(long)]
+        provenance: Option<PathBuf>,
     },
     /// Emit clarification questions from requirement diagnostics
     Questions {
@@ -802,6 +828,9 @@ enum RequirementCommands {
         out: Option<PathBuf>,
         #[arg(long, default_value = "json")]
         format: String,
+        /// Optional compilation-run provenance manifest target (.json; requires --out and json)
+        #[arg(long)]
+        provenance: Option<PathBuf>,
     },
     /// Render reviewable task spec drafts from ready work units
     DraftSpecs {
@@ -3319,7 +3348,11 @@ fn cmd_requirements(action: RequirementCommands) -> Result<(), Box<dyn std::erro
             trace_dir,
             format,
             out,
+            provenance,
         } => {
+            if provenance.is_some() && (out.is_none() || format != "json") {
+                return Err("--provenance requires --out and --format json".into());
+            }
             let projection = crate::spec_knowledge::build_traceability_projection(
                 &knowledge, &specs, &trace_dir, &id,
             )?;
@@ -3330,6 +3363,38 @@ fn cmd_requirements(action: RequirementCommands) -> Result<(), Box<dyn std::erro
             if let Some(target) = out {
                 std::fs::write(&target, &rendered)?;
                 println!("traceability written: {}", target.display());
+                if let Some(manifest_path) = provenance {
+                    let config = vec![
+                        crate::spec_knowledge::RunConfigEntry {
+                            flag: "id".to_string(),
+                            value: projection.id.clone(),
+                        },
+                        crate::spec_knowledge::RunConfigEntry {
+                            flag: "knowledge".to_string(),
+                            value: knowledge.to_string_lossy().into_owned(),
+                        },
+                        crate::spec_knowledge::RunConfigEntry {
+                            flag: "specs".to_string(),
+                            value: specs.to_string_lossy().into_owned(),
+                        },
+                        crate::spec_knowledge::RunConfigEntry {
+                            flag: "trace-dir".to_string(),
+                            value: trace_dir.to_string_lossy().into_owned(),
+                        },
+                    ];
+                    let manifest = crate::spec_knowledge::write_run_provenance(
+                        "requirements traceability",
+                        &config,
+                        &knowledge,
+                        &target,
+                        &manifest_path,
+                    )?;
+                    println!(
+                        "provenance: {} (build {})",
+                        manifest_path.display(),
+                        manifest.tool.build_commit
+                    );
+                }
             } else {
                 print!("{rendered}");
             }
@@ -3400,19 +3465,43 @@ fn cmd_requirements(action: RequirementCommands) -> Result<(), Box<dyn std::erro
             knowledge,
             format,
             gate,
-        } => cmd_requirements_graph(&knowledge, &format, gate),
+            out,
+            provenance,
+        } => cmd_requirements_graph(
+            &knowledge,
+            &format,
+            gate,
+            out.as_deref(),
+            provenance.as_deref(),
+        ),
         RequirementCommands::Plan {
             knowledge,
             specs,
             format,
             gate,
-        } => cmd_requirements_plan(&knowledge, &specs, &format, gate),
+            out,
+            provenance,
+        } => cmd_requirements_plan(
+            &knowledge,
+            &specs,
+            &format,
+            gate,
+            out.as_deref(),
+            provenance.as_deref(),
+        ),
         RequirementCommands::TestObligations {
             knowledge,
             specs,
             format,
             out,
-        } => cmd_requirements_test_obligations(&knowledge, &specs, &format, out.as_deref()),
+            provenance,
+        } => cmd_requirements_test_obligations(
+            &knowledge,
+            &specs,
+            &format,
+            out.as_deref(),
+            provenance.as_deref(),
+        ),
         RequirementCommands::Questions {
             knowledge,
             specs,
@@ -3461,7 +3550,34 @@ fn cmd_requirements(action: RequirementCommands) -> Result<(), Box<dyn std::erro
             knowledge,
             out,
             format,
-        } => cmd_requirements_work_units(&knowledge, out.as_deref(), &format),
+            provenance,
+        } => {
+            cmd_requirements_work_units(&knowledge, out.as_deref(), &format, provenance.as_deref())
+        }
+        RequirementCommands::VerifyRun { manifest, format } => {
+            let report = crate::spec_knowledge::verify_run(&manifest)?;
+            match format.as_str() {
+                "json" => println!("{}", serde_json::to_string_pretty(&report)?),
+                _ => {
+                    println!(
+                        "verify-run {}: {} output(s) drifted",
+                        report.command,
+                        report.drifted.len()
+                    );
+                    for path in &report.drifted {
+                        println!("  drifted: {path}");
+                    }
+                }
+            }
+            if !report.drifted.is_empty() {
+                return Err(format!(
+                    "verify-run: recorded compilation no longer reproduces: {}",
+                    report.drifted.join(", ")
+                )
+                .into());
+            }
+            Ok(())
+        }
         RequirementCommands::DraftSpecs {
             knowledge,
             out,
@@ -3551,18 +3667,79 @@ fn cmd_requirements_import(
     Ok(())
 }
 
+/// Write one replayable artifact through the shared renderer (byte parity
+/// with `verify-run` replay by construction) and optionally its v2 manifest.
+fn write_run_artifact_with_provenance(
+    command: &str,
+    config: &[crate::spec_knowledge::RunConfigEntry],
+    knowledge: &Path,
+    out: &Path,
+    provenance: Option<&Path>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let body = crate::spec_knowledge::render_run_artifact(command, config)?;
+    if let Some(parent) = out.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(out, &body)?;
+    if let Some(manifest_path) = provenance {
+        let manifest = crate::spec_knowledge::write_run_provenance(
+            command,
+            config,
+            knowledge,
+            out,
+            manifest_path,
+        )?;
+        println!(
+            "provenance: {} (build {})",
+            manifest_path.display(),
+            manifest.tool.build_commit
+        );
+    }
+    Ok(())
+}
+
+fn run_config_entries(entries: &[(&str, &Path)]) -> Vec<crate::spec_knowledge::RunConfigEntry> {
+    entries
+        .iter()
+        .map(|(flag, value)| crate::spec_knowledge::RunConfigEntry {
+            flag: (*flag).to_string(),
+            value: value.to_string_lossy().into_owned(),
+        })
+        .collect()
+}
+
 fn cmd_requirements_graph(
     knowledge: &Path,
     format: &str,
     gate: bool,
+    out: Option<&Path>,
+    provenance: Option<&Path>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if provenance.is_some() && out.is_none() {
+        return Err("--provenance requires --out".into());
+    }
+    if out.is_some() && format != "json" {
+        return Err("--out requires --format json".into());
+    }
     let mut graph = crate::spec_knowledge::build_requirement_graph(knowledge);
     graph
         .diagnostics
         .extend(crate::spec_knowledge::validate_requirement_graph(&graph));
-    match format {
-        "json" => println!("{}", serde_json::to_string_pretty(&graph)?),
-        _ => print_requirement_graph_text(&graph),
+    if let Some(path) = out {
+        let config = run_config_entries(&[("knowledge", knowledge)]);
+        write_run_artifact_with_provenance(
+            "requirements graph",
+            &config,
+            knowledge,
+            path,
+            provenance,
+        )?;
+        println!("graph written: {}", path.display());
+    } else {
+        match format {
+            "json" => println!("{}", serde_json::to_string_pretty(&graph)?),
+            _ => print_requirement_graph_text(&graph),
+        }
     }
     if gate
         && (!graph.parse_errors.is_empty()
@@ -3581,11 +3758,31 @@ fn cmd_requirements_plan(
     specs: &Path,
     format: &str,
     gate: bool,
+    out: Option<&Path>,
+    provenance: Option<&Path>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if provenance.is_some() && out.is_none() {
+        return Err("--provenance requires --out".into());
+    }
+    if out.is_some() && format != "json" {
+        return Err("--out requires --format json".into());
+    }
     let plan = crate::spec_knowledge::build_requirement_plan(knowledge, specs);
-    match format {
-        "json" => println!("{}", serde_json::to_string_pretty(&plan)?),
-        _ => print_requirement_plan_text(&plan),
+    if let Some(path) = out {
+        let config = run_config_entries(&[("knowledge", knowledge), ("specs", specs)]);
+        write_run_artifact_with_provenance(
+            "requirements plan",
+            &config,
+            knowledge,
+            path,
+            provenance,
+        )?;
+        println!("plan written: {}", path.display());
+    } else {
+        match format {
+            "json" => println!("{}", serde_json::to_string_pretty(&plan)?),
+            _ => print_requirement_plan_text(&plan),
+        }
     }
 
     if gate
@@ -3768,7 +3965,21 @@ fn cmd_requirements_test_obligations(
     specs: &Path,
     format: &str,
     out: Option<&Path>,
+    provenance: Option<&Path>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if provenance.is_some() && (out.is_none() || format == "text") {
+        return Err("--provenance requires --out and json format".into());
+    }
+    if let (Some(path), Some(_)) = (out, provenance) {
+        let config = run_config_entries(&[("knowledge", knowledge), ("specs", specs)]);
+        return write_run_artifact_with_provenance(
+            "requirements test-obligations",
+            &config,
+            knowledge,
+            path,
+            provenance,
+        );
+    }
     let obligations = crate::spec_knowledge::build_test_obligations(knowledge, specs);
     let body = match format {
         "text" => format_test_obligations_text(&obligations),
@@ -3827,7 +4038,21 @@ fn cmd_requirements_work_units(
     knowledge: &Path,
     out: Option<&Path>,
     format: &str,
+    provenance: Option<&Path>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if provenance.is_some() && (out.is_none() || format == "text") {
+        return Err("--provenance requires --out and json format".into());
+    }
+    if let (Some(path), Some(_)) = (out, provenance) {
+        let config = run_config_entries(&[("knowledge", knowledge)]);
+        return write_run_artifact_with_provenance(
+            "requirements work-units",
+            &config,
+            knowledge,
+            path,
+            provenance,
+        );
+    }
     let mut graph = crate::spec_knowledge::build_requirement_graph(knowledge);
     graph
         .diagnostics
@@ -5978,7 +6203,7 @@ name: "退款"
         .unwrap();
         let out = dir.join(".agent-spec/work_units.json");
 
-        cmd_requirements_work_units(&knowledge, Some(&out), "json").unwrap();
+        cmd_requirements_work_units(&knowledge, Some(&out), "json", None).unwrap();
         let json = fs::read_to_string(out).unwrap();
         assert!(
             json.contains("\"requirement_id\":\"REQ-101\"")
@@ -5999,7 +6224,7 @@ name: "退款"
         )
         .unwrap();
 
-        let err = cmd_requirements_graph(&knowledge, "text", true).unwrap_err();
+        let err = cmd_requirements_graph(&knowledge, "text", true, None, None).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("requirement graph gate failed"), "{msg}");
 
@@ -6012,9 +6237,17 @@ name: "退款"
         let missing_knowledge = dir.join("missing-knowledge");
         let missing_specs = dir.join("missing-specs");
 
-        assert!(cmd_requirements_graph(&missing_knowledge, "json", true).is_err());
+        assert!(cmd_requirements_graph(&missing_knowledge, "json", true, None, None).is_err());
         assert!(
-            super::cmd_requirements_plan(&missing_knowledge, &missing_specs, "json", true).is_err()
+            super::cmd_requirements_plan(
+                &missing_knowledge,
+                &missing_specs,
+                "json",
+                true,
+                None,
+                None
+            )
+            .is_err()
         );
         let _ = fs::remove_dir_all(dir);
     }
@@ -6042,12 +6275,16 @@ name: "退款"
                         specs,
                         format,
                         gate,
+                        out,
+                        provenance,
                     },
             } => {
                 assert_eq!(knowledge, PathBuf::from("knowledge"));
                 assert_eq!(specs, PathBuf::from("specs"));
                 assert_eq!(format, "json");
                 assert!(gate);
+                assert!(out.is_none());
+                assert!(provenance.is_none());
             }
             _ => panic!("expected requirements plan command"),
         }
@@ -6099,7 +6336,8 @@ name: "退款"
         )
         .unwrap();
 
-        let err = super::cmd_requirements_plan(&knowledge, &specs, "text", true).unwrap_err();
+        let err =
+            super::cmd_requirements_plan(&knowledge, &specs, "text", true, None, None).unwrap_err();
         assert!(err.to_string().contains("requirements plan gate failed"));
 
         let _ = fs::remove_dir_all(dir);
@@ -6125,6 +6363,7 @@ name: "退款"
             super::Commands::Requirements {
                 action:
                     super::RequirementCommands::TestObligations {
+                        provenance: _,
                         knowledge,
                         specs,
                         format,
@@ -6163,7 +6402,8 @@ name: "退款"
         .unwrap();
         let out = dir.join(".agent-spec/test_obligations.json");
 
-        super::cmd_requirements_test_obligations(&knowledge, &specs, "json", Some(&out)).unwrap();
+        super::cmd_requirements_test_obligations(&knowledge, &specs, "json", Some(&out), None)
+            .unwrap();
         let json = fs::read_to_string(out).unwrap();
         assert!(json.contains("\"requirement_id\": \"REQ-NOTE-CREATE\""));
         assert!(json.contains("\"suggested_selector\": \"note_create_adds_note\""));

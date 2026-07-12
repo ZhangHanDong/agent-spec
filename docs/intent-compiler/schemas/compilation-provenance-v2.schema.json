@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agent-spec/intent-compiler/compilation-provenance-v2",
+  "title": "Compilation Run Provenance Manifest v2",
+  "description": "Binds one artifact-emitting compilation run to the exact compiler build (crate version + build commit), the effective command configuration, and blake3 input/output digests. verify-run replays the recorded command and byte-compares. Deterministic facts only; v1 manifests remain valid under their own schema.",
+  "type": "object",
+  "required": [
+    "manifest_version",
+    "schema",
+    "tool",
+    "command",
+    "config",
+    "input",
+    "outputs"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "manifest_version": { "const": 2 },
+    "schema": {
+      "const": "agent-spec/intent-compiler/compilation-provenance-v2"
+    },
+    "tool": {
+      "type": "object",
+      "required": ["name", "version", "build_commit"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "const": "agent-spec" },
+        "version": { "type": "string" },
+        "build_commit": {
+          "type": "string",
+          "description": "Git commit embedded at compiler build time, or the literal `unknown` when built outside a checkout."
+        }
+      }
+    },
+    "command": {
+      "enum": [
+        "requirements graph",
+        "requirements plan",
+        "requirements work-units",
+        "requirements test-obligations",
+        "requirements traceability"
+      ]
+    },
+    "config": {
+      "type": "array",
+      "description": "Effective command configuration, sorted by flag.",
+      "items": {
+        "type": "object",
+        "required": ["flag", "value"],
+        "additionalProperties": false,
+        "properties": {
+          "flag": { "type": "string" },
+          "value": { "type": "string" }
+        }
+      }
+    },
+    "input": { "$ref": "#/$defs/digestEntry" },
+    "outputs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/digestEntry" }
+    }
+  },
+  "$defs": {
+    "digestEntry": {
+      "type": "object",
+      "required": ["path", "blake3"],
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string" },
+        "blake3": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    }
+  }
+}

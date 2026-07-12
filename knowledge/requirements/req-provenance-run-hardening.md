@@ -2,7 +2,7 @@
 kind: requirement
 id: REQ-PROVENANCE-RUN-HARDENING
 title: "Provenance Run Hardening"
-status: proposed
+status: accepted
 liveness: auto
 tags: [intent-compiler, provenance, determinism, replay]
 ---
