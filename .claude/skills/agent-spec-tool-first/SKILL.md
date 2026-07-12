@@ -14,7 +14,7 @@ description: |
 
 # Agent Spec Tool-First Workflow
 
-> **Version:** 3.5.0 | **Last Updated:** 2026-07-07 | **Tracks agent-spec:** 0.5.0 (orchestrator machine surface)
+> **Version:** 3.5.0 | **Last Updated:** 2026-07-07 | **Tracks agent-spec:** 0.6.0 (dual-IR convergence)
 
 You are an expert at using `agent-spec` as a CLI tool for contract-driven AI coding. Help users by:
 - **Planning**: Render task contracts with `contract`, generate plan context with `plan`
@@ -109,6 +109,9 @@ still live in `specs/`.
 | `agent-spec requirements <graph\|plan\|work-units\|test-obligations\|traceability> --out <f> --provenance <m>.json` | Emit a compilation-run manifest (v2): compiler build commit + effective config + blake3 input/output digests | Record any artifact-emitting compilation as reproducible, auditable work |
 | `agent-spec requirements verify-run --manifest <m>.json` | Replay the recorded compilation in memory and byte-compare against recorded digests; non-zero exit names every drifted output | Prove a recorded compilation still reproduces — determinism as an executable check |
 | `agent-spec requirements compile --out <dir> [--id REQ-*] [--layout agent-spec-v1\|arc-v1] [--force]` | Per-requirement bundles (requirement doc + draft spec + traceability + compilation manifest with bundle digest); atomic writes, overwrite refusal without `--force`; `arc-v1` projects reference-compatible file names over the same content | Hand orchestrators/consumers a pinned, replayable bundle; covers accepted requirements whose work unit is ready (cold-start compile path) |
+| `agent-spec requirements bind [--code .] [--graph .agent-spec/graph] [--out .agent-spec/code-bindings.json]` | Bind ready work units' declared `### Symbols` to code targets resolved in the provider graph (rust-atlas first); stale graph fails naming lagging files; bindings are derived working data, never KLL truth | Ground work units in real symbols before contract finalization (boundary 2 of the target architecture) |
+| Contract `### Symbols` (`- rust-atlas: <path>`) | Lifecycle validates every declared symbol against a fresh graph: `atlas-symbol-missing` / `atlas-stale` (stale wins, no false positives); valid = silent; no symbols = no graph needed. Passing runs persist typed code targets (provider/node/kind/file/provenance/fingerprint) into trace evidence | Pin a contract to real code symbols; the Linker turns "the symbol no longer exists" into a mechanical diagnostic |
+| `agent-spec requirements bundle --unit WU-REQ-X --out bundle.json` | One complete execution context: work unit + embedded contracts (digested) + code bindings + quality profile (argv arrays, normalized outcomes — required-unavailable never passes) + skill receipts (provenance, not acceptance) + fast checks + acceptance gates | Hand an agent everything it needs for one work unit in a single pinnable artifact (boundary 4) |
 | `agent-spec requirements export --out requirements.yaml` | YAML projection of confirmed requirements (round-trip fixpoint, `--check` drift gate) | Interop with YAML-world tooling; derived, never source of truth |
 | `agent-spec requirements import/graph/work-units/draft-specs` | Convert marked PRD/issue requirement blocks into KLL artifacts, validate the graph, generate executable work units, and draft Task Contracts with `satisfies: [REQ-*]` | Use when raw product requirements need to become verifiable agent-spec work |
 | `agent-spec mcp` | Serve the knowledge layer over MCP (JSON-RPC 2.0 over stdio, read-only, deterministic) | Wire into an MCP client so agents query knowledge live |
