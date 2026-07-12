@@ -29,5 +29,9 @@ Thumbs.db
 .env.*
 
 # agent-spec run logs
-.agent-spec/
+.agent-spec/*
+!.agent-spec/wiki/
+!.agent-spec/wiki/**
+!.agent-spec/archive/
+!.agent-spec/archive/**
 books/harness-spec-ai/

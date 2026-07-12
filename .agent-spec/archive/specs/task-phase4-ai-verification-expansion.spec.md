@@ -1,7 +1,7 @@
 spec: task
 name: "Phase 4：AI Verification Expansion"
 inherits: project
-tags: [roadmap, planned, phase4, ai]
+tags: [done, roadmap, planned, phase4, ai]
 ---
 
 ## 意图

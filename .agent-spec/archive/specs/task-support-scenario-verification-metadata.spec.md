@@ -1,7 +1,7 @@
 spec: task
 name: "支持场景验证强度元数据"
 inherits: project
-tags: [dsl, parser, lint, verification, phase-next]
+tags: [done, dsl, parser, lint, verification, phase-next]
 ---
 
 ## 意图

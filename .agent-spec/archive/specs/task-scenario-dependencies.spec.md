@@ -1,7 +1,7 @@
 spec: task
 name: "场景依赖与拓扑排序执行"
 inherits: project
-tags: [bootstrap, parser, lifecycle, lint, phase9]
+tags: [done, bootstrap, parser, lifecycle, lint, phase9]
 depends: [task-checkpoint-resume, task-history-summary]
 estimate: 1d
 ---

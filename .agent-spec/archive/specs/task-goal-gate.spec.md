@@ -1,7 +1,7 @@
 spec: task
 name: "关键场景门禁（Goal Gate）"
 inherits: project
-tags: [bootstrap, lifecycle, verify, phase7]
+tags: [done, bootstrap, lifecycle, verify, phase7]
 depends: []
 estimate: 0.5d
 ---

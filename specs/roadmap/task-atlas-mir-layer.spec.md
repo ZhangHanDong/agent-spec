@@ -41,8 +41,8 @@ Phase 1.
 
 ## Questions
 
-- Charon 对当前 rustc 版本的跟进节奏是否满足 CI 稳定性要求？
-- 单态化前的泛型 `calls` 边如何标注（保留泛型形参 vs 展开实例）？
+- [x] Charon 对当前 rustc 版本的跟进节奏是否满足 CI 稳定性要求？（已解决：MIR 层 feature 门控、永不进默认 CI，Charon 滞后不可能破坏 CI；Phase 2 开工时设评估门——Charon 支持仓库钉住的 stable rustc 且滞后不超过 2 个 minor 版本，否则改用 rustc_public 自写 driver。）
+- [x] 单态化前的泛型 `calls` 边如何标注（保留泛型形参 vs 展开实例）？（已解决：保留泛型形参形式，边上加 `generic: true` 属性；实例级展开有组合爆炸风险，列为非目标，等出现真实消费方再评估。）
 
 ## Completion Criteria
 

@@ -1,7 +1,7 @@
 spec: task
 name: "Spec 依赖图与 DOT 可视化"
 inherits: project
-tags: [bootstrap, cli, planning, phase7]
+tags: [done, bootstrap, cli, planning, phase7]
 depends: []
 estimate: 1d
 ---

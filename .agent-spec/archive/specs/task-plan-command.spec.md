@@ -1,7 +1,7 @@
 spec: task
 name: "实现计划生成（Plan Command）"
 inherits: project
-tags: [bootstrap, lifecycle, phase9]
+tags: [done, bootstrap, lifecycle, phase9]
 depends: [task-spec-dependency-graph]
 estimate: 1.5d
 ---

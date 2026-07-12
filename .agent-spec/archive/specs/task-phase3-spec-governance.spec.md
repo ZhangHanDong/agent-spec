@@ -1,7 +1,7 @@
 spec: task
 name: "Phase 3：Spec Governance"
 inherits: project
-tags: [roadmap, planned, phase3, governance]
+tags: [done, roadmap, planned, phase3, governance]
 ---
 
 ## 意图

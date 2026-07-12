@@ -1,7 +1,7 @@
 spec: task
 name: "开放式优化场景模式"
 inherits: project
-tags: [bootstrap, parser, lifecycle, phase9]
+tags: [done, bootstrap, parser, lifecycle, phase9]
 depends: [task-checkpoint-resume]
 estimate: 0.5d
 ---

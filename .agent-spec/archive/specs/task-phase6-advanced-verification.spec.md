@@ -1,7 +1,7 @@
 spec: task
 name: "Phase 6：Advanced Verification"
 inherits: project
-tags: [roadmap, planned, phase6, verification]
+tags: [done, roadmap, planned, phase6, verification]
 ---
 
 ## 意图

@@ -1,7 +1,7 @@
 spec: task
 name: "Phase 2：Run History 与 VCS Context"
 inherits: project
-tags: [roadmap, planned, phase2, traceability]
+tags: [done, roadmap, planned, phase2, traceability]
 ---
 
 ## 意图

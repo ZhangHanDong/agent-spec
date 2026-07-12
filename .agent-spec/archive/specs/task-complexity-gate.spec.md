@@ -1,7 +1,7 @@
 spec: task
 name: "代码质量门禁（Complexity Gate）"
 inherits: project
-tags: [bootstrap, verify, phase8]
+tags: [done, bootstrap, verify, phase8]
 depends: [task-goal-gate]
 estimate: 1d
 ---

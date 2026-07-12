@@ -1,7 +1,7 @@
 spec: task
 name: "人类审核场景（Human Review）"
 inherits: project
-tags: [bootstrap, verify, parser, phase9]
+tags: [done, bootstrap, verify, parser, phase9]
 depends: [task-complexity-gate]
 estimate: 0.5d
 ---

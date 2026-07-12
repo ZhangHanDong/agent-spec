@@ -1,7 +1,7 @@
 spec: task
 name: "Phase 0：Contract 保真度修正"
 inherits: project
-tags: [roadmap, planned, phase0, contract]
+tags: [done, roadmap, planned, phase0, contract]
 ---
 
 ## 意图

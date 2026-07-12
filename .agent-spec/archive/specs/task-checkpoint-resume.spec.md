@@ -1,7 +1,7 @@
 spec: task
 name: "检查点与增量重跑（Checkpoint/Resume）"
 inherits: project
-tags: [bootstrap, lifecycle, verify, phase8]
+tags: [done, bootstrap, lifecycle, verify, phase8]
 depends: [task-goal-gate, task-context-fidelity]
 estimate: 1d
 ---

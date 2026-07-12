@@ -1,7 +1,7 @@
 spec: task
 name: "Phase 5：Ecosystem Integrations"
 inherits: project
-tags: [roadmap, planned, phase5, ecosystem]
+tags: [done, roadmap, planned, phase5, ecosystem]
 ---
 
 ## 意图

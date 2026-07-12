@@ -1,7 +1,7 @@
 spec: task
 name: "Phase 1：Contract Review Loop"
 inherits: project
-tags: [roadmap, planned, phase1, review]
+tags: [done, roadmap, planned, phase1, review]
 ---
 
 ## 意图
