@@ -120,6 +120,8 @@ do not stop at the main happy path. Check these observable surfaces explicitly:
 - These invariants are invisible to per-feature tests but break on combinations
 
 If the task is a rewrite, migration, or parity effort, treat this as mandatory.
+The matrix is not required for ordinary incremental tasks — do not flag a
+plain feature contract as missing parity coverage.
 Do not hand the contract to an agent until these observable behaviors are either:
 - covered by scenarios, or
 - explicitly declared out of scope

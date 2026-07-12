@@ -1,7 +1,7 @@
 spec: task
 name: "标准化状态文件协议（Status File Contract）"
 inherits: project
-tags: [bootstrap, lifecycle, report, phase7]
+tags: [done, bootstrap, lifecycle, report, phase7]
 depends: [task-goal-gate]
 estimate: 0.5d
 ---

@@ -32,6 +32,7 @@ agent-spec:   Write Contract (60%) → Agent codes (0%) → Read explain (30%) �
 | `agent-spec resolve-ai <spec> --decisions <file>` | Merge AI decisions | Caller mode |
 | `agent-spec requirements graph --gate` | Validate KLL requirements and dependency graph | After importing PRD/issue requirements |
 | `agent-spec requirements transition <ID> --to accepted` | Explicit human governance transition | Accepting/rejecting a proposed requirement |
+| `agent-spec requirements status <ID>` | Three-axis report: governance / execution / liveness with spec evidence | "Where is REQ-X?" in one command |
 | `agent-spec requirements export --out requirements.yaml` | YAML projection of confirmed requirements (round-trip fixpoint, `--check` drift gate) | Interop with YAML-world tooling; derived, never source of truth |
 | `agent-spec requirements supersede <ID> --by <NEW>` | Atomic supersession pair | Replacing an accepted requirement |
 | `agent-spec wiki status` | Check stale code live wiki articles | Before broad source reading |

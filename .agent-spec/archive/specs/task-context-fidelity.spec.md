@@ -1,7 +1,7 @@
 spec: task
 name: "输出保真度分级（Context Fidelity）"
 inherits: project
-tags: [bootstrap, lifecycle, report, phase7]
+tags: [done, bootstrap, lifecycle, report, phase7]
 depends: []
 estimate: 0.5d
 ---

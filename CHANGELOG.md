@@ -12,6 +12,15 @@ specs and tests that still guard them.
 
 ### Added
 
+- `requirements status <ID>`: aggregate three-axis report (governance from KLL,
+  execution ladder unplanned→planned→ready→active→verified→archived, liveness
+  recomputed) with satisfying-spec evidence — target-architecture delivery
+  boundary 5, first slice.
+- `explain --history` now renders a tabular run history with per-run
+  pass/fail/skip/uncertain counts and deltas against the previous run
+  (completing the staged history-summary contract); all four remaining legacy
+  roadmap contracts were finished and archived.
+
 - Compilation provenance manifests (enterprise `*.compilation.json` alignment):
   opt-in `--provenance <path>.json` on `requirements import`/`export` binds the
   direction, blake3 input/output digests, tool identity, dialect schema version,

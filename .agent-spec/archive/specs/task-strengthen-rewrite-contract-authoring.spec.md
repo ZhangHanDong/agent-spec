@@ -1,7 +1,7 @@
 spec: task
 name: "强化 rewrite/parity 合同写作"
 inherits: project
-tags: [contract-quality, skills, templates, parity, phase-next]
+tags: [done, contract-quality, skills, templates, parity, phase-next]
 ---
 
 ## 意图

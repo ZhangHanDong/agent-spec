@@ -18,7 +18,7 @@ Nested roadmap specs still inherit the top-level [`project.spec`](../project.spe
 
 ## Current Status (triaged 2026-07-12)
 
-16 legacy roadmap specs (phase0–6, plan-command, goal-gate, checkpoint-resume,
+20 legacy roadmap specs (across two triage passes) (phase0–6, plan-command, goal-gate, checkpoint-resume,
 complexity-gate, human-review, optimize-scenario-mode, scenario-dependencies,
 spec-dependency-graph, support-scenario-verification-metadata) verified passing
 and were archived — the features shipped long ago.
@@ -29,10 +29,6 @@ Remaining staged contracts:
 |------|-------|-----|
 | `task-atlas-mir-layer.spec.md` | planned (Phase 2) | depends on Phase 1 |
 | `task-atlas-kll-integration.spec.md` | planned (Phase 3) | depends on Phase 1 |
-| `task-context-fidelity.spec.md` | partial (2/3, 1 skip) | one bound test not found in the codebase |
-| `task-history-summary.spec.md` | not started (0/4 skip) | no bound tests exist yet |
-| `task-status-file-contract.spec.md` | partial (3/4, 1 skip) | one selector unbound |
-| `task-strengthen-rewrite-contract-authoring.spec.md` | partial (4/6, 2 skip) | two selectors unbound |
 
 ## Target-Architecture Delivery Boundaries
 
@@ -45,7 +41,7 @@ architecture as five contracts:
 | 2. Provider-neutral Code Graph IR + typed code bindings | to be staged (builds on `specs/task-rust-atlas-code-graph.spec.md`, now active) |
 | 3. Rust Atlas through the Intent-Code Linker | `specs/roadmap/task-atlas-kll-integration.spec.md` |
 | 4. Quality Providers, profiles, Execution Bundles | to be staged |
-| 5. Aggregate status/evidence queries + full dogfood | to be staged |
+| 5. Aggregate status/evidence queries + full dogfood | first slice shipped: `specs/task-requirement-status-query.spec.md` (`requirements status <ID>`) |
 
 Use:
 

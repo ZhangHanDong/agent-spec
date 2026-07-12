@@ -644,6 +644,21 @@ enum RequirementCommands {
         #[arg(long, default_value = "knowledge")]
         knowledge: PathBuf,
     },
+    /// Aggregate three-axis status (governance / execution / liveness) for one requirement
+    Status {
+        /// Requirement id, e.g. REQ-123
+        id: String,
+        #[arg(long, default_value = "knowledge")]
+        knowledge: PathBuf,
+        #[arg(long, default_value = "specs")]
+        specs: PathBuf,
+        #[arg(long, default_value = ".agent-spec/archive/specs")]
+        archive_dir: PathBuf,
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
     /// Export requirement documents as a YAML dialect projection
     Export {
         #[arg(long, default_value = "knowledge")]
@@ -2789,30 +2804,133 @@ fn merge_checkpoint_results(
     spec_core::VerificationReport::from_results(report.spec_name, results)
 }
 
-fn read_run_log_history(base_dir: &Path, spec_name: &str) -> String {
+#[derive(Debug, Clone, serde::Serialize)]
+struct HistoryCounts {
+    passed: i64,
+    failed: i64,
+    skipped: i64,
+    uncertain: i64,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct HistoryDelta {
+    passed: i64,
+    failed: i64,
+    skipped: i64,
+    uncertain: i64,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct HistoryRow {
+    run: usize,
+    timestamp: u64,
+    passing: bool,
+    summary: String,
+    counts: Option<HistoryCounts>,
+    delta: Option<HistoryDelta>,
+}
+
+/// Parse "X/Y passed, N failed, N skipped, N uncertain" summaries.
+fn parse_summary_counts(summary: &str) -> Option<HistoryCounts> {
+    let mut passed = None;
+    let mut failed = None;
+    let mut skipped = None;
+    let mut uncertain = None;
+    for part in summary.split(',') {
+        let part = part.trim();
+        let mut words = part.split_whitespace();
+        let (value, label) = (words.next()?, words.next()?);
+        let number: i64 = value.split('/').next()?.parse().ok()?;
+        match label {
+            "passed" => passed = Some(number),
+            "failed" => failed = Some(number),
+            "skipped" => skipped = Some(number),
+            "uncertain" => uncertain = Some(number),
+            _ => {}
+        }
+    }
+    Some(HistoryCounts {
+        passed: passed?,
+        failed: failed?,
+        skipped: skipped?,
+        uncertain: uncertain?,
+    })
+}
+
+fn load_history_logs(base_dir: &Path, spec_name: &str) -> Vec<RunLogEntry> {
     let runs_dir = base_dir.join(".agent-spec/runs");
     let Ok(entries) = std::fs::read_dir(&runs_dir) else {
-        return String::new();
+        return Vec::new();
     };
-
     let mut logs: Vec<RunLogEntry> = entries
         .filter_map(|e| e.ok())
         .filter_map(|e| {
             let content = std::fs::read_to_string(e.path()).ok()?;
             let entry: RunLogEntry = serde_json::from_str(&content).ok()?;
-            if entry.spec_name == spec_name {
-                Some(entry)
-            } else {
-                None
-            }
+            (entry.spec_name == spec_name).then_some(entry)
         })
         .collect();
-
     logs.sort_by_key(|e| e.timestamp);
+    logs
+}
 
+/// Tabular history rows with per-run counts and deltas against the previous run.
+fn history_rows(base_dir: &Path, spec_name: &str) -> Vec<HistoryRow> {
+    let logs = load_history_logs(base_dir, spec_name);
+    let mut rows: Vec<HistoryRow> = Vec::with_capacity(logs.len());
+    for (i, log) in logs.iter().enumerate() {
+        let counts = parse_summary_counts(&log.summary);
+        let delta = match (i.checked_sub(1).and_then(|p| rows.get(p)), &counts) {
+            (Some(prev), Some(curr)) => prev.counts.as_ref().map(|p| HistoryDelta {
+                passed: curr.passed - p.passed,
+                failed: curr.failed - p.failed,
+                skipped: curr.skipped - p.skipped,
+                uncertain: curr.uncertain - p.uncertain,
+            }),
+            _ => None,
+        };
+        rows.push(HistoryRow {
+            run: i + 1,
+            timestamp: log.timestamp,
+            passing: log.passing,
+            summary: log.summary.clone(),
+            counts,
+            delta,
+        });
+    }
+    rows
+}
+
+/// JSON view of the run history (array of rows).
+fn history_json(base_dir: &Path, spec_name: &str) -> serde_json::Value {
+    serde_json::to_value(history_rows(base_dir, spec_name)).unwrap_or(serde_json::Value::Null)
+}
+
+fn format_delta(delta: &HistoryDelta) -> String {
+    let mut parts = Vec::new();
+    for (value, label) in [
+        (delta.passed, "pass"),
+        (delta.failed, "fail"),
+        (delta.skipped, "skip"),
+        (delta.uncertain, "uncertain"),
+    ] {
+        if value != 0 {
+            parts.push(format!("{value:+} {label}"));
+        }
+    }
+    if parts.is_empty() {
+        "no change".to_string()
+    } else {
+        parts.join(" ")
+    }
+}
+
+fn read_run_log_history(base_dir: &Path, spec_name: &str) -> String {
+    let logs = load_history_logs(base_dir, spec_name);
     if logs.is_empty() {
         return String::new();
     }
+    let rows = history_rows(base_dir, spec_name);
 
     let mut out = String::new();
     out.push_str(&format!("=== Run History ({} runs) ===\n", logs.len()));
@@ -2833,11 +2951,26 @@ fn read_run_log_history(base_dir: &Path, spec_name: &str) -> String {
         out.push_str(&format!("  Failed runs: {fail_count}\n"));
     }
 
-    for (i, log) in logs.iter().enumerate() {
-        let status = if log.passing { "PASS" } else { "FAIL" };
-        out.push_str(&format!("  #{}: [{}] {}\n", i + 1, status, log.summary));
+    for (row, log) in rows.iter().zip(logs.iter()) {
+        let status = if row.passing { "PASS" } else { "FAIL" };
+        let counts = row
+            .counts
+            .as_ref()
+            .map(|c| {
+                format!(
+                    "{} pass {} fail {} skip {} uncertain",
+                    c.passed, c.failed, c.skipped, c.uncertain
+                )
+            })
+            .unwrap_or_else(|| row.summary.clone());
+        let delta = row.delta.as_ref().map(format_delta).unwrap_or_default();
+        out.push_str(&format!(
+            "  | run #{} | {} | {} | {} |\n",
+            row.run, status, counts, delta
+        ));
 
         // Show jj diff between adjacent runs when both have operation IDs
+        let i = row.run - 1;
         if i > 0
             && let (Some(prev_vcs), Some(curr_vcs)) = (&logs[i - 1].vcs, &log.vcs)
             && prev_vcs.vcs_type == vcs::VcsType::Jj
@@ -3135,6 +3268,28 @@ fn cmd_requirements(action: RequirementCommands) -> Result<(), Box<dyn std::erro
                 by.to_ascii_uppercase(),
                 replacement.display()
             );
+            Ok(())
+        }
+        RequirementCommands::Status {
+            id,
+            knowledge,
+            specs,
+            archive_dir,
+            code,
+            format,
+        } => {
+            let report = crate::spec_knowledge::requirement_status(
+                &knowledge,
+                &specs,
+                &archive_dir,
+                &id,
+                |spec_path| crate::spec_knowledge::verify_spec_rollup(spec_path, &code),
+            )?;
+            if format == "json" {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                print!("{}", crate::spec_knowledge::format_status_text(&report));
+            }
             Ok(())
         }
         RequirementCommands::Export {
@@ -10239,5 +10394,209 @@ Scenario: pass
             "must name the first step: {err}"
         );
         fs::remove_dir_all(base).ok();
+    }
+
+    // ── legacy roadmap triage: history summary ──────────────────
+
+    fn write_history_logs(dir: &Path, name: &str, summaries: &[(bool, &str)]) {
+        let runs_dir = dir.join(".agent-spec/runs");
+        fs::create_dir_all(&runs_dir).unwrap();
+        for (i, (passing, summary)) in summaries.iter().enumerate() {
+            let entry = RunLogEntry {
+                spec_name: name.into(),
+                spec_path: PathBuf::new(),
+                spec_fingerprint: String::new(),
+                passing: *passing,
+                summary: (*summary).to_string(),
+                timestamp: 1700000000 + i as u64,
+                vcs: None,
+            };
+            fs::write(
+                runs_dir.join(format!("h{}.json", 1700000000 + i as u64)),
+                serde_json::to_string_pretty(&entry).unwrap(),
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn test_history_outputs_tabular_summary() {
+        let dir = make_temp_dir("agent-spec-history-table");
+        write_history_logs(
+            &dir,
+            "tabular",
+            &[
+                (false, "2/5 passed, 3 failed, 0 skipped, 0 uncertain"),
+                (false, "4/5 passed, 1 failed, 0 skipped, 0 uncertain"),
+                (true, "5/5 passed, 0 failed, 0 skipped, 0 uncertain"),
+            ],
+        );
+        let rows = super::history_rows(&dir, "tabular");
+        assert_eq!(rows.len(), 3);
+        for row in &rows {
+            assert!(row.counts.is_some(), "each row parses counts: {row:?}");
+        }
+        let text = super::read_run_log_history(&dir, "tabular");
+        assert_eq!(
+            text.lines().filter(|l| l.contains("| run #")).count(),
+            3,
+            "three table rows: {text}"
+        );
+        assert!(text.contains("pass"), "{text}");
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn test_history_delta_shows_diff_from_previous() {
+        let dir = make_temp_dir("agent-spec-history-delta");
+        write_history_logs(
+            &dir,
+            "delta",
+            &[
+                (false, "2/5 passed, 3 failed, 0 skipped, 0 uncertain"),
+                (false, "4/5 passed, 1 failed, 0 skipped, 0 uncertain"),
+            ],
+        );
+        let rows = super::history_rows(&dir, "delta");
+        let second = rows[1].delta.as_ref().unwrap();
+        assert_eq!(second.passed, 2, "{second:?}");
+        assert_eq!(second.failed, -2, "{second:?}");
+        let text = super::read_run_log_history(&dir, "delta");
+        assert!(text.contains("+2 pass"), "{text}");
+        assert!(text.contains("-2 fail"), "{text}");
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn test_history_single_run_no_delta() {
+        let dir = make_temp_dir("agent-spec-history-single");
+        write_history_logs(
+            &dir,
+            "single",
+            &[(true, "3/3 passed, 0 failed, 0 skipped, 0 uncertain")],
+        );
+        let rows = super::history_rows(&dir, "single");
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].delta.is_none(), "first run has no delta");
+        let text = super::read_run_log_history(&dir, "single");
+        assert!(
+            !text.contains("+"),
+            "no delta markers for a single run: {text}"
+        );
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn test_history_json_format_output() {
+        let dir = make_temp_dir("agent-spec-history-json");
+        write_history_logs(
+            &dir,
+            "jsonh",
+            &[
+                (false, "1/2 passed, 1 failed, 0 skipped, 0 uncertain"),
+                (true, "2/2 passed, 0 failed, 0 skipped, 0 uncertain"),
+            ],
+        );
+        let value = super::history_json(&dir, "jsonh");
+        let rows = value.as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["counts"]["passed"], 1);
+        assert_eq!(rows[1]["delta"]["passed"], 1);
+        assert!(rows[0]["delta"].is_null());
+        fs::remove_dir_all(dir).ok();
+    }
+
+    // ── legacy roadmap triage: context fidelity + status file ───
+
+    #[test]
+    fn test_existing_json_format_unchanged() {
+        let dir = make_temp_dir("agent-spec-json-stable");
+        fs::create_dir_all(dir.join("specs")).unwrap();
+        let spec = dir.join("specs/task-json-stable.spec.md");
+        fs::write(
+            &spec,
+            "spec: task\nname: \"Json Stable\"\ntags: [done]\n---\n## Intent\nStable.\n## Completion Criteria\nScenario: stable\n  Test: test_history_single_run_no_delta\n  Given a spec\n  When verified\n  Then it passes\n",
+        )
+        .unwrap();
+        let gw = crate::spec_gateway::SpecGateway::load(&spec).unwrap();
+        let report = gw.verify(Path::new(".")).unwrap();
+        let value = serde_json::to_value(&report).unwrap();
+        for key in ["spec_name", "results", "summary"] {
+            assert!(
+                value.get(key).is_some(),
+                "lifecycle json keeps top-level key {key}: {value}"
+            );
+        }
+        let summary = &value["summary"];
+        for key in ["passed", "failed", "skipped", "uncertain", "total"] {
+            assert!(summary.get(key).is_some(), "summary keeps {key}");
+        }
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn test_no_status_file_flag_produces_no_file() {
+        let dir = make_temp_dir("agent-spec-no-status-file");
+        fs::create_dir_all(dir.join("specs")).unwrap();
+        let spec = dir.join("specs/task-nostatus.spec.md");
+        fs::write(
+            &spec,
+            "spec: task\nname: \"No Status\"\ntags: []\n---\n## Intent\nn.\n## Completion Criteria\nScenario: s\n  Test: test_history_single_run_no_delta\n  Given a\n  When b\n  Then c\n",
+        )
+        .unwrap();
+        let before: std::collections::BTreeSet<PathBuf> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        let _ = super::cmd_lifecycle(
+            &spec,
+            &dir,
+            &[],
+            "none",
+            "off",
+            0.0,
+            "json",
+            None,
+            false,
+            None,
+            None,
+            "auto",
+        );
+        let after: std::collections::BTreeSet<PathBuf> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        let new_files: Vec<_> = after.difference(&before).collect();
+        assert!(
+            new_files
+                .iter()
+                .all(|p| !p.to_string_lossy().contains("status")),
+            "no status file without the flag: {new_files:?}"
+        );
+        fs::remove_dir_all(dir).ok();
+    }
+
+    // ── legacy roadmap triage: rewrite/parity skill guidance ────
+
+    #[test]
+    fn test_skill_guidance_rejects_parity_contracts_missing_behavior_matrix() {
+        let skill = include_str!("../skills/agent-spec-tool-first/SKILL.md");
+        assert!(skill.contains("rewrite, migration, or parity"));
+        assert!(
+            skill.contains("switch back to authoring mode and add scenarios before coding"),
+            "parity contracts with unbound observable behavior are not deliverable as-is"
+        );
+        let authoring = include_str!("../skills/agent-spec-authoring/SKILL.md");
+        assert!(authoring.contains("Behavior Surface Checklist"));
+        assert!(authoring.contains("treat this as mandatory"));
+    }
+
+    #[test]
+    fn test_skill_guidance_does_not_require_behavior_matrix_for_non_parity_tasks() {
+        let authoring = include_str!("../skills/agent-spec-authoring/SKILL.md");
+        assert!(
+            authoring.contains("not required for ordinary incremental tasks"),
+            "non-parity tasks must be exempt from the behavior matrix"
+        );
     }
 }

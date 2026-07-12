@@ -1,7 +1,7 @@
 spec: task
 name: "运行历史汇总视图"
 inherits: project
-tags: [bootstrap, lifecycle, report, phase8]
+tags: [done, bootstrap, lifecycle, report, phase8]
 depends: [task-context-fidelity]
 estimate: 0.5d
 ---

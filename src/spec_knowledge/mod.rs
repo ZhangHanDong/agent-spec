@@ -25,6 +25,7 @@ pub mod requirement_graph;
 pub mod requirement_plan;
 pub mod sarif;
 pub mod scaffold;
+pub mod status;
 pub mod test_obligations;
 pub mod trace;
 pub mod trace_ledger;
@@ -79,6 +80,7 @@ pub use requirement_plan::{
 };
 pub use sarif::{Finding, render_sarif};
 pub use scaffold::scaffold_workspace;
+pub use status::{RequirementStatusReport, format_status_text, requirement_status};
 pub use test_obligations::{
     TestObligation, TestObligationDiagnostic, TestObligationSet, build_test_obligations,
 };
