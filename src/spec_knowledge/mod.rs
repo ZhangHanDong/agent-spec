@@ -6,6 +6,7 @@
 //! the crate-wide `allow(dead_code)` for the same ahead-of-use reason.
 #![allow(unused_imports)]
 
+pub mod code_graph;
 pub mod compile_bundle;
 pub mod context;
 pub mod draft_specs;
@@ -38,6 +39,11 @@ pub mod worktrees;
 pub mod yaml_export;
 pub mod yaml_frontend;
 
+pub use code_graph::{
+    AtlasProvider, CODE_BINDINGS_SCHEMA_ID, CodeBindingEntry, CodeBindings, CodeGraphProvider,
+    CodeTarget, SymbolDeclaration, build_code_bindings, extract_symbol_declarations,
+    render_code_bindings,
+};
 pub use compile_bundle::{
     BundleLayout, COMPILE_COMMAND, CompiledBundle, compile_bundles, render_bundle_artifacts,
 };

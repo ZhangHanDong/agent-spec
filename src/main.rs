@@ -670,6 +670,22 @@ enum RequirementCommands {
         #[arg(long)]
         provenance: Option<PathBuf>,
     },
+    /// Bind ready work units to code targets resolved in a provider graph
+    Bind {
+        #[arg(long, default_value = "knowledge")]
+        knowledge: PathBuf,
+        #[arg(long, default_value = "specs")]
+        specs: PathBuf,
+        /// Code root the provider graph was built from
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        /// Provider graph directory (rust-atlas)
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+        /// Bindings artifact target (derived working data, never KLL truth)
+        #[arg(long, default_value = ".agent-spec/code-bindings.json")]
+        out: PathBuf,
+    },
     /// Compile per-requirement bundles (requirement doc, draft spec,
     /// traceability, compilation manifest) into a target directory
     Compile {
@@ -3575,6 +3591,38 @@ fn cmd_requirements(action: RequirementCommands) -> Result<(), Box<dyn std::erro
             provenance,
         } => {
             cmd_requirements_work_units(&knowledge, out.as_deref(), &format, provenance.as_deref())
+        }
+        RequirementCommands::Bind {
+            knowledge,
+            specs,
+            code,
+            graph,
+            out,
+        } => {
+            let mut providers: std::collections::BTreeMap<
+                String,
+                Box<dyn crate::spec_knowledge::CodeGraphProvider>,
+            > = std::collections::BTreeMap::new();
+            providers.insert(
+                "rust-atlas".to_string(),
+                Box::new(crate::spec_knowledge::AtlasProvider {
+                    code_root: code,
+                    graph_dir: graph,
+                }),
+            );
+            let bindings =
+                crate::spec_knowledge::build_code_bindings(&knowledge, &specs, &providers)?;
+            let rendered = crate::spec_knowledge::render_code_bindings(&bindings)?;
+            if let Some(parent) = out.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&out, &rendered)?;
+            println!(
+                "code bindings written: {} entries -> {}",
+                bindings.entries.len(),
+                out.display()
+            );
+            Ok(())
         }
         RequirementCommands::Compile {
             knowledge,

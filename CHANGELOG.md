@@ -4,6 +4,20 @@ All notable changes to `agent-spec` are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Code Graph IR bindings (`REQ-CODE-GRAPH-IR`, target-architecture boundary
+  2): a provider-neutral `CodeGraphProvider` consumer contract (identity,
+  staleness facts, graph fingerprint, symbol resolution) with Rust Atlas as
+  the first provider, and `requirements bind` generating
+  `.agent-spec/code-bindings.json` from ready work units' declared
+  `### Symbols` contract entries. A stale graph blocks binding, naming the
+  lagging files; unknown providers are diagnostics; bindings are derived
+  working data — never KLL truth. Schema:
+  `docs/intent-compiler/schemas/code-bindings-v1.schema.json`.
+
 ## [0.5.0] - 2026-07-12
 
 The **orchestrator machine surface** release: agent-spec becomes consumable as

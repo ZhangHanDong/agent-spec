@@ -2,7 +2,7 @@
 kind: requirement
 id: REQ-CODE-GRAPH-IR
 title: "Provider-Neutral Code Graph IR and Code Bindings"
-status: proposed
+status: accepted
 liveness: auto
 tags: [intent-compiler, code-graph, bindings, atlas]
 ---

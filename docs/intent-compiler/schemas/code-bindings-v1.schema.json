@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agent-spec/intent-compiler/code-bindings-v1",
+  "title": "Code Bindings v1",
+  "description": "Derived working data binding ready work units to code targets resolved in a provider graph. Never KLL truth: regenerate from the graph at any time; a stale graph blocks generation. Facts and digests only.",
+  "type": "object",
+  "required": ["schema", "entries"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": "agent-spec/intent-compiler/code-bindings-v1" },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "requirement_id",
+          "work_unit_id",
+          "provider",
+          "graph_fingerprint",
+          "targets"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "requirement_id": { "type": "string" },
+          "work_unit_id": { "type": "string" },
+          "provider": { "type": "string" },
+          "graph_fingerprint": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "Fingerprint of the exact provider graph state the targets were resolved against."
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["node_id", "kind", "file", "provenance"],
+              "additionalProperties": false,
+              "properties": {
+                "node_id": { "type": "string" },
+                "kind": { "type": "string" },
+                "file": { "type": "string" },
+                "provenance": {
+                  "enum": ["syn", "scip", "mir"],
+                  "description": "Fact origin inside the provider graph."
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
