@@ -241,6 +241,7 @@ mod tests {
                         estimate: None,
                         capability: None,
                         satisfies: vec![],
+                        risk: None,
                     },
                     sections: vec![
                         Section::Intent {

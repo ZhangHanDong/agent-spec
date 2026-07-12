@@ -1,4 +1,4 @@
-//! `trace <decision-id>` report: satisfying specs, their verdicts, liveness.
+//! `trace <knowledge-id>` report: satisfying specs, their verdicts, liveness.
 
 use crate::spec_core::Verdict;
 use crate::spec_knowledge::index::SatisfiesIndex;
@@ -68,9 +68,9 @@ pub fn verify_spec_rollup(spec_path: &Path, code_path: &Path) -> Verdict {
 }
 
 pub fn format_trace_text(r: &TraceReport) -> String {
-    let mut s = format!("decision {}  liveness={:?}\n", r.decision_id, r.liveness);
+    let mut s = format!("knowledge {}  liveness={:?}\n", r.decision_id, r.liveness);
     if r.specs.is_empty() {
-        s.push_str("  (no spec satisfies this decision)\n");
+        s.push_str("  (no spec satisfies this knowledge artifact)\n");
     }
     for sv in &r.specs {
         s.push_str(&format!("  [{:?}] {}\n", sv.verdict, sv.spec.display()));
@@ -90,6 +90,7 @@ mod tests {
             meta: KnowledgeMeta {
                 kind: KnowledgeKind::Decision,
                 id: id.into(),
+                title: None,
                 status: Some(DecisionStatus::Accepted),
                 supersedes: None,
                 liveness: declared,

@@ -82,14 +82,23 @@ fn glob_matches(glob: &str, path: &str) -> bool {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
     fn temp_tree(files: &[(&str, &str)]) -> PathBuf {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!("agent_spec_struct_{stamp}"));
+        let seq = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "agent_spec_struct_{}_{}_{}",
+            std::process::id(),
+            stamp,
+            seq
+        ));
         for (rel, content) in files {
             let p = root.join(rel);
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();

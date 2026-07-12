@@ -35,11 +35,20 @@ fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in entries.flatten() {
         let p = entry.path();
         if p.is_dir() {
-            collect(&p, out);
+            if !should_skip_dir(&p) {
+                collect(&p, out);
+            }
         } else if is_spec_file(&p) {
             out.push(p);
         }
     }
+}
+
+fn should_skip_dir(path: &Path) -> bool {
+    matches!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some(".agent-spec" | "_archive" | "archive")
+    )
 }
 
 fn is_spec_file(p: &Path) -> bool {
@@ -71,6 +80,29 @@ mod tests {
         let idx = build_satisfies_index(&specs);
         assert_eq!(idx.get("ADR-001").map(|v| v.len()), Some(1));
         assert!(!idx.contains_key("ADR-999"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_satisfies_index_ignores_archived_specs_by_default() {
+        let dir = std::env::temp_dir().join(format!("kll-idx-archive-{}", std::process::id()));
+        let specs = dir.join("specs");
+        std::fs::create_dir_all(specs.join("archive")).unwrap();
+        std::fs::write(
+            specs.join("active.spec.md"),
+            "spec: task\nname: \"Active\"\nsatisfies: [REQ-ACTIVE]\n---\n## Intent\nx\n",
+        )
+        .unwrap();
+        std::fs::write(
+            specs.join("archive/old.spec.md"),
+            "spec: task\nname: \"Old\"\nsatisfies: [REQ-OLD]\n---\n## Intent\nx\n",
+        )
+        .unwrap();
+
+        let idx = build_satisfies_index(&specs);
+        assert!(idx.contains_key("REQ-ACTIVE"));
+        assert!(!idx.contains_key("REQ-OLD"));
 
         std::fs::remove_dir_all(&dir).ok();
     }

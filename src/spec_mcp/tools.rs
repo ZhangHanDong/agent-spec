@@ -2,11 +2,11 @@
 //! knowledge parser, the satisfies index, trace/liveness, and SpecGateway. No
 //! RAG, no model calls — every answer is a pure function of the files on disk.
 
+use crate::spec_knowledge::KnowledgeParseError;
 use crate::spec_knowledge::context::{list_context, read_context};
 use crate::spec_knowledge::guidance::{applies_to, applies_to_path, applies_to_stack, skills};
 use crate::spec_knowledge::index::build_satisfies_index;
 use crate::spec_knowledge::model::{KnowledgeDoc, KnowledgeKind};
-use crate::spec_knowledge::parser::parse_knowledge;
 use crate::spec_knowledge::trace::{build_trace, verify_spec_rollup};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -18,13 +18,6 @@ pub struct McpContext {
     pub specs: PathBuf,
     pub code: PathBuf,
 }
-
-const ALL_KINDS: [KnowledgeKind; 4] = [
-    KnowledgeKind::Decision,
-    KnowledgeKind::Requirement,
-    KnowledgeKind::Guidance,
-    KnowledgeKind::Proposal,
-];
 
 /// Tool name -> JSON-Schema description, for `tools/list`.
 pub fn tool_specs() -> Value {
@@ -64,44 +57,28 @@ fn arg<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
         .filter(|s| !s.is_empty())
 }
 
-// ── collectors ──────────────────────────────────────────────────
-
-fn collect_md(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let p = entry.path();
-        if p.is_dir() {
-            collect_md(&p, out);
-        } else if p.extension().and_then(|e| e.to_str()) == Some("md")
-            && p.file_name().and_then(|n| n.to_str()) != Some("README.md")
-        {
-            out.push(p);
-        }
-    }
-}
-
 /// All knowledge docs under `knowledge/`, sorted by id.
-fn collect_all(knowledge: &Path) -> Vec<KnowledgeDoc> {
-    let mut files = Vec::new();
-    for kind in ALL_KINDS {
-        collect_md(&knowledge.join(kind.dir()), &mut files);
+fn collect_all(knowledge: &Path) -> Result<Vec<KnowledgeDoc>, String> {
+    let collection = crate::spec_knowledge::collect_knowledge_checked(knowledge);
+    if !collection.parse_errors.is_empty() {
+        return Err(format_parse_errors(&collection.parse_errors));
     }
-    files.sort();
-    let mut docs: Vec<KnowledgeDoc> = files
-        .iter()
-        .filter_map(|p| parse_knowledge(p).ok())
-        .collect();
-    docs.sort_by(|a, b| a.meta.id.cmp(&b.meta.id));
-    docs
+    Ok(collection.docs)
 }
 
-fn find_by_id(knowledge: &Path, id: &str) -> Option<KnowledgeDoc> {
+fn format_parse_errors(errors: &[KnowledgeParseError]) -> String {
+    errors
+        .iter()
+        .map(|e| format!("knowledge-parse-error: {}: {}", e.path.display(), e.message))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn find_by_id(knowledge: &Path, id: &str) -> Result<Option<KnowledgeDoc>, String> {
     let target = id.to_ascii_uppercase();
-    collect_all(knowledge)
+    Ok(collect_all(knowledge)?
         .into_iter()
-        .find(|d| d.meta.id == target)
+        .find(|d| d.meta.id == target))
 }
 
 fn doc_summary(d: &KnowledgeDoc) -> Value {
@@ -118,7 +95,7 @@ fn doc_summary(d: &KnowledgeDoc) -> Value {
 // ── tools ───────────────────────────────────────────────────────
 
 fn knowledge_find(args: &Value, ctx: &McpContext) -> Result<Value, String> {
-    let docs = collect_all(&ctx.knowledge);
+    let docs = collect_all(&ctx.knowledge)?;
     let id = arg(args, "id").map(|s| s.to_ascii_uppercase());
     let tag = arg(args, "tag");
     let path = arg(args, "path");
@@ -157,7 +134,7 @@ fn knowledge_governing(args: &Value, ctx: &McpContext) -> Result<Value, String> 
         if via.is_empty() {
             continue;
         }
-        let Some(decision) = find_by_id(&ctx.knowledge, decision_id) else {
+        let Some(decision) = find_by_id(&ctx.knowledge, decision_id)? else {
             continue;
         };
         let report = build_trace(&decision, &index, |sp| verify_spec_rollup(sp, &ctx.code));
@@ -183,7 +160,7 @@ fn spec_allows_path(spec_path: &Path, path: &str) -> bool {
 
 fn liveness_status(args: &Value, ctx: &McpContext) -> Result<Value, String> {
     let id = arg(args, "id").ok_or("missing 'id'")?;
-    let decision = find_by_id(&ctx.knowledge, id)
+    let decision = find_by_id(&ctx.knowledge, id)?
         .ok_or_else(|| format!("no decision with id {}", id.to_ascii_uppercase()))?;
     let index = build_satisfies_index(&ctx.specs);
     let report = build_trace(&decision, &index, |sp| verify_spec_rollup(sp, &ctx.code));
@@ -232,7 +209,7 @@ fn collect_spec_files(dir: &Path, out: &mut Vec<PathBuf>) {
 fn guidance_for(args: &Value, ctx: &McpContext) -> Result<Value, String> {
     let path = arg(args, "path");
     let stack = arg(args, "stack");
-    let docs = crate::spec_knowledge::collect_guidance(&ctx.knowledge);
+    let docs = crate::spec_knowledge::collect_guidance_checked(&ctx.knowledge)?;
     let hits: Vec<Value> = docs
         .iter()
         .filter(|d| {
@@ -309,6 +286,22 @@ mod tests {
         assert_eq!(r["results"].as_array().unwrap().len(), 1);
         let r = dispatch("knowledge.find", &json!({"tag": "rust"}), &ctx).unwrap();
         assert_eq!(r["results"][0]["id"], "G-001");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn test_knowledge_find_reports_parse_errors() {
+        let (root, ctx) = fixture("find-bad");
+        std::fs::write(
+            ctx.knowledge.join("decisions/adr-099-bad.md"),
+            "---\nkind: decision\nid: ADR-099\nliveness: forever\n---\n## Context\nbad\n",
+        )
+        .unwrap();
+
+        let err = dispatch("knowledge.find", &json!({"id": "ADR-001"}), &ctx).unwrap_err();
+
+        assert!(err.contains("knowledge-parse-error"), "{err}");
+        assert!(err.contains("adr-099-bad.md"), "{err}");
         std::fs::remove_dir_all(&root).ok();
     }
 

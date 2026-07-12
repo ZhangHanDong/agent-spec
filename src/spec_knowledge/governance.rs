@@ -12,42 +12,114 @@ use crate::spec_knowledge::parser::parse_knowledge;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KnowledgeParseError {
+    pub path: PathBuf,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct KnowledgeCollection {
+    pub docs: Vec<KnowledgeDoc>,
+    pub parse_errors: Vec<KnowledgeParseError>,
+}
+
 /// Collect every typed knowledge doc under `knowledge_dir` (the four kind
 /// directories), skipping README files and unparseable docs. Sorted by id.
 /// `standards/**` is never scanned — that is the §9 self-referential exemption.
 pub fn collect_knowledge(knowledge_dir: &Path) -> Vec<KnowledgeDoc> {
+    collect_knowledge_checked(knowledge_dir).docs
+}
+
+/// Collect every typed knowledge doc and preserve parse failures for governance
+/// gates. Sorted by id / path for deterministic reports.
+pub fn collect_knowledge_checked(knowledge_dir: &Path) -> KnowledgeCollection {
     const KINDS: [KnowledgeKind; 4] = [
         KnowledgeKind::Decision,
         KnowledgeKind::Requirement,
         KnowledgeKind::Guidance,
         KnowledgeKind::Proposal,
     ];
-    let mut files = Vec::new();
-    for kind in KINDS {
-        collect_md(&knowledge_dir.join(kind.dir()), &mut files);
+    if !knowledge_dir.is_dir() {
+        return KnowledgeCollection {
+            docs: Vec::new(),
+            parse_errors: vec![KnowledgeParseError {
+                path: knowledge_dir.to_path_buf(),
+                message: "knowledge root does not exist or is not a directory".into(),
+            }],
+        };
     }
-    files.sort();
-    let mut docs: Vec<KnowledgeDoc> = files
-        .iter()
-        .filter_map(|p| parse_knowledge(p).ok())
-        .collect();
+    let mut files = Vec::new();
+    let mut parse_errors = Vec::new();
+    for kind in KINDS {
+        let dir = knowledge_dir.join(kind.dir());
+        collect_md(&dir, kind, &mut files, &mut parse_errors);
+    }
+    files.sort_by(|left, right| left.1.cmp(&right.1));
+    let mut docs = Vec::new();
+    for (expected_kind, path) in files {
+        match parse_knowledge(&path) {
+            Ok(doc) if doc.meta.kind == expected_kind => docs.push(doc),
+            Ok(doc) => parse_errors.push(KnowledgeParseError {
+                path,
+                message: format!(
+                    "knowledge kind {:?} does not match `{}/` directory",
+                    doc.meta.kind,
+                    expected_kind.dir()
+                ),
+            }),
+            Err(message) => parse_errors.push(KnowledgeParseError { path, message }),
+        }
+    }
     docs.sort_by(|a, b| a.meta.id.cmp(&b.meta.id));
-    docs
+    parse_errors.sort_by(|a, b| a.path.cmp(&b.path));
+    KnowledgeCollection { docs, parse_errors }
 }
 
-fn collect_md(dir: &Path, out: &mut Vec<PathBuf>) {
+fn collect_md(
+    dir: &Path,
+    expected_kind: KnowledgeKind,
+    out: &mut Vec<(KnowledgeKind, PathBuf)>,
+    errors: &mut Vec<KnowledgeParseError>,
+) {
+    if !dir.exists() {
+        return;
+    }
     let Ok(entries) = std::fs::read_dir(dir) else {
+        errors.push(KnowledgeParseError {
+            path: dir.to_path_buf(),
+            message: "knowledge directory could not be read".into(),
+        });
         return;
     };
-    for entry in entries.flatten() {
+    for entry in entries {
+        let Ok(entry) = entry else {
+            errors.push(KnowledgeParseError {
+                path: dir.to_path_buf(),
+                message: "knowledge directory entry could not be read".into(),
+            });
+            continue;
+        };
         let p = entry.path();
-        if p.is_dir() {
-            collect_md(&p, out);
+        let Ok(file_type) = entry.file_type() else {
+            errors.push(KnowledgeParseError {
+                path: p,
+                message: "knowledge entry type could not be read".into(),
+            });
+            continue;
+        };
+        if file_type.is_symlink() {
+            errors.push(KnowledgeParseError {
+                path: p,
+                message: "symlinked knowledge entries are not allowed".into(),
+            });
+        } else if file_type.is_dir() {
+            collect_md(&p, expected_kind, out, errors);
         } else if p.extension().and_then(|e| e.to_str()) == Some("md") {
             let name = p.file_name().and_then(|n| n.to_str()).unwrap_or_default();
             // README and `*-template.md` are scaffolding, not artifacts.
             if name != "README.md" && !name.ends_with("-template.md") {
-                out.push(p);
+                out.push((expected_kind, p));
             }
         }
     }
@@ -273,5 +345,63 @@ mod tests {
             .map(|d| d.rule.clone())
             .collect();
         assert!(rules.contains(&"references-superseded".to_string()));
+    }
+
+    #[test]
+    fn test_collect_knowledge_checked_reports_parse_errors() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("kll-governance-{stamp}"));
+        let decisions = root.join("decisions");
+        std::fs::create_dir_all(&decisions).unwrap();
+        std::fs::write(
+            decisions.join("adr-001-bad.md"),
+            "---\nkind: decision\nid: ADR-001\nliveness: forever\n---\n## Context\nc\n",
+        )
+        .unwrap();
+
+        let collection = collect_knowledge_checked(&root);
+
+        assert!(collection.docs.is_empty());
+        assert_eq!(collection.parse_errors.len(), 1);
+        assert_eq!(
+            collection.parse_errors[0].path,
+            decisions.join("adr-001-bad.md")
+        );
+        assert!(
+            collection.parse_errors[0]
+                .message
+                .contains("unknown liveness")
+        );
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn test_collect_knowledge_checked_rejects_missing_root_and_kind_mismatch() {
+        let missing =
+            std::env::temp_dir().join(format!("knowledge-missing-root-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&missing);
+        let collection = collect_knowledge_checked(&missing);
+        assert!(!collection.parse_errors.is_empty());
+
+        let root =
+            std::env::temp_dir().join(format!("knowledge-kind-mismatch-{}", std::process::id()));
+        let requirements = root.join("requirements");
+        std::fs::create_dir_all(&requirements).unwrap();
+        std::fs::write(
+            requirements.join("req-wrong.md"),
+            "---\nkind: decision\nid: ADR-WRONG\n---\n## Context\nc\n## Decision\nd\n## Consequences\nGood. Bad.\n",
+        )
+        .unwrap();
+
+        let collection = collect_knowledge_checked(&root);
+        assert!(collection.docs.is_empty());
+        assert!(collection.parse_errors.iter().any(|error| {
+            error.message.contains("kind") && error.message.contains("requirements")
+        }));
+        std::fs::remove_dir_all(root).ok();
     }
 }

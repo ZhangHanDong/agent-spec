@@ -149,6 +149,271 @@ pub fn lint_requirement(doc: &KnowledgeDoc) -> Vec<LintDiagnostic> {
         }
     }
 
+    let scenarios_body = requirement_section_body(doc, "Scenarios");
+    let has_scenario = scenarios_body.lines().any(|line| {
+        line.trim_start().starts_with("Scenario:") || line.trim_start().starts_with("场景:")
+    });
+
+    if clauses
+        .iter()
+        .any(|clause| clause.keyword == Some(crate::spec_knowledge::NormativeKeyword::Must))
+        && !has_scenario
+    {
+        out.push(diag(
+            "requirement-must-needs-scenario",
+            Severity::Warning,
+            "MUST requirements should have at least one scenario".into(),
+            Some("add a `## Scenarios` section with Given/When/Then steps"),
+        ));
+    }
+
+    for then_line in scenario_then_lines(doc) {
+        let lower = then_line.to_ascii_lowercase();
+        let weak = [
+            "works",
+            "handles it",
+            "is supported",
+            "succeeds",
+            "完成",
+            "正常",
+        ]
+        .iter()
+        .any(|needle| lower.contains(needle));
+        let observable = [
+            "stdout",
+            "stderr",
+            "file",
+            "status",
+            "response",
+            "contains",
+            "returns",
+            "writes",
+            "persists",
+            "visible",
+            "error",
+            "exits",
+            "appears",
+            "emits",
+            "lists",
+            "shows",
+            "created",
+            "available",
+            "输出",
+            "响应",
+            "状态码",
+            "文件",
+            "包含",
+            "返回",
+            "错误",
+            "出现",
+            "展示",
+            "创建",
+        ]
+        .iter()
+        .any(|needle| lower.contains(needle));
+        if weak || !observable {
+            out.push(diag(
+                "requirement-weak-then",
+                Severity::Warning,
+                format!("scenario Then step is not clearly observable: `{then_line}`"),
+                Some("state the observable stdout/stderr/file/API/status/persisted result"),
+            ));
+        }
+    }
+
+    if !has_real_source_trace(doc) {
+        out.push(diag(
+            "requirement-source-trace-required",
+            Severity::Warning,
+            "requirement has no concrete `## Source Trace` entry".into(),
+            Some("add the source PRD, issue, paper, interview answer, or design doc reference"),
+        ));
+    }
+
+    for (i, clause) in clauses.iter().enumerate() {
+        let lower = clause.text.to_ascii_lowercase();
+        if lower.contains(" and ") && normative_token_count(&clause.text) >= 1 {
+            out.push(diag(
+                "requirement-compound-clause",
+                Severity::Warning,
+                format!(
+                    "requirement clause {} may contain multiple obligations",
+                    i + 1
+                ),
+                Some("split independent obligations into separate requirement ids"),
+            ));
+        }
+        let mentions_nfr = [
+            "fast",
+            "performance",
+            "reliable",
+            "secure",
+            "scalable",
+            "性能",
+            "可靠",
+            "安全",
+        ]
+        .iter()
+        .any(|needle| lower.contains(needle));
+        let has_measure = lower.chars().any(|ch| ch.is_ascii_digit())
+            || ["ms", "seconds", "%", "p95", "p99", "秒", "毫秒"]
+                .iter()
+                .any(|needle| lower.contains(needle));
+        if mentions_nfr && !has_measure {
+            out.push(diag(
+                "requirement-nfr-needs-measure",
+                Severity::Warning,
+                format!("requirement clause {} names a non-functional property without a measurable threshold", i + 1),
+                Some("add a threshold and probe, such as p95 latency, max retries, or failure rate"),
+            ));
+        }
+    }
+
+    let requirement_text = clauses
+        .iter()
+        .map(|clause| clause.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
+        .to_ascii_lowercase();
+    let scenarios_lower = scenarios_body.to_ascii_lowercase();
+    let needs_negative = [
+        "invalid",
+        "reject",
+        "error",
+        "permission",
+        "auth",
+        "delete",
+        "fallback",
+        "失败",
+        "拒绝",
+        "错误",
+        "权限",
+        "认证",
+        "删除",
+    ]
+    .iter()
+    .any(|needle| requirement_text.contains(needle));
+    let has_negative = [
+        "invalid",
+        "reject",
+        "error",
+        "fail",
+        "denied",
+        "not create",
+        "失败",
+        "拒绝",
+        "错误",
+        "不创建",
+    ]
+    .iter()
+    .any(|needle| scenarios_lower.contains(needle));
+    if needs_negative && !has_negative {
+        out.push(diag(
+            "requirement-needs-negative-scenario",
+            Severity::Warning,
+            "requirement names validation, auth, delete, fallback, or error behavior without a negative scenario".into(),
+            Some("add at least one scenario for the rejection or failure path"),
+        ));
+    }
+
+    let scenario_words = scenario_words(doc);
+    for transition in state_machine_transitions(doc) {
+        if !transition_is_covered(&transition, &scenario_words) {
+            out.push(diag(
+                "requirement-state-machine-transition-uncovered",
+                Severity::Warning,
+                format!(
+                    "state-machine transition has no matching scenario coverage: `{transition}`"
+                ),
+                Some("add a scenario that names the event and expected target state"),
+            ));
+        }
+    }
+
+    out
+}
+
+fn requirement_section_body(doc: &KnowledgeDoc, heading: &str) -> String {
+    doc.section(heading)
+        .map(|section| section.body.clone())
+        .unwrap_or_default()
+}
+
+fn scenario_then_lines(doc: &KnowledgeDoc) -> Vec<String> {
+    requirement_section_body(doc, "Scenarios")
+        .lines()
+        .map(str::trim)
+        .filter_map(|line| {
+            line.strip_prefix("Then ")
+                .or_else(|| line.strip_prefix("那么 "))
+                .map(str::trim)
+                .map(str::to_string)
+        })
+        .collect()
+}
+
+fn has_real_source_trace(doc: &KnowledgeDoc) -> bool {
+    requirement_section_body(doc, "Source Trace")
+        .lines()
+        .map(|line| line.trim().trim_start_matches('-').trim())
+        .any(|line| !line.is_empty() && !line.eq_ignore_ascii_case("none."))
+}
+
+fn state_machine_transitions(doc: &KnowledgeDoc) -> Vec<String> {
+    requirement_section_body(doc, "State Machine")
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("On ") && line.contains("->"))
+        .map(str::to_string)
+        .collect()
+}
+
+fn scenario_words(doc: &KnowledgeDoc) -> Vec<String> {
+    words_for_matching(&requirement_section_body(doc, "Scenarios"))
+}
+
+fn transition_is_covered(transition: &str, scenario_words: &[String]) -> bool {
+    let Some((event, target)) = transition
+        .trim_start_matches("On ")
+        .split_once("->")
+        .map(|(event, target)| (event.trim(), target.trim()))
+    else {
+        return false;
+    };
+    let event_words = words_for_matching(event);
+    let target_words = words_for_matching(target);
+
+    let event_covered = event_words
+        .iter()
+        .filter(|word| word.len() >= 4)
+        .any(|word| scenario_words.contains(word));
+    let target_covered = target_words
+        .iter()
+        .filter(|word| word.len() >= 4)
+        .any(|word| scenario_words.contains(word));
+
+    event_covered && target_covered
+}
+
+fn words_for_matching(input: &str) -> Vec<String> {
+    let spaced = split_camel_words(input);
+    spaced
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(|word| word.to_ascii_lowercase())
+        .collect()
+}
+
+fn split_camel_words(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut previous_was_lower_or_digit = false;
+    for ch in input.chars() {
+        if ch.is_ascii_uppercase() && previous_was_lower_or_digit {
+            out.push(' ');
+        }
+        previous_was_lower_or_digit = ch.is_ascii_lowercase() || ch.is_ascii_digit();
+        out.push(ch);
+    }
     out
 }
 
@@ -282,6 +547,97 @@ mod tests {
             .collect();
         assert!(rules.contains(&"requirement-single-statement".to_string()));
         assert!(rules.contains(&"requirement-bcp14-keyword".to_string()));
+    }
+
+    #[test]
+    fn test_lint_requirement_warns_when_must_clause_has_no_scenario() {
+        let doc = parse_req(
+            "---\nkind: requirement\nid: REQ-500\ntitle: \"No Scenario\"\n---\n## Problem\nNeed behavior.\n## Requirements\n[REQ-500] The system MUST produce output.\n## Source Trace\n- issue:#500\n",
+        );
+        let diagnostics = lint_requirement(&doc);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diag| diag.rule == "requirement-must-needs-scenario")
+        );
+    }
+
+    #[test]
+    fn test_lint_requirement_warns_on_weak_then_step() {
+        let doc = parse_req(
+            "---\nkind: requirement\nid: REQ-501\ntitle: \"Weak Then\"\n---\n## Problem\nNeed behavior.\n## Requirements\n[REQ-501] The system MUST produce output.\n## Scenarios\nScenario: Weak outcome\n  Given input\n  When the feature runs\n  Then it works\n## Source Trace\n- issue:#501\n",
+        );
+        let diagnostics = lint_requirement(&doc);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diag| diag.rule == "requirement-weak-then")
+        );
+    }
+
+    #[test]
+    fn test_lint_requirement_warns_when_source_trace_missing() {
+        let doc = parse_req(
+            "---\nkind: requirement\nid: REQ-502\ntitle: \"No Source\"\n---\n## Problem\nNeed behavior.\n## Requirements\n[REQ-502] The system MUST produce output.\n## Scenarios\nScenario: Output\n  Given input\n  When the system runs\n  Then stdout contains \"done\"\n",
+        );
+        let diagnostics = lint_requirement(&doc);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diag| diag.rule == "requirement-source-trace-required")
+        );
+    }
+
+    #[test]
+    fn test_lint_requirement_warns_on_unmeasured_nfr() {
+        let doc = parse_req(
+            "---\nkind: requirement\nid: REQ-503\ntitle: \"Fast\"\n---\n## Problem\nNeed speed.\n## Requirements\n[REQ-503] The system MUST be fast and reliable.\n## Scenarios\nScenario: Speed\n  Given input\n  When the system runs\n  Then output is visible\n## Source Trace\n- issue:#503\n",
+        );
+        let diagnostics = lint_requirement(&doc);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diag| diag.rule == "requirement-nfr-needs-measure")
+        );
+    }
+
+    #[test]
+    fn test_lint_requirement_warns_on_compound_clause() {
+        let doc = parse_req(
+            "---\nkind: requirement\nid: REQ-504\ntitle: \"Compound\"\n---\n## Problem\nNeed two things.\n## Requirements\n[REQ-504] The system MUST validate input and persist output.\n## Scenarios\nScenario: Output\n  Given valid input\n  When the system runs\n  Then output is visible\n## Source Trace\n- issue:#504\n",
+        );
+        let diagnostics = lint_requirement(&doc);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diag| diag.rule == "requirement-compound-clause")
+        );
+    }
+
+    #[test]
+    fn test_lint_requirement_warns_when_negative_behavior_lacks_negative_scenario() {
+        let doc = parse_req(
+            "---\nkind: requirement\nid: REQ-505\ntitle: \"Auth\"\n---\n## Problem\nNeed auth.\n## Requirements\n[REQ-505] The system MUST reject unauthorized users.\n## Scenarios\nScenario: Authorized user\n  Given an authorized user\n  When the system runs\n  Then output is visible\n## Source Trace\n- issue:#505\n",
+        );
+        let diagnostics = lint_requirement(&doc);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diag| diag.rule == "requirement-needs-negative-scenario")
+        );
+    }
+
+    #[test]
+    fn test_lint_requirement_warns_on_uncovered_state_machine_transition() {
+        let doc = parse_req(
+            "---\nkind: requirement\nid: REQ-SM\ntitle: \"Lifecycle\"\n---\n## Problem\nNeed lifecycle correctness.\n## Requirements\n[REQ-SM] The node lifecycle MUST handle planned stop.\n## State Machine\nState: Running\n  On planned stop -> StoppingCleanly\n## Scenarios\nScenario: Start node\n  Given a stopped node\n  When the node starts\n  Then status is Running\n## Source Trace\n- issue:#sm\n",
+        );
+        let diagnostics = lint_requirement(&doc);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diag| diag.rule == "requirement-state-machine-transition-uncovered")
+        );
     }
 
     // ---- guidance lint (§6.4) ----

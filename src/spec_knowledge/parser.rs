@@ -5,15 +5,36 @@ use crate::spec_knowledge::model::{
 };
 use std::path::Path;
 
+/// Validate stable knowledge ids before they can participate in trace links or
+/// generated filesystem paths. IDs are ASCII alphanumeric segments separated
+/// by single hyphens and must start with a letter.
+pub fn validate_knowledge_id(id: &str) -> Result<(), String> {
+    let id = id.trim();
+    if id.is_empty()
+        || !id.as_bytes()[0].is_ascii_alphabetic()
+        || !id.contains('-')
+        || id.starts_with('-')
+        || id.ends_with('-')
+        || id.contains("--")
+        || !id.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
+    {
+        return Err(format!(
+            "invalid knowledge id `{id}`; expected ASCII alphanumeric segments separated by single hyphens"
+        ));
+    }
+    Ok(())
+}
+
 /// Resolve a decision id (§6.0): frontmatter `id:` is canonical; else the
 /// filename prefix `<letters>-<digits>` normalized to UPPERCASE. Returns the
 /// normalized id, or `None` when neither source yields one.
 pub fn resolve_decision_id(frontmatter_id: Option<&str>, path: &Path) -> Option<String> {
     if let Some(id) = frontmatter_id {
         let id = id.trim();
-        if !id.is_empty() {
+        if validate_knowledge_id(id).is_ok() {
             return Some(id.to_ascii_uppercase());
         }
+        return None;
     }
     let stem = path.file_stem()?.to_str()?;
     // take leading <letters>-<digits>
@@ -35,12 +56,11 @@ pub fn resolve_decision_id(frontmatter_id: Option<&str>, path: &Path) -> Option<
 /// fallback. The kind is read from frontmatter `kind:` (defaults to decision).
 pub fn parse_knowledge_str(input: &str, path: &Path) -> Result<KnowledgeDoc, String> {
     let lines: Vec<&str> = input.lines().collect();
-    let sep = lines
-        .iter()
-        .position(|l| l.trim() == "---")
-        .ok_or_else(|| "missing front-matter separator '---'".to_string())?;
+    if lines.first().map(|line| line.trim()) != Some("---") {
+        return Err("front-matter must start on line 1 with '---'".to_string());
+    }
     // front-matter is between the first `---` and the next `---`
-    let rest = &lines[sep + 1..];
+    let rest = &lines[1..];
     let close = rest
         .iter()
         .position(|l| l.trim() == "---")
@@ -98,29 +118,47 @@ pub fn parse_requirement(path: &Path) -> Result<KnowledgeDoc, String> {
 }
 
 fn parse_knowledge_meta(lines: &[&str], path: &Path) -> Result<KnowledgeMeta, String> {
+    let mut seen = std::collections::BTreeSet::new();
     let mut id_field: Option<String> = None;
+    let mut title: Option<String> = None;
     let mut status: Option<DecisionStatus> = None;
     let mut supersedes: Option<String> = None;
     let mut liveness = LivenessDeclared::Auto;
     let mut kind = KnowledgeKind::Decision;
     let mut tags = Vec::new();
 
-    for line in lines {
+    for (index, line) in lines.iter().enumerate() {
         let line = line.trim();
-        if line.is_empty() {
+        if line.is_empty() || line.starts_with('#') {
             continue;
         }
         let Some((key, val)) = line.split_once(':') else {
-            continue;
+            return Err(format!(
+                "front-matter line {} must use `key: value` syntax",
+                index + 2
+            ));
         };
         let key = key.trim();
+        if key.is_empty() {
+            return Err(format!("front-matter line {} has an empty key", index + 2));
+        }
+        if !seen.insert(key.to_string()) {
+            return Err(format!(
+                "front-matter line {} duplicates key `{key}`",
+                index + 2
+            ));
+        }
         let val = val.trim().trim_matches('"').trim();
         match key {
             "kind" => {
                 kind = KnowledgeKind::parse(val)
                     .ok_or_else(|| format!("unsupported knowledge kind '{val}'"))?;
             }
-            "id" => id_field = Some(val.to_string()),
+            "id" => {
+                validate_knowledge_id(val)?;
+                id_field = Some(val.to_string());
+            }
+            "title" => title = Some(val.to_string()),
             "status" => {
                 status = Some(match val.to_ascii_lowercase().as_str() {
                     "proposed" => DecisionStatus::Proposed,
@@ -131,7 +169,10 @@ fn parse_knowledge_meta(lines: &[&str], path: &Path) -> Result<KnowledgeMeta, St
                     other => return Err(format!("unknown status '{other}'")),
                 });
             }
-            "supersedes" => supersedes = Some(val.to_ascii_uppercase()),
+            "supersedes" => {
+                validate_knowledge_id(val)?;
+                supersedes = Some(val.to_ascii_uppercase());
+            }
             "liveness" => {
                 liveness = match val.to_ascii_lowercase().as_str() {
                     "auto" => LivenessDeclared::Auto,
@@ -160,6 +201,7 @@ fn parse_knowledge_meta(lines: &[&str], path: &Path) -> Result<KnowledgeMeta, St
     Ok(KnowledgeMeta {
         kind,
         id,
+        title,
         status,
         supersedes,
         liveness,
@@ -233,9 +275,43 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_requirement_title_metadata() {
+        let input = "---\nkind: requirement\nid: REQ-101\ntitle: \"User Login\"\n---\n\n## Problem\np\n## Requirements\n[REQ-101] The system MUST log users in.\n";
+        let doc = parse_requirement_str(input, Path::new("req-101-user-login.md")).unwrap();
+        assert_eq!(doc.meta.title.as_deref(), Some("User Login"));
+    }
+
+    #[test]
     fn test_parse_liveness_na() {
         let input = "---\nkind: decision\nid: ADR-009\nliveness: n/a\n---\n\n## Context\n\nLicense.\n\n## Decision\n\nMIT.\n\n## Consequences\n\nGood. Bad.\n";
         let doc = parse_decision_str(input, Path::new("adr-009.md")).unwrap();
         assert_eq!(doc.meta.liveness, LivenessDeclared::Na);
+    }
+
+    #[test]
+    fn test_knowledge_parser_rejects_unsafe_ids_and_malformed_frontmatter() {
+        for id in [
+            "../../REQ-ESCAPE",
+            "/tmp/REQ-ESCAPE",
+            "REQ--EMPTY",
+            "REQ.BAD",
+        ] {
+            let input = format!(
+                "---\nkind: requirement\nid: {id}\ntitle: Bad\n---\n## Problem\np\n## Requirements\n[{id}] The system MUST work.\n"
+            );
+            assert!(
+                parse_requirement_str(&input, Path::new("req-safe.md")).is_err(),
+                "unsafe id must be rejected: {id}"
+            );
+        }
+
+        let duplicate = "---\nkind: requirement\nid: REQ-A\nid: REQ-B\ntitle: Duplicate\n---\n## Problem\np\n## Requirements\n[REQ-A] The system MUST work.\n";
+        assert!(parse_requirement_str(duplicate, Path::new("req-a.md")).is_err());
+
+        let malformed = "---\nkind: requirement\nid: REQ-A\ntitle without colon\n---\n## Problem\np\n## Requirements\n[REQ-A] The system MUST work.\n";
+        assert!(parse_requirement_str(malformed, Path::new("req-a.md")).is_err());
+
+        let leading_content = "# Heading\n---\nkind: requirement\nid: REQ-A\n---\n## Problem\np\n## Requirements\n[REQ-A] The system MUST work.\n";
+        assert!(parse_requirement_str(leading_content, Path::new("req-a.md")).is_err());
     }
 }

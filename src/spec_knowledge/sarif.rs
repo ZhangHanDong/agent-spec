@@ -29,7 +29,7 @@ pub fn render_sarif(findings: &[Finding]) -> Value {
         "runs": [ {
             "tool": { "driver": {
                 "name": "agent-spec",
-                "informationUri": "https://github.com/itsthelore/agent-spec",
+                "informationUri": env!("CARGO_PKG_REPOSITORY"),
                 "version": env!("CARGO_PKG_VERSION"),
                 "rules": rules(findings),
             } },
@@ -112,6 +112,15 @@ mod tests {
                 .unwrap()
                 .len(),
             2
+        );
+    }
+
+    #[test]
+    fn test_render_sarif_uses_package_repository_url() {
+        let log = render_sarif(&[]);
+        assert_eq!(
+            log["runs"][0]["tool"]["driver"]["informationUri"],
+            "https://github.com/ZhangHanDong/agent-spec"
         );
     }
 }

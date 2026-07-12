@@ -11,6 +11,7 @@ pub fn parse_meta(lines: &[&str]) -> Result<SpecMeta, String> {
     let mut estimate = None;
     let mut capability = None;
     let mut satisfies = Vec::new();
+    let mut risk = None;
 
     for line in lines {
         let trimmed = line.trim();
@@ -91,6 +92,12 @@ pub fn parse_meta(lines: &[&str]) -> Result<SpecMeta, String> {
                     }
                 }
             }
+            "risk" => {
+                let v = value.trim();
+                if !v.is_empty() {
+                    risk = Some(v.to_ascii_uppercase());
+                }
+            }
             _ => {} // ignore unknown keys
         }
     }
@@ -109,6 +116,7 @@ pub fn parse_meta(lines: &[&str]) -> Result<SpecMeta, String> {
         estimate,
         capability,
         satisfies,
+        risk,
     })
 }
 
@@ -168,6 +176,13 @@ mod tests {
         ];
         let meta = parse_meta(&lines).unwrap();
         assert_eq!(meta.depends, vec!["task-a", "task-b", "task-c"]);
+    }
+
+    #[test]
+    fn test_parse_spec_risk_class_field() {
+        let lines = vec!["spec: task", r#"name: "High Risk""#, "risk: A"];
+        let meta = parse_meta(&lines).unwrap();
+        assert_eq!(meta.risk.as_deref(), Some("A"));
     }
 
     #[test]

@@ -68,6 +68,8 @@ pub struct KnowledgeMeta {
     pub kind: KnowledgeKind,
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<DecisionStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supersedes: Option<String>,
@@ -117,6 +119,7 @@ mod tests {
             meta: KnowledgeMeta {
                 kind: KnowledgeKind::Decision,
                 id: "ADR-001".into(),
+                title: None,
                 status: Some(DecisionStatus::Accepted),
                 supersedes: None,
                 liveness: LivenessDeclared::Auto,

@@ -41,8 +41,8 @@ pub fn scaffold_workspace(root: &Path) -> io::Result<Vec<String>> {
 
 const DECISIONS_README: &str = "# Decisions\n\nMADR-style decision records. One decision per file, `NNNNN-slug.md`.\nWhen NOT to use: routine implementation choices with no real trade-off — leave those in code/comments.\n";
 const ADR_TEMPLATE: &str = "---\nkind: decision\nid: ADR-NNN\nstatus: Proposed\n---\n\n## Context\n\n## Decision\n\n## Consequences\n\nGood, because …\nBad, because …\n\n## Alternatives Considered\n";
-const REQUIREMENTS_README: &str = "# Requirements\n\nEARS/29148-style requirement records. `## Problem` + `## Requirements`, one\n`[REQ-NNN] … MUST/SHOULD/MAY …` clause per line. Specs link back via `satisfies:`.\n";
-const REQ_TEMPLATE: &str = "---\nkind: requirement\nid: REQ-NNN\n---\n\n## Problem\n\n## Requirements\n\n[REQ-NNN] The <system> MUST <response>.\n\n## Success Metrics\n";
+const REQUIREMENTS_README: &str = "# Requirements\n\nEARS/29148-style requirement records. Use one artifact per stable requirement or grouping requirement.\n\nRequired shape:\n- `title:` is the canonical human-readable title used by graph, work-unit, and spec draft generation.\n- `## Problem` explains the user or system problem.\n- `## Requirements` is the normative source, with one `[REQ-NNN] ... MUST/SHOULD/MAY ...` clause per line.\n- `## Scenarios` supplies the work-unit and draft-spec BDD source.\n- `## Dependencies` declares ordering edges to other requirement ids.\n- `## Open Questions` blocks executable work-unit generation when it contains real questions.\n\nSpecs link back via `satisfies:`.\n";
+const REQ_TEMPLATE: &str = "---\nkind: requirement\nid: REQ-NNN\ntitle: \"Requirement Title\"\nliveness: auto\ntags: []\n---\n\n## Problem\n\nDescribe the user or system problem this requirement solves.\n\n## Requirements\n\n[REQ-NNN] The system MUST produce an observable response.\n\n## Scenarios\n\nScenario: Main behavior\n  Given a concrete starting state\n  When a concrete action occurs\n  Then a concrete observable outcome occurs\n\n## Dependencies\n\nNone.\n\n## Source Trace\n\n- issue:#NNN\n\n## Open Questions\n\nNone.\n";
 const PROPOSALS_README: &str = "# Proposals\n\nGovernance proposals (LEP-style). `liveness: n/a` — never enters the code gate.\nLink the decisions a proposal spawns with `## Produces: ADR-NNN`.\n";
 const LEP_TEMPLATE: &str = "---\nkind: proposal\nid: LEP-NNN\nstatus: Proposed\nliveness: n/a\n---\n\n## Context\n\n## Decision\n\n## Consequences\n\nGood, because …\nBad, because …\n\n## Produces: ADR-NNN\n";
 const GUIDANCE_README: &str = "# Guidance\n\nAgent-facing guidance + skill designation. `liveness: n/a`. Projected into\nCLAUDE.md/AGENTS.md via `gen-integrations --with-guidance` and served live via\nMCP `guidance.for`.\n";
@@ -68,6 +68,11 @@ mod tests {
                 .any(|p| p == "knowledge/decisions/adr-template.md")
         );
         assert!(root.join(".agent-spec/config.yaml").exists());
+        let req_template =
+            std::fs::read_to_string(root.join("knowledge/requirements/req-template.md")).unwrap();
+        assert!(req_template.contains("title: \"Requirement Title\""));
+        assert!(req_template.contains("## Scenarios"));
+        assert!(req_template.contains("## Open Questions"));
 
         // Second run creates nothing.
         let second = scaffold_workspace(&root).unwrap();

@@ -2,25 +2,47 @@
 //! Feeds `gen-integrations`: collects `knowledge/guidance/` docs and renders a
 //! Markdown block that can be appended to CLAUDE.md / AGENTS.md / etc.
 
+use crate::spec_knowledge::KnowledgeParseError;
 use crate::spec_knowledge::guidance::{applies_to, applies_to_path, skills};
 use crate::spec_knowledge::model::{KnowledgeDoc, KnowledgeKind};
 use crate::spec_knowledge::parser::parse_knowledge;
 use std::path::{Path, PathBuf};
 
-/// Collect all `guidance` docs under `<knowledge>/guidance/` (recursive,
-/// best-effort: unparseable / wrong-kind files are skipped), sorted by id.
+/// Back-compat best-effort collector. Command/MCP surfaces should use
+/// `collect_guidance_checked` so malformed guidance cannot be hidden.
 pub fn collect_guidance(knowledge_dir: &Path) -> Vec<KnowledgeDoc> {
+    collect_guidance_checked(knowledge_dir).unwrap_or_default()
+}
+
+/// Collect all `guidance` docs and preserve parse failures for command/MCP
+/// surfaces that must not silently return incomplete guidance.
+pub fn collect_guidance_checked(knowledge_dir: &Path) -> Result<Vec<KnowledgeDoc>, String> {
     let dir = knowledge_dir.join("guidance");
     let mut files = Vec::new();
     collect_md(&dir, &mut files);
     files.sort();
-    let mut docs: Vec<KnowledgeDoc> = files
-        .iter()
-        .filter_map(|p| parse_knowledge(p).ok())
-        .filter(|d| d.meta.kind == KnowledgeKind::Guidance)
-        .collect();
+    let mut docs = Vec::new();
+    let mut parse_errors = Vec::new();
+    for path in files {
+        match parse_knowledge(&path) {
+            Ok(doc) if doc.meta.kind == KnowledgeKind::Guidance => docs.push(doc),
+            Ok(_) => {}
+            Err(message) => parse_errors.push(KnowledgeParseError { path, message }),
+        }
+    }
+    if !parse_errors.is_empty() {
+        return Err(format_parse_errors(&parse_errors));
+    }
     docs.sort_by(|a, b| a.meta.id.cmp(&b.meta.id));
-    docs
+    Ok(docs)
+}
+
+fn format_parse_errors(errors: &[KnowledgeParseError]) -> String {
+    errors
+        .iter()
+        .map(|e| format!("knowledge-parse-error: {}: {}", e.path.display(), e.message))
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 fn collect_md(dir: &Path, out: &mut Vec<PathBuf>) {

@@ -140,6 +140,7 @@ fn looks_like_path_boundary(text: &str) -> bool {
         || trimmed.ends_with(".ts")
         || trimmed.ends_with(".js")
         || trimmed.ends_with(".py")
+        || trimmed.ends_with(".md")
         || trimmed.ends_with(".spec")
         || trimmed.ends_with(".spec.md")
 }
@@ -259,7 +260,7 @@ fn find_workspace_root(paths: &[PathBuf]) -> Option<PathBuf> {
 
         loop {
             if current.join("Cargo.toml").is_file() {
-                return Some(current);
+                return Some(current.canonicalize().unwrap_or(current));
             }
             if !current.pop() {
                 break;
@@ -326,6 +327,35 @@ name: "边界"
             .verify(&VerificationContext {
                 code_paths: vec![PathBuf::from(".")],
                 change_paths: vec![PathBuf::from("crates/spec-parser/src/parser.rs")],
+                ai_mode: AiMode::Off,
+                resolved_spec: resolved,
+            })
+            .unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].verdict, Verdict::Pass);
+    }
+
+    #[test]
+    fn test_boundaries_verifier_accepts_root_markdown_boundaries() {
+        let resolved = make_resolved_spec(
+            r#"spec: task
+name: "Docs"
+---
+
+## Boundaries
+
+### Allowed Changes
+- README.md
+"#,
+        )
+        .unwrap();
+
+        let verifier = BoundariesVerifier;
+        let results = verifier
+            .verify(&VerificationContext {
+                code_paths: vec![PathBuf::from(".")],
+                change_paths: vec![PathBuf::from("README.md")],
                 ai_mode: AiMode::Off,
                 resolved_spec: resolved,
             })
@@ -420,6 +450,7 @@ name: "边界"
                     estimate: None,
                     capability: None,
                     satisfies: vec![],
+                    risk: None,
                 },
                 sections: vec![],
                 lint_acks: vec![],

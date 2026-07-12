@@ -931,6 +931,7 @@ mod tests {
                     estimate: None,
                     capability: None,
                     satisfies: vec![],
+                    risk: None,
                 },
                 sections: vec![Section::Boundaries {
                     items: vec![Boundary {
@@ -1057,6 +1058,7 @@ mod tests {
                     estimate: None,
                     capability: None,
                     satisfies: vec![],
+                    risk: None,
                 },
                 sections: vec![Section::Boundaries {
                     items: vec![Boundary {
@@ -1225,6 +1227,7 @@ name: "退款"
                     estimate: None,
                     capability: None,
                     satisfies: vec![],
+                    risk: None,
                 },
                 sections: vec![Section::Boundaries {
                     items: vec![Boundary {
