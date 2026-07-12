@@ -4,7 +4,7 @@ All notable changes to `agent-spec` are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [0.4.0] - Unreleased
+## [0.4.0] - 2026-07-12
 
 The **Knowledge & Liveness Layer (KLL)** release. agent-spec now has a durable
 knowledge layer beside specs, so decisions and requirements can be traced to the
