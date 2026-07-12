@@ -523,6 +523,9 @@ agent-spec wiki inspect-project brain-rs --code . --wiki .agent-spec/wiki --form
 agent-spec wiki index --wiki .agent-spec/wiki
 agent-spec wiki lint --code . --wiki .agent-spec/wiki
 agent-spec wiki check --code . --wiki .agent-spec/wiki
+agent-spec atlas build --code .          # Rust project graph: build/refresh
+agent-spec atlas query <symbol> --code . # query structure instead of grepping
+agent-spec atlas check --code .          # staleness gate (non-zero when stale)
 agent-spec wiki meta update --code . --wiki .agent-spec/wiki
 ```
 

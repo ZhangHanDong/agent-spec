@@ -2,7 +2,7 @@
 kind: requirement
 id: REQ-RUST-ATLAS
 title: "Rust Atlas Code Graph"
-status: proposed
+status: accepted
 liveness: auto
 tags: [atlas, code-graph, static-analysis, mcp]
 ---
@@ -86,4 +86,4 @@ Scenario: Syntax error in one source file
 - requirements conversation: atlas planning session 2026-07-11, human-confirmed
 - design: docs/superpowers/specs/2026-07-11-rust-atlas-design.md
 - plan: docs/superpowers/plans/2026-07-11-rust-atlas-code-graph.md
-- staged contract: specs/roadmap/task-rust-atlas-code-graph.spec.md
+- contract: specs/task-rust-atlas-code-graph.spec.md

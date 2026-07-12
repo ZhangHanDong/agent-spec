@@ -27,7 +27,6 @@ Remaining staged contracts:
 
 | Spec | State | Gap |
 |------|-------|-----|
-| `task-rust-atlas-code-graph.spec.md` | planned (Phase 1) | not started; next implementation task |
 | `task-atlas-mir-layer.spec.md` | planned (Phase 2) | depends on Phase 1 |
 | `task-atlas-kll-integration.spec.md` | planned (Phase 3) | depends on Phase 1 |
 | `task-intent-compiler-yaml-export.spec.md` | planned | YAML export projection from confirmed requirements; round-trip fixpoint |
@@ -44,7 +43,7 @@ architecture as five contracts:
 | Boundary | Contract |
 |----------|----------|
 | 1. Requirement governance gate + explicit transitions | `specs/task-requirement-governance-transitions.spec.md` (active) |
-| 2. Provider-neutral Code Graph IR + typed code bindings | to be staged (builds on `task-rust-atlas-code-graph`) |
+| 2. Provider-neutral Code Graph IR + typed code bindings | to be staged (builds on `specs/task-rust-atlas-code-graph.spec.md`, now active) |
 | 3. Rust Atlas through the Intent-Code Linker | `specs/roadmap/task-atlas-kll-integration.spec.md` |
 | 4. Quality Providers, profiles, Execution Bundles | to be staged |
 | 5. Aggregate status/evidence queries + full dogfood | to be staged |

@@ -1,0 +1,60 @@
+{
+  "metadata": {
+    "tool_info": {
+      "name": "rust-analyzer",
+      "version": "2026-06-30"
+    }
+  },
+  "documents": [
+    {
+      "relative_path": "src/store.rs",
+      "occurrences": [
+        {
+          "symbol": "rust-analyzer cargo atlas-basic 0.1.0 store/Store#",
+          "symbol_roles": 1,
+          "range": [
+            0,
+            10,
+            0,
+            15
+          ]
+        },
+        {
+          "symbol": "rust-analyzer cargo atlas-basic 0.1.0 store/MemStore#",
+          "symbol_roles": 1,
+          "range": [
+            4,
+            11,
+            4,
+            19
+          ]
+        }
+      ]
+    },
+    {
+      "relative_path": "src/service.rs",
+      "occurrences": [
+        {
+          "symbol": "rust-analyzer cargo atlas-basic 0.1.0 store/MemStore#",
+          "symbol_roles": 0,
+          "range": [
+            2,
+            19,
+            2,
+            27
+          ]
+        },
+        {
+          "symbol": "rust-analyzer cargo atlas-basic 0.1.0 store/Store#",
+          "symbol_roles": 0,
+          "range": [
+            3,
+            10,
+            3,
+            13
+          ]
+        }
+      ]
+    }
+  ]
+}

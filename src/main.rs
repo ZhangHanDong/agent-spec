@@ -407,6 +407,81 @@ enum Commands {
         #[arg(long)]
         check: bool,
     },
+    /// Rust project graph: build, query, and freshness-check the atlas
+    Atlas {
+        #[command(subcommand)]
+        action: AtlasCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum AtlasCommands {
+    /// Build or incrementally refresh the graph
+    Build {
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+        #[arg(long)]
+        full: bool,
+        /// Optional SCIP index (rust-analyzer, JSON form) for resolved references
+        #[arg(long)]
+        scip: Option<PathBuf>,
+    },
+    /// Deterministic module outline
+    Tree {
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+        #[arg(long)]
+        frozen: bool,
+        #[arg(long, default_value = "json")]
+        format: String,
+    },
+    /// Node facts and adjacent edges for a canonical symbol path
+    Query {
+        symbol: String,
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+        #[arg(long)]
+        frozen: bool,
+        #[arg(long, default_value = "json")]
+        format: String,
+    },
+    /// Incoming reference/call edges for a symbol
+    Refs {
+        symbol: String,
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+        #[arg(long)]
+        frozen: bool,
+        #[arg(long, default_value = "json")]
+        format: String,
+    },
+    /// Impl relations touching a trait or type name
+    Impls {
+        name: String,
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+        #[arg(long)]
+        frozen: bool,
+        #[arg(long, default_value = "json")]
+        format: String,
+    },
+    /// Freshness check; exits non-zero when any shard is stale
+    Check {
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -833,6 +908,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             format,
             gate,
         } => cmd_trace(&id, &knowledge, &specs, &code, &format, gate),
+        Commands::Atlas { action } => cmd_atlas(action),
         Commands::Archive {
             spec_dir,
             archive_dir,
@@ -2924,6 +3000,88 @@ fn cmd_lint_knowledge(
         std::process::exit(2);
     }
     Ok(())
+}
+
+fn cmd_atlas(action: AtlasCommands) -> Result<(), Box<dyn std::error::Error>> {
+    fn print_value<T: serde::Serialize>(
+        value: &T,
+        format: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if format == "json" {
+            println!("{}", serde_json::to_string_pretty(value)?);
+        } else {
+            println!("{}", serde_json::to_string(value)?);
+        }
+        Ok(())
+    }
+    let frozen_opts = |frozen: bool| rust_atlas::QueryOptions { frozen };
+    match action {
+        AtlasCommands::Build {
+            code,
+            graph,
+            full,
+            scip,
+        } => {
+            let report = rust_atlas::build(
+                &code,
+                &graph,
+                &rust_atlas::BuildOptions {
+                    full,
+                    scip_index: scip,
+                },
+            )?;
+            print_value(&report, "json")
+        }
+        AtlasCommands::Tree {
+            code,
+            graph,
+            frozen,
+            format,
+        } => {
+            let outline = rust_atlas::tree(&code, &graph, &frozen_opts(frozen))?;
+            print_value(&outline, &format)
+        }
+        AtlasCommands::Query {
+            symbol,
+            code,
+            graph,
+            frozen,
+            format,
+        } => {
+            let result = rust_atlas::query(&code, &graph, &symbol, &frozen_opts(frozen))?;
+            print_value(&result, &format)
+        }
+        AtlasCommands::Refs {
+            symbol,
+            code,
+            graph,
+            frozen,
+            format,
+        } => {
+            let report = rust_atlas::refs(&code, &graph, &symbol, &frozen_opts(frozen))?;
+            print_value(&report, &format)
+        }
+        AtlasCommands::Impls {
+            name,
+            code,
+            graph,
+            frozen,
+            format,
+        } => {
+            let report = rust_atlas::impls(&code, &graph, &name, &frozen_opts(frozen))?;
+            print_value(&report, &format)
+        }
+        AtlasCommands::Check { code, graph } => {
+            let stale = rust_atlas::check(&code, &graph)?;
+            let payload = serde_json::json!({ "stale": stale });
+            println!("{}", serde_json::to_string_pretty(&payload)?);
+            if stale.is_empty() {
+                Ok(())
+            } else {
+                Err(format!("atlas graph is stale: {}", stale.join(", ")).into())
+            }
+        }
+    }
 }
 
 fn cmd_requirements(action: RequirementCommands) -> Result<(), Box<dyn std::error::Error>> {
@@ -9914,5 +10072,98 @@ Scenario: pass
         );
 
         let _ = fs::remove_dir_all(dir);
+    }
+
+    fn atlas_fixture_copy(name: &str) -> (PathBuf, PathBuf) {
+        let base = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let code = base.join("code");
+        fs::create_dir_all(code.join("src")).unwrap();
+        let fixture = repo_root().join("fixtures/atlas/basic");
+        for rel in ["Cargo.toml", "src/lib.rs", "src/store.rs", "src/service.rs"] {
+            fs::copy(fixture.join(rel), code.join(rel)).unwrap();
+        }
+        (code, base.join("graph"))
+    }
+
+    #[test]
+    fn test_atlas_check_reports_stale_files() {
+        let (code, graph) = atlas_fixture_copy("atlas-cli-check");
+        rust_atlas::build(&code, &graph, &rust_atlas::BuildOptions::default()).unwrap();
+
+        // fresh graph: check succeeds
+        super::cmd_atlas(super::AtlasCommands::Check {
+            code: code.clone(),
+            graph: graph.clone(),
+        })
+        .unwrap();
+
+        let service = code.join("src/service.rs");
+        let mut text = fs::read_to_string(&service).unwrap();
+        text.push_str("\npub fn extra() -> usize {\n    3\n}\n");
+        fs::write(&service, text).unwrap();
+
+        let err = super::cmd_atlas(super::AtlasCommands::Check {
+            code: code.clone(),
+            graph: graph.clone(),
+        })
+        .unwrap_err();
+        let text = err.to_string();
+        assert!(
+            text.contains("src/service.rs"),
+            "stale list must name the file: {text}"
+        );
+        assert!(text.contains("stale"), "{text}");
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_mcp_atlas_query_returns_symbol_json() {
+        let (code, graph) = atlas_fixture_copy("atlas-mcp-query");
+        rust_atlas::build(&code, &graph, &rust_atlas::BuildOptions::default()).unwrap();
+        // MCP reads the graph at <code>/.agent-spec/graph
+        let target = code.join(".agent-spec");
+        fs::create_dir_all(&target).unwrap();
+        fs::rename(&graph, target.join("graph")).unwrap();
+
+        let ctx = crate::spec_mcp::McpContext {
+            knowledge: code.join("knowledge"),
+            specs: code.join("specs"),
+            code: code.clone(),
+        };
+        let result = crate::spec_mcp::dispatch(
+            "atlas_query",
+            &serde_json::json!({"symbol": "atlas_basic::store::MemStore"}),
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(result["node"]["kind"], "struct");
+        assert_eq!(result["node"]["id"], "atlas_basic::store::MemStore");
+        assert!(
+            result["node"]["file"]
+                .as_str()
+                .unwrap()
+                .ends_with("src/store.rs")
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_mcp_atlas_tools_report_missing_graph() {
+        let base = std::env::temp_dir().join(format!("atlas-mcp-missing-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        let ctx = crate::spec_mcp::McpContext {
+            knowledge: base.join("knowledge"),
+            specs: base.join("specs"),
+            code: base.clone(),
+        };
+        let err =
+            crate::spec_mcp::dispatch("atlas_status", &serde_json::json!({}), &ctx).unwrap_err();
+        assert!(
+            err.contains("atlas build"),
+            "must name the first step: {err}"
+        );
+        fs::remove_dir_all(base).ok();
     }
 }

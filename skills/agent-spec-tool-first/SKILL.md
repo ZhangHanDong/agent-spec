@@ -63,6 +63,7 @@ Humans define "what is correct" (Contract). Machines verify "is the code correct
 | `agent-spec wiki status` | Check stale code live wiki articles | Session start / before broad source reading |
 | `agent-spec wiki query <text>` | Search tracked live wiki articles | Before opening many source files |
 | `agent-spec wiki check` | Live wiki lint + worktree status gate | Pre-commit / CI for tracked wiki |
+| `agent-spec atlas build/tree/query/refs/impls/check` | Rust project graph (symbols, impls, refs) with hash staleness | Query structure instead of grepping; `--frozen` for read-only |
 | `agent-spec verify <spec> --code .` | Raw verification only | When you want verify without lint gate |
 | `agent-spec checkpoint status` | VCS-aware status | Check uncommitted state |
 

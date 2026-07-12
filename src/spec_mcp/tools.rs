@@ -33,6 +33,16 @@ pub fn tool_specs() -> Value {
           "inputSchema": { "type": "object", "properties": { "name": {"type": "string"} }, "required": ["name"] } },
         { "name": "guidance.for", "description": "Guidance and designated skills for a path or stack.",
           "inputSchema": { "type": "object", "properties": { "path": {"type": "string"}, "stack": {"type": "string"} } } },
+        { "name": "atlas_tree", "description": "Deterministic module outline of the Rust project graph (read-only; reports staleness).",
+          "inputSchema": { "type": "object", "properties": {} } },
+        { "name": "atlas_query", "description": "Node facts and adjacent edges for a canonical symbol path.",
+          "inputSchema": { "type": "object", "properties": { "symbol": {"type": "string"} }, "required": ["symbol"] } },
+        { "name": "atlas_refs", "description": "Incoming reference/call edges for a symbol.",
+          "inputSchema": { "type": "object", "properties": { "symbol": {"type": "string"} }, "required": ["symbol"] } },
+        { "name": "atlas_impls", "description": "Impl relations touching a trait or type name.",
+          "inputSchema": { "type": "object", "properties": { "name": {"type": "string"} }, "required": ["name"] } },
+        { "name": "atlas_status", "description": "Graph metadata, capability, and stale file list.",
+          "inputSchema": { "type": "object", "properties": {} } },
         { "name": "context.read", "description": "Read free-form context by path, or list all when no path is given.",
           "inputSchema": { "type": "object", "properties": { "path": {"type": "string"} } } }
     ])
@@ -42,6 +52,9 @@ pub fn tool_specs() -> Value {
 pub fn dispatch(name: &str, args: &Value, ctx: &McpContext) -> Result<Value, String> {
     match name {
         "knowledge.find" => knowledge_find(args, ctx),
+        "atlas_tree" | "atlas_query" | "atlas_refs" | "atlas_impls" | "atlas_status" => {
+            atlas_tool(name, args, ctx)
+        }
         "knowledge.governing" => knowledge_governing(args, ctx),
         "liveness.status" => liveness_status(args, ctx),
         "spec.contract" => spec_contract(args, ctx),
@@ -239,6 +252,60 @@ fn context_read(args: &Value, ctx: &McpContext) -> Result<Value, String> {
             Ok(json!({ "path": p, "content": content }))
         }
         None => Ok(json!({ "files": list_context(&dir) })),
+    }
+}
+
+/// Read-only atlas tools: thin wrappers over the rust-atlas library. The MCP
+/// server never rebuilds the graph (frozen mode); staleness is reported.
+fn atlas_tool(name: &str, args: &Value, ctx: &McpContext) -> Result<Value, String> {
+    let graph_dir = ctx.code.join(".agent-spec/graph");
+    let frozen = rust_atlas::QueryOptions { frozen: true };
+    let to_value = |v: serde_json::Result<Value>| v.map_err(|e| e.to_string());
+    match name {
+        "atlas_status" => {
+            let (meta, _) = rust_atlas::load_graph(&graph_dir).map_err(|e| e.to_string())?;
+            let stale = rust_atlas::check(&ctx.code, &graph_dir).map_err(|e| e.to_string())?;
+            Ok(json!({
+                "schema_version": meta.schema_version,
+                "package": meta.package,
+                "capability": { "scip": meta.capability.scip, "scip_tool": meta.capability.scip_tool },
+                "files": meta.files.len(),
+                "stale": stale,
+            }))
+        }
+        "atlas_tree" => {
+            let outline =
+                rust_atlas::tree(&ctx.code, &graph_dir, &frozen).map_err(|e| e.to_string())?;
+            to_value(serde_json::to_value(&outline))
+        }
+        "atlas_query" => {
+            let symbol = args
+                .get("symbol")
+                .and_then(|v| v.as_str())
+                .ok_or("atlas_query requires `symbol`")?;
+            let result = rust_atlas::query(&ctx.code, &graph_dir, symbol, &frozen)
+                .map_err(|e| e.to_string())?;
+            to_value(serde_json::to_value(&result))
+        }
+        "atlas_refs" => {
+            let symbol = args
+                .get("symbol")
+                .and_then(|v| v.as_str())
+                .ok_or("atlas_refs requires `symbol`")?;
+            let report = rust_atlas::refs(&ctx.code, &graph_dir, symbol, &frozen)
+                .map_err(|e| e.to_string())?;
+            to_value(serde_json::to_value(&report))
+        }
+        "atlas_impls" => {
+            let target = args
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or("atlas_impls requires `name`")?;
+            let report = rust_atlas::impls(&ctx.code, &graph_dir, target, &frozen)
+                .map_err(|e| e.to_string())?;
+            to_value(serde_json::to_value(&report))
+        }
+        other => Err(format!("unknown atlas tool {other}")),
     }
 }
 

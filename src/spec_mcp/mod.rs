@@ -130,7 +130,7 @@ mod tests {
             &ctx(),
         )
         .unwrap();
-        assert_eq!(resp["result"]["tools"].as_array().unwrap().len(), 6);
+        assert_eq!(resp["result"]["tools"].as_array().unwrap().len(), 11);
     }
 
     #[test]
