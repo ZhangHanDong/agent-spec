@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agent-spec/intent-compiler/requirement-traceability-v1",
+  "title": "Requirement Traceability Projection v1",
+  "description": "Deterministic projection of one requirement's evidence chain: clauses, satisfying specs, scenarios, bound test selectors, latest recorded verdicts, and derived liveness. A pure read over stored records; carries facts and digests only.",
+  "type": "object",
+  "required": [
+    "schema",
+    "id",
+    "title",
+    "governance",
+    "source",
+    "clauses",
+    "specs",
+    "liveness"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "agent-spec/intent-compiler/requirement-traceability-v1"
+    },
+    "id": { "type": "string" },
+    "title": { "type": "string" },
+    "governance": {
+      "enum": ["proposed", "accepted", "superseded", "deprecated", "rejected", "missing"]
+    },
+    "source": { "type": "string" },
+    "clauses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "text"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "text": { "type": "string" }
+        }
+      }
+    },
+    "specs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "name", "scenarios"],
+        "additionalProperties": false,
+        "properties": {
+          "path": { "type": "string" },
+          "name": { "type": "string" },
+          "scenarios": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name"],
+              "additionalProperties": false,
+              "properties": {
+                "name": { "type": "string" },
+                "test_selector": { "type": ["string", "null"] },
+                "latest_verdict": {
+                  "anyOf": [
+                    { "type": "null" },
+                    { "enum": ["pass", "fail", "skip", "uncertain", "pending_review"] }
+                  ]
+                }
+              }
+            }
+          },
+          "latest_verdict": {
+            "anyOf": [
+              { "type": "null" },
+              { "enum": ["pass", "fail", "skip", "uncertain", "pending_review"] }
+            ]
+          }
+        }
+      }
+    },
+    "latest_run": { "type": ["string", "null"] },
+    "liveness": { "enum": ["honored", "violated", "unproven", "na"] }
+  }
+}

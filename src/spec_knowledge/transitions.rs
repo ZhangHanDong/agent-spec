@@ -130,6 +130,67 @@ fn err(message: String) -> GovernanceError {
     GovernanceError { message }
 }
 
+/// Render a successful transition as one JSON object carrying the
+/// post-rewrite document digest. Reachable only from an `Ok` outcome — a
+/// failed transition errors before any JSON exists, so partial JSON is
+/// impossible by construction. Per ADR-001 the object carries facts and a
+/// digest only; approval identity belongs to external systems.
+pub fn transition_json(outcome: &TransitionOutcome) -> Result<String, GovernanceError> {
+    render_json(&serde_json::json!({
+        "id": outcome.id,
+        "from": outcome.old_status,
+        "to": outcome.new_status,
+        "document": outcome.path.to_string_lossy(),
+        "document_digest": document_digest(&outcome.path)?,
+    }))
+}
+
+/// Render a successful supersession as JSON listing both rewritten documents
+/// with their post-rewrite statuses and digests.
+pub fn supersede_json(
+    outcome: &TransitionOutcome,
+    replacement: &Path,
+) -> Result<String, GovernanceError> {
+    let replacement_doc = crate::spec_knowledge::parse_requirement(replacement)
+        .map_err(|message| err(format!("{}: {message}", replacement.display())))?;
+    let replacement_status = match replacement_doc.meta.status {
+        Some(crate::spec_knowledge::DecisionStatus::Proposed) => "proposed",
+        Some(crate::spec_knowledge::DecisionStatus::Accepted) => "accepted",
+        Some(crate::spec_knowledge::DecisionStatus::Superseded) => "superseded",
+        Some(crate::spec_knowledge::DecisionStatus::Deprecated) => "deprecated",
+        Some(crate::spec_knowledge::DecisionStatus::Rejected) => "rejected",
+        None => "missing",
+    };
+    render_json(&serde_json::json!({
+        "documents": [
+            {
+                "id": outcome.id,
+                "status": outcome.new_status,
+                "document": outcome.path.to_string_lossy(),
+                "document_digest": document_digest(&outcome.path)?,
+            },
+            {
+                "id": replacement_doc.meta.id,
+                "status": replacement_status,
+                "document": replacement.to_string_lossy(),
+                "document_digest": document_digest(replacement)?,
+            },
+        ],
+    }))
+}
+
+fn document_digest(path: &Path) -> Result<String, GovernanceError> {
+    let bytes = std::fs::read(path)
+        .map_err(|error| err(format!("cannot read {}: {error}", path.display())))?;
+    Ok(crate::spec_knowledge::blake3_hex(&bytes))
+}
+
+fn render_json(value: &serde_json::Value) -> Result<String, GovernanceError> {
+    let mut text = serde_json::to_string_pretty(value).map_err(|error| err(error.to_string()))?;
+    text.push('\n');
+    Ok(text)
+}
+
 /// Locate a requirement document by id under `<knowledge_dir>/requirements/**`.
 /// Returns its path, full content, and current frontmatter status value.
 fn find_requirement(
@@ -390,6 +451,80 @@ mod tests {
             before,
             "a failed supersession must change neither document"
         );
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn test_requirements_transition_json_reports_digest() {
+        let dir = make_temp_tree("gov-transition-json");
+        let path = write_req(&dir, "req-a.md", "REQ-GOV-A", Some("proposed"));
+
+        let outcome = transition_requirement(&dir, "REQ-GOV-A", "accepted").unwrap();
+        let json = transition_json(&outcome).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(value["id"], "REQ-GOV-A");
+        assert_eq!(value["from"], "proposed");
+        assert_eq!(value["to"], "accepted");
+        assert_eq!(value["document"], path.to_string_lossy().as_ref());
+        let expected_digest = crate::spec_knowledge::blake3_hex(&fs::read(&path).unwrap());
+        assert_eq!(value["document_digest"], expected_digest.as_str());
+        for forbidden in ["actor", "authority", "approval", "policy"] {
+            assert!(
+                value.get(forbidden).is_none(),
+                "output must not carry orchestrator field '{forbidden}'"
+            );
+        }
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn test_requirements_transition_json_illegal_keeps_stdout_empty() {
+        let dir = make_temp_tree("gov-transition-json-illegal");
+        let path = write_req(&dir, "req-a.md", "REQ-GOV-A", Some("accepted"));
+        let before = fs::read_to_string(&path).unwrap();
+
+        // JSON rendering is only reachable from a successful outcome; an
+        // illegal transition errors first, so no partial JSON can exist.
+        let err = transition_requirement(&dir, "REQ-GOV-A", "proposed").unwrap_err();
+        assert!(
+            err.to_string().contains("accepted") && err.to_string().contains("proposed"),
+            "diagnostic must name the illegal transition: {err}"
+        );
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            before,
+            "the document must be unchanged"
+        );
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn test_requirements_supersede_json_reports_both_documents() {
+        let dir = make_temp_tree("gov-supersede-json");
+        let old_path = write_req(&dir, "req-old.md", "REQ-GOV-OLD", Some("accepted"));
+        let new_path = write_req(&dir, "req-new.md", "REQ-GOV-NEW", Some("accepted"));
+
+        let (outcome, replacement) =
+            supersede_requirement(&dir, "REQ-GOV-OLD", "REQ-GOV-NEW").unwrap();
+        let json = supersede_json(&outcome, &replacement).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        let documents = value["documents"].as_array().unwrap();
+        assert_eq!(documents.len(), 2);
+        assert_eq!(documents[0]["id"], "REQ-GOV-OLD");
+        assert_eq!(documents[0]["status"], "superseded");
+        assert_eq!(documents[1]["id"], "REQ-GOV-NEW");
+        assert_eq!(documents[1]["status"], "accepted");
+        for (entry, path) in documents.iter().zip([&old_path, &new_path]) {
+            let expected = crate::spec_knowledge::blake3_hex(&fs::read(path).unwrap());
+            assert_eq!(
+                entry["document_digest"],
+                expected,
+                "digest must match the post-rewrite bytes of {}",
+                path.display()
+            );
+        }
         fs::remove_dir_all(dir).ok();
     }
 

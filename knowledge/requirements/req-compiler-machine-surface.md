@@ -2,7 +2,7 @@
 kind: requirement
 id: REQ-COMPILER-MACHINE-SURFACE
 title: "Compiler Machine Surface"
-status: proposed
+status: accepted
 liveness: auto
 tags: [intent-compiler, machine-surface, json, governance]
 ---

@@ -633,6 +633,9 @@ enum RequirementCommands {
         to: String,
         #[arg(long, default_value = "knowledge")]
         knowledge: PathBuf,
+        /// Output format: text | json (json carries the post-rewrite digest)
+        #[arg(long, default_value = "text")]
+        format: String,
     },
     /// Mark a requirement superseded by a replacement requirement
     Supersede {
@@ -643,6 +646,26 @@ enum RequirementCommands {
         by: String,
         #[arg(long, default_value = "knowledge")]
         knowledge: PathBuf,
+        /// Output format: text | json (json lists both rewritten documents)
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// Project one requirement's evidence chain (clauses, specs, scenarios,
+    /// recorded verdicts, derived liveness) as deterministic JSON
+    Traceability {
+        /// Requirement id, e.g. REQ-123
+        id: String,
+        #[arg(long, default_value = "knowledge")]
+        knowledge: PathBuf,
+        #[arg(long, default_value = "specs")]
+        specs: PathBuf,
+        #[arg(long, default_value = ".agent-spec/trace")]
+        trace_dir: PathBuf,
+        #[arg(long, default_value = "json")]
+        format: String,
+        /// Write the projection to a file exactly as printed
+        #[arg(long)]
+        out: Option<PathBuf>,
     },
     /// Aggregate three-axis status (governance / execution / liveness) for one requirement
     Status {
@@ -3247,27 +3270,69 @@ fn cmd_requirements(action: RequirementCommands) -> Result<(), Box<dyn std::erro
             check,
             provenance,
         } => cmd_requirements_import(&from, &out, check, provenance.as_deref()),
-        RequirementCommands::Transition { id, to, knowledge } => {
+        RequirementCommands::Transition {
+            id,
+            to,
+            knowledge,
+            format,
+        } => {
             let outcome = crate::spec_knowledge::transition_requirement(&knowledge, &id, &to)?;
-            println!(
-                "{}: {} -> {} ({})",
-                outcome.id,
-                outcome.old_status.as_deref().unwrap_or("(missing)"),
-                outcome.new_status,
-                outcome.path.display()
-            );
+            match format.as_str() {
+                "json" => print!("{}", crate::spec_knowledge::transition_json(&outcome)?),
+                _ => println!(
+                    "{}: {} -> {} ({})",
+                    outcome.id,
+                    outcome.old_status.as_deref().unwrap_or("(missing)"),
+                    outcome.new_status,
+                    outcome.path.display()
+                ),
+            }
             Ok(())
         }
-        RequirementCommands::Supersede { id, by, knowledge } => {
+        RequirementCommands::Supersede {
+            id,
+            by,
+            knowledge,
+            format,
+        } => {
             let (outcome, replacement) =
                 crate::spec_knowledge::supersede_requirement(&knowledge, &id, &by)?;
-            println!(
-                "{}: {} -> superseded, replaced by {} ({})",
-                outcome.id,
-                outcome.old_status.as_deref().unwrap_or("(missing)"),
-                by.to_ascii_uppercase(),
-                replacement.display()
-            );
+            match format.as_str() {
+                "json" => print!(
+                    "{}",
+                    crate::spec_knowledge::supersede_json(&outcome, &replacement)?
+                ),
+                _ => println!(
+                    "{}: {} -> superseded, replaced by {} ({})",
+                    outcome.id,
+                    outcome.old_status.as_deref().unwrap_or("(missing)"),
+                    by.to_ascii_uppercase(),
+                    replacement.display()
+                ),
+            }
+            Ok(())
+        }
+        RequirementCommands::Traceability {
+            id,
+            knowledge,
+            specs,
+            trace_dir,
+            format,
+            out,
+        } => {
+            let projection = crate::spec_knowledge::build_traceability_projection(
+                &knowledge, &specs, &trace_dir, &id,
+            )?;
+            let rendered = match format.as_str() {
+                "text" => crate::spec_knowledge::format_traceability_text(&projection),
+                _ => crate::spec_knowledge::render_traceability_json(&projection)?,
+            };
+            if let Some(target) = out {
+                std::fs::write(&target, &rendered)?;
+                println!("traceability written: {}", target.display());
+            } else {
+                print!("{rendered}");
+            }
             Ok(())
         }
         RequirementCommands::Status {

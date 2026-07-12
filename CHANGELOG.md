@@ -4,6 +4,19 @@ All notable changes to `agent-spec` are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Compiler machine surface (`REQ-COMPILER-MACHINE-SURFACE`, ADR-001):
+  `requirements transition`/`supersede` gain `--format json` emitting the
+  post-rewrite blake3 document digests (facts only — no actor, authority,
+  approval, or policy fields; external systems bind approvals to digests), and
+  the new `requirements traceability <ID>` projects clauses → satisfying specs
+  → scenarios → bound tests → latest recorded verdicts → derived liveness as
+  one byte-stable JSON document (pure read over stored trace records). Schema:
+  `docs/intent-compiler/schemas/requirement-traceability-v1.schema.json`.
+
 ## [0.4.0] - 2026-07-12
 
 The **Knowledge & Liveness Layer (KLL)** release. agent-spec now has a durable

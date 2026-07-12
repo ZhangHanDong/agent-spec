@@ -29,6 +29,7 @@ pub mod status;
 pub mod test_obligations;
 pub mod trace;
 pub mod trace_ledger;
+pub mod traceability;
 pub mod transitions;
 pub mod work_units;
 pub mod worktrees;
@@ -94,8 +95,13 @@ pub use trace_ledger::{
     read_requirement_trace_ledgers, record_requirement_trace_run, replay_requirement_trace,
     write_requirement_trace_ledger,
 };
+pub use traceability::{
+    TRACEABILITY_SCHEMA_ID, TraceabilityProjection, build_traceability_projection,
+    format_traceability_text, render_traceability_json,
+};
 pub use transitions::{
-    GovernanceError, TransitionOutcome, supersede_requirement, transition_requirement,
+    GovernanceError, TransitionOutcome, supersede_json, supersede_requirement, transition_json,
+    transition_requirement,
 };
 pub use work_units::{WorkUnit, WorkUnitMode, WorkUnitSet, WorkUnitStatus, build_work_units};
 pub use worktrees::{WorktreeDiagnostic, WorktreeEntry, WorktreeManifest, build_worktree_manifest};
