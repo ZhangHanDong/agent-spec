@@ -4,7 +4,16 @@ All notable changes to `agent-spec` are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.0.0] - 2026-07-13
+
+**The compatibility promise begins.** Every surface in the README's
+"Stability" section — the CLI command families, the machine formats (five
+verdicts, `is_passing`, all schema `$id`s, YAML dialect v1.1, provenance
+manifests v1/v2, traceability projection, compile bundle layouts,
+code-bindings and execution-bundle schemas, typed trace targets, atlas
+`schema_version`), and the governance semantics (requirement state machine,
+execution ladder, derived-never-stored liveness) — now breaks only with a
+major version.
 
 ### Removed
 

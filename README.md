@@ -102,10 +102,10 @@ target-state contracts, state machines, provider roles, and failure semantics.
 
 The primary planning surface is the **Task Contract**, rendered by `agent-spec contract`.
 
-## Stability and the road to 1.0
+## Stability: the 1.0 promise
 
-0.6.0 stabilizes the surfaces below; 1.0 will turn them into a compatibility
-promise (breaking changes only with a major version):
+1.0 turns the surfaces below into a compatibility promise — breaking
+changes only with a major version:
 
 - **CLI commands and flags**: `init`, `parse`, `lint`, `contract`, `lifecycle`,
   `verify`, `guard`, `explain`, `stamp`, `matrix`, `audit`, `promote`,
