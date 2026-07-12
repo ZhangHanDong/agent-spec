@@ -102,6 +102,30 @@ target-state contracts, state machines, provider roles, and failure semantics.
 
 The primary planning surface is the **Task Contract**. The older `brief` view remains available as a compatibility alias, but new workflows should use `contract`.
 
+## Stability and the road to 1.0
+
+0.4.0 stabilizes the surfaces below; 1.0 will turn them into a compatibility
+promise (breaking changes only with a major version):
+
+- **CLI commands and flags**: `init`, `parse`, `lint`, `contract`, `lifecycle`,
+  `verify`, `guard`, `explain`, `stamp`, `matrix`, `audit`, `promote`,
+  `discover`, `check-structure`, `gen-integrations`, `trace`, `lint-knowledge`,
+  `mcp`, `plan`, `wiki *`, `atlas *`, and the `requirements` family
+  (`import|export|transition|supersede|status|graph|work-units|plan|
+  test-obligations|worktrees|draft-specs|questions|replay|explain-failure|
+  trace-graph`).
+- **Machine formats**: lifecycle/verify JSON top-level keys, the six verdicts
+  and `is_passing` semantics, schema `$id` URIs under
+  `agent-spec/requirements-compiler/` and `agent-spec/intent-compiler/`, the
+  YAML dialect v1.1, compilation provenance manifests, and the atlas graph
+  `schema_version`.
+- **Governance semantics**: the requirement state machine, the execution
+  ladder, and derived (never stored) liveness.
+
+Deprecation policy: deprecated surfaces keep working for one minor release
+with a notice, then leave at the next major. **`brief` (legacy alias of
+`contract`) is deprecated in 0.4.0 and will be removed in 1.0.**
+
 ## What agent-spec doesn't solve
 
 We want you to know up-front. These are real limits, not roadmap stubs:

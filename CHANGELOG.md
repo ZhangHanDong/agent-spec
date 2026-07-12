@@ -71,6 +71,11 @@ specs and tests that still guard them.
   draft Task Contracts with `satisfies: [REQ-*]`.
 - SARIF output for knowledge lint findings.
 
+
+### Deprecated
+
+- `brief` (legacy alias of `contract`) — removal planned for 1.0.
+
 ### Changed
 
 - Terminology unified: **Intent Compiler（意图编译器）** is agent-spec's product

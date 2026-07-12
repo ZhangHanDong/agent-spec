@@ -47,6 +47,18 @@ compiler stage.
 
 [REQ-INTENT-COMPILER-YAML-FRONTEND-NEGATIVE] Satisfying specs MUST include negative scenarios covering unsupported YAML constructs, unsafe node ids, dangling dependencies, and overwrite refusal.
 
+## Scenarios
+
+Scenario: Reference-style tree imports into the IR
+  Given a constrained YAML tree with FOLDER and ATOMIC nodes
+  When `requirements import` runs with the `.yaml` source
+  Then generated requirement documents carry provenance and the declared governance status
+
+Scenario: Unsupported YAML constructs are rejected whole
+  Given a YAML source using anchors or flow-style collections
+  When `requirements import` runs
+  Then the import fails with `yaml-unsupported-construct` and writes nothing
+
 ## Dependencies
 
 - REQ-REQUIREMENTS-COMPILER-PLAN-DAG

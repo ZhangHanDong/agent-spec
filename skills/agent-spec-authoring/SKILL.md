@@ -13,7 +13,7 @@ description: |
 
 # Agent Spec Authoring
 
-> **Version:** 3.3.0 | **Last Updated:** 2026-06-08 | **Tracks agent-spec:** 0.3.0 (BDD-spine)
+> **Version:** 3.5.0 | **Last Updated:** 2026-07-12 | **Tracks agent-spec:** 0.4.0 (KLL requirements intake)
 
 You are an expert at writing agent-spec Task Contracts. Help users by:
 - **Creating specs**: Scaffold new `.spec.md` files with correct structure (`.spec` also supported)
@@ -358,6 +358,24 @@ requires the Rule's Examples to pass (≥1 example). Authoring notes:
 prefer scenarios provable by Computational evidence; reserve AI-only scenarios for
 genuinely non-mechanical intent, and never let Inferential evidence default to
 pass.
+
+## KLL Requirement Authoring (0.4.0)
+
+Task Contracts now sit beside a typed knowledge layer. When authoring:
+
+- Link a contract to its requirement with frontmatter `satisfies: [REQ-*]`.
+- Requirement documents live in `knowledge/requirements/req-*.md` with
+  `kind: requirement`, a stable `id`, a governance `status`
+  (`proposed | accepted | superseded | deprecated | rejected` — missing status
+  fails the governance gate), `## Problem`, `## Requirements` with
+  `[REQ-<DOC>-<SUFFIX>] ... MUST ...` single-obligation clauses, optional
+  `## Scenarios` (needed for work units to become ready), `## Dependencies`,
+  and a concrete `## Source Trace`.
+- Humans change governance status with
+  `agent-spec requirements transition <ID> --to <status>` — not by hand-editing
+  frontmatter; supersession uses `requirements supersede <OLD> --by <NEW>`.
+- Check any requirement's overall position with
+  `agent-spec requirements status <ID>` (governance / execution / liveness).
 
 ## Spec File Structure
 

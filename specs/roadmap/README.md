@@ -29,6 +29,8 @@ Remaining staged contracts:
 |------|-------|-----|
 | `task-atlas-mir-layer.spec.md` | planned (Phase 2) | depends on Phase 1 |
 | `task-atlas-kll-integration.spec.md` | planned (Phase 3) | depends on Phase 1 |
+| `task-code-graph-ir-bindings.spec.md` | planned (boundary 2) | depends on atlas Phase 1 (done) |
+| `task-quality-planning-bundles.spec.md` | planned (boundary 4) | depends on boundary 2 |
 
 ## Target-Architecture Delivery Boundaries
 
@@ -38,9 +40,9 @@ architecture as five contracts:
 | Boundary | Contract |
 |----------|----------|
 | 1. Requirement governance gate + explicit transitions | `specs/task-requirement-governance-transitions.spec.md` (active) |
-| 2. Provider-neutral Code Graph IR + typed code bindings | to be staged (builds on `specs/task-rust-atlas-code-graph.spec.md`, now active) |
+| 2. Provider-neutral Code Graph IR + typed code bindings | staged: `specs/roadmap/task-code-graph-ir-bindings.spec.md` |
 | 3. Rust Atlas through the Intent-Code Linker | `specs/roadmap/task-atlas-kll-integration.spec.md` |
-| 4. Quality Providers, profiles, Execution Bundles | to be staged |
+| 4. Quality Providers, profiles, Execution Bundles | staged: `specs/roadmap/task-quality-planning-bundles.spec.md` |
 | 5. Aggregate status/evidence queries + full dogfood | first slice shipped: `specs/task-requirement-status-query.spec.md` (`requirements status <ID>`) |
 
 Use:
