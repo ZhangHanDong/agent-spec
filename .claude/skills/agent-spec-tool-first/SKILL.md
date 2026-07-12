@@ -14,7 +14,7 @@ description: |
 
 # Agent Spec Tool-First Workflow
 
-> **Version:** 3.5.0 | **Last Updated:** 2026-07-07 | **Tracks agent-spec:** 0.4.0 (KLL requirements intake)
+> **Version:** 3.5.0 | **Last Updated:** 2026-07-07 | **Tracks agent-spec:** 0.5.0 (orchestrator machine surface)
 
 You are an expert at using `agent-spec` as a CLI tool for contract-driven AI coding. Help users by:
 - **Planning**: Render task contracts with `contract`, generate plan context with `plan`
@@ -103,8 +103,12 @@ still live in `specs/`.
 | `agent-spec init --workspace` | Scaffold the canonical `knowledge/` tree (decisions/requirements/proposals/guidance/context + canon + `.agent-spec/config.yaml`). Idempotent | Once, to lay down the knowledge workspace beside `specs/` |
 | `agent-spec trace <id> [--gate]` | Trace a decision or requirement id to the specs that `satisfy:` it and report **liveness** (honored / violated / unproven / n/a). `--gate` exits 2 on violated, warns on unproven | Check whether a recorded knowledge artifact is still enforced by passing specs; use `--gate` in CI |
 | `agent-spec lint-knowledge [--format text\|json\|sarif] [--gate]` | Lint the knowledge corpus: per-doc rules + governance (id-conflict, supersession integrity, stale refs). `--gate` exits 2 on any Error | Governance gate for the knowledge base; `--format sarif` feeds GitHub Code Scanning |
-| `agent-spec requirements transition <ID> --to <status>` / `requirements supersede <ID> --by <NEW>` | Explicit human governance transitions (proposed→accepted/rejected, accepted→deprecated, atomic supersession); missing status fails `graph --gate` | Accept requirements before lowering; compilation never mutates status |
+| `agent-spec requirements transition <ID> --to <status>` / `requirements supersede <ID> --by <NEW>` | Explicit human governance transitions (proposed→accepted/rejected, accepted→deprecated, atomic supersession); missing status fails `graph --gate`; `--format json` emits digest-bearing machine output (facts only — no actor/authority fields; external systems bind approvals to digests) | Accept requirements before lowering; compilation never mutates status |
 | `agent-spec requirements status <ID>` | Three-axis report: governance / execution / liveness with spec evidence | "Where is REQ-X?" in one command |
+| `agent-spec requirements traceability <ID> [--format json\|text] [--out <file>]` | Deterministic projection of one requirement's evidence chain: clauses → satisfying specs → scenarios → bound tests → latest recorded verdicts → derived liveness; a pure read over stored trace records | Feed dashboards/orchestrators one byte-stable JSON document instead of re-deriving the join |
+| `agent-spec requirements <graph\|plan\|work-units\|test-obligations\|traceability> --out <f> --provenance <m>.json` | Emit a compilation-run manifest (v2): compiler build commit + effective config + blake3 input/output digests | Record any artifact-emitting compilation as reproducible, auditable work |
+| `agent-spec requirements verify-run --manifest <m>.json` | Replay the recorded compilation in memory and byte-compare against recorded digests; non-zero exit names every drifted output | Prove a recorded compilation still reproduces — determinism as an executable check |
+| `agent-spec requirements compile --out <dir> [--id REQ-*] [--layout agent-spec-v1\|arc-v1] [--force]` | Per-requirement bundles (requirement doc + draft spec + traceability + compilation manifest with bundle digest); atomic writes, overwrite refusal without `--force`; `arc-v1` projects reference-compatible file names over the same content | Hand orchestrators/consumers a pinned, replayable bundle; covers accepted requirements whose work unit is ready (cold-start compile path) |
 | `agent-spec requirements export --out requirements.yaml` | YAML projection of confirmed requirements (round-trip fixpoint, `--check` drift gate) | Interop with YAML-world tooling; derived, never source of truth |
 | `agent-spec requirements import/graph/work-units/draft-specs` | Convert marked PRD/issue requirement blocks into KLL artifacts, validate the graph, generate executable work units, and draft Task Contracts with `satisfies: [REQ-*]` | Use when raw product requirements need to become verifiable agent-spec work |
 | `agent-spec mcp` | Serve the knowledge layer over MCP (JSON-RPC 2.0 over stdio, read-only, deterministic) | Wire into an MCP client so agents query knowledge live |
