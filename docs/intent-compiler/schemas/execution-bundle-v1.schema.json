@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "agent-spec/intent-compiler/execution-bundle-v1",
+  "$id": "https://agent-spec.dev/schemas/agent-spec/intent-compiler/execution-bundle-v1.schema.json",
   "title": "Execution Bundle v1",
   "description": "One complete, verifiable execution context for a work unit: the unit, its contracts (embedded with digests), code bindings, quality profile (argv arrays only), required skills with provenance receipts, fast checks, and acceptance gates. Skill receipts are provenance, never acceptance evidence.",
   "type": "object",
@@ -16,67 +16,154 @@
     "acceptance_gates"
   ],
   "properties": {
-    "schema": { "const": "agent-spec/intent-compiler/execution-bundle-v1" },
-    "work_unit": { "type": "object" },
+    "schema": {
+      "const": "agent-spec/intent-compiler/execution-bundle-v1"
+    },
+    "work_unit": {
+      "type": "object"
+    },
     "contracts": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["path", "blake3", "content"],
+        "required": [
+          "path",
+          "blake3",
+          "content"
+        ],
         "additionalProperties": false,
         "properties": {
-          "path": { "type": "string" },
-          "blake3": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-          "content": { "type": "string" }
+          "path": {
+            "type": "string"
+          },
+          "blake3": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "content": {
+            "type": "string"
+          }
         }
       }
     },
-    "code_bindings": { "type": "array", "items": { "type": "object" } },
+    "code_bindings": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
     "quality_profile": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id", "role", "required", "executable", "args", "timeout_secs", "max_output_bytes"],
+        "required": [
+          "id",
+          "role",
+          "required",
+          "executable",
+          "args",
+          "timeout_secs",
+          "max_output_bytes"
+        ],
         "additionalProperties": false,
         "properties": {
-          "id": { "type": "string" },
-          "role": {
-            "enum": ["code-intelligence", "diagnostic", "verification", "transformation", "agent-guidance"]
+          "id": {
+            "type": "string"
           },
-          "required": { "type": "boolean" },
-          "executable": { "type": "string" },
-          "args": { "type": "array", "items": { "type": "string" } },
-          "cwd": { "type": "string" },
-          "timeout_secs": { "type": "integer", "minimum": 1 },
-          "max_output_bytes": { "type": "integer", "minimum": 1 }
+          "role": {
+            "enum": [
+              "code-intelligence",
+              "diagnostic",
+              "verification",
+              "transformation",
+              "agent-guidance"
+            ]
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "executable": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "timeout_secs": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "max_output_bytes": {
+            "type": "integer",
+            "minimum": 1
+          }
         }
       }
     },
-    "required_skills": { "type": "array", "items": { "type": "string" } },
+    "required_skills": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "skill_receipts": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id", "version", "source", "content_hash"],
+        "required": [
+          "id",
+          "version",
+          "source",
+          "content_hash"
+        ],
         "additionalProperties": false,
         "properties": {
-          "id": { "type": "string" },
-          "version": { "type": "string" },
-          "source": { "type": "string" },
-          "content_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          "id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "content_hash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
         }
       }
     },
-    "fast_checks": { "type": "array", "items": { "type": "string" } },
+    "fast_checks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "acceptance_gates": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["kind", "reference"],
+        "required": [
+          "kind",
+          "reference"
+        ],
         "additionalProperties": false,
         "properties": {
-          "kind": { "enum": ["lifecycle", "quality-provider"] },
-          "reference": { "type": "string" }
+          "kind": {
+            "enum": [
+              "lifecycle",
+              "quality-provider"
+            ]
+          },
+          "reference": {
+            "type": "string"
+          }
         }
       }
     }

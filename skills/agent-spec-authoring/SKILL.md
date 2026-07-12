@@ -528,7 +528,7 @@ Before handing a Contract to an Agent, verify:
 | Scenarios without `Test:` | Always add `Test:` selector | Required for mechanical verification |
 | Vague boundaries like "be careful" | Specific path globs or prohibitions | Must be mechanically checkable |
 | "should" / "might" in steps | Definitive "returns" / "is" / "becomes" | Non-deterministic wording fails lint |
-| `brief` command to preview | `contract` command | `brief` is a legacy alias |
+| `brief` command to preview | `contract` command | `brief` was removed in 1.0 |
 | Only happy path scenarios | Include exception paths (>= happy) | Edge cases are where bugs live |
 
 ## Scenario DSL Extensions
@@ -601,7 +601,7 @@ When authoring specs for the `agent-spec` project itself:
 - Put task specs under `specs/`
 - Roadmap specs go in `specs/roadmap/`, promote to `specs/` when active
 - Update tests when DSL or verification behavior changes
-- Preserve the six verdicts: `pass`, `fail`, `skip`, `uncertain`, `pending_review`
+- Preserve the five verdicts: `pass`, `fail`, `skip`, `uncertain`, `pending_review`
 - Do not let a task spec rely on implicit test-name matching
 
 ## Escalation

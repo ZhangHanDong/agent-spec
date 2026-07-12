@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "agent-spec/intent-compiler/compilation-provenance-v2",
+  "$id": "https://agent-spec.dev/schemas/agent-spec/intent-compiler/compilation-provenance-v2.schema.json",
   "title": "Compilation Run Provenance Manifest v2",
   "description": "Binds one artifact-emitting compilation run to the exact compiler build (crate version + build commit), the effective command configuration, and blake3 input/output digests. verify-run replays the recorded command and byte-compares. Deterministic facts only; v1 manifests remain valid under their own schema.",
   "type": "object",
@@ -15,17 +15,27 @@
   ],
   "additionalProperties": false,
   "properties": {
-    "manifest_version": { "const": 2 },
+    "manifest_version": {
+      "const": 2
+    },
     "schema": {
       "const": "agent-spec/intent-compiler/compilation-provenance-v2"
     },
     "tool": {
       "type": "object",
-      "required": ["name", "version", "build_commit"],
+      "required": [
+        "name",
+        "version",
+        "build_commit"
+      ],
       "additionalProperties": false,
       "properties": {
-        "name": { "const": "agent-spec" },
-        "version": { "type": "string" },
+        "name": {
+          "const": "agent-spec"
+        },
+        "version": {
+          "type": "string"
+        },
         "build_commit": {
           "type": "string",
           "description": "Git commit embedded at compiler build time, or the literal `unknown` when built outside a checkout."
@@ -47,18 +57,29 @@
       "description": "Effective command configuration, sorted by flag.",
       "items": {
         "type": "object",
-        "required": ["flag", "value"],
+        "required": [
+          "flag",
+          "value"
+        ],
         "additionalProperties": false,
         "properties": {
-          "flag": { "type": "string" },
-          "value": { "type": "string" }
+          "flag": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
         }
       }
     },
-    "input": { "$ref": "#/$defs/digestEntry" },
+    "input": {
+      "$ref": "#/$defs/digestEntry"
+    },
     "outputs": {
       "type": "array",
-      "items": { "$ref": "#/$defs/digestEntry" }
+      "items": {
+        "$ref": "#/$defs/digestEntry"
+      }
     },
     "bundle_digest": {
       "type": "string",
@@ -69,11 +90,19 @@
   "$defs": {
     "digestEntry": {
       "type": "object",
-      "required": ["path", "blake3"],
+      "required": [
+        "path",
+        "blake3"
+      ],
       "additionalProperties": false,
       "properties": {
-        "path": { "type": "string" },
-        "blake3": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        "path": {
+          "type": "string"
+        },
+        "blake3": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
       }
     }
   }

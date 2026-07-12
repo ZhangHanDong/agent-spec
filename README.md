@@ -100,7 +100,7 @@ Bundle. Skills guide generation; tool results provide acceptance evidence.
 See [Intent Compiler Architecture](docs/intent-compiler/architecture.md) for the
 target-state contracts, state machines, provider roles, and failure semantics.
 
-The primary planning surface is the **Task Contract**. The older `brief` view remains available as a compatibility alias, but new workflows should use `contract`.
+The primary planning surface is the **Task Contract**, rendered by `agent-spec contract`.
 
 ## Stability and the road to 1.0
 
@@ -114,9 +114,9 @@ promise (breaking changes only with a major version):
   (`import|export|transition|supersede|status|graph|work-units|plan|
   test-obligations|worktrees|draft-specs|questions|replay|explain-failure|
   trace-graph|traceability|verify-run|compile|bind|bundle`).
-- **Machine formats**: lifecycle/verify JSON top-level keys, the six verdicts
-  and `is_passing` semantics, schema `$id` URIs under
-  `agent-spec/requirements-compiler/` and `agent-spec/intent-compiler/`, the
+- **Machine formats**: lifecycle/verify JSON top-level keys, the five verdicts
+  (`pass`, `fail`, `skip`, `uncertain`, `pending_review`) and `is_passing`
+  semantics, schema `$id` URIs under `agent-spec/intent-compiler/`, the
   YAML dialect v1.1, compilation provenance manifests (v1 and the replayable
   v2 run manifests), the requirement-traceability projection, the compile
   bundle layouts (`agent-spec-v1`, `arc-v1`), the code-bindings and
@@ -127,7 +127,8 @@ promise (breaking changes only with a major version):
 
 Deprecation policy: deprecated surfaces keep working for one minor release
 with a notice, then leave at the next major. **`brief` (legacy alias of
-`contract`) is deprecated in 0.4.0 and will be removed in 1.0.**
+`contract`) was deprecated in 0.4.0 and is now removed; `contract` renders
+the identical output.**
 
 ## What agent-spec doesn't solve
 
@@ -528,7 +529,6 @@ For consistency, `verify` and `lifecycle` use the same precedence when `--change
 | `graph` | Generate spec dependency graph (`--format dot` or `svg`) |
 | `install-hooks` | Install git hooks for automatic checking |
 | `measure-determinism` | [experimental] Measure contract verification variance |
-| `brief` | Compatibility alias for `contract` |
 
 ## Code Live Wiki
 

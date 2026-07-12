@@ -4,6 +4,23 @@ All notable changes to `agent-spec` are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Removed
+
+- The `brief` command (deprecated 0.4.0). `agent-spec contract` renders the
+  identical output — an internal parity test keeps pinning the two shapes
+  equal.
+
+### Fixed
+
+- 1.0 machine-format audit: schema file `$id`s unified to the resolvable
+  `https://agent-spec.dev/schemas/agent-spec/intent-compiler/*.schema.json`
+  form (artifact-embedded logical ids unchanged); documentation verdict
+  counts corrected to the real five (`pass`, `fail`, `skip`, `uncertain`,
+  `pending_review`); a stale `agent-spec/requirements-compiler/` namespace
+  mention dropped from the stability promise.
+
 ## [0.6.0] - 2026-07-12
 
 The **dual-IR convergence** release: all five delivery boundaries of the

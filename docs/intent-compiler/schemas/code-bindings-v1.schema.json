@@ -1,13 +1,18 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "agent-spec/intent-compiler/code-bindings-v1",
+  "$id": "https://agent-spec.dev/schemas/agent-spec/intent-compiler/code-bindings-v1.schema.json",
   "title": "Code Bindings v1",
   "description": "Derived working data binding ready work units to code targets resolved in a provider graph. Never KLL truth: regenerate from the graph at any time; a stale graph blocks generation. Facts and digests only.",
   "type": "object",
-  "required": ["schema", "entries"],
+  "required": [
+    "schema",
+    "entries"
+  ],
   "additionalProperties": false,
   "properties": {
-    "schema": { "const": "agent-spec/intent-compiler/code-bindings-v1" },
+    "schema": {
+      "const": "agent-spec/intent-compiler/code-bindings-v1"
+    },
     "entries": {
       "type": "array",
       "items": {
@@ -21,9 +26,15 @@
         ],
         "additionalProperties": false,
         "properties": {
-          "requirement_id": { "type": "string" },
-          "work_unit_id": { "type": "string" },
-          "provider": { "type": "string" },
+          "requirement_id": {
+            "type": "string"
+          },
+          "work_unit_id": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
           "graph_fingerprint": {
             "type": "string",
             "pattern": "^[0-9a-f]{64}$",
@@ -33,14 +44,29 @@
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["node_id", "kind", "file", "provenance"],
+              "required": [
+                "node_id",
+                "kind",
+                "file",
+                "provenance"
+              ],
               "additionalProperties": false,
               "properties": {
-                "node_id": { "type": "string" },
-                "kind": { "type": "string" },
-                "file": { "type": "string" },
+                "node_id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "file": {
+                  "type": "string"
+                },
                 "provenance": {
-                  "enum": ["syn", "scip", "mir"],
+                  "enum": [
+                    "syn",
+                    "scip",
+                    "mir"
+                  ],
                   "description": "Fact origin inside the provider graph."
                 }
               }

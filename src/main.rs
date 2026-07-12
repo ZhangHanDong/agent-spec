@@ -222,14 +222,6 @@ enum Commands {
         #[arg(long, default_value = "auto")]
         review_mode: String,
     },
-    /// Compatibility alias for the contract view
-    Brief {
-        /// Spec file
-        spec: PathBuf,
-        /// Output format: text (prompt), json
-        #[arg(long, default_value = "text")]
-        format: String,
-    },
     /// Render an explicit Task Contract for agent execution
     Contract {
         /// Spec file
@@ -991,7 +983,6 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             resume,
             &review_mode,
         ),
-        Commands::Brief { spec, format } => cmd_brief(&spec, &format),
         Commands::Contract { spec, format } => cmd_contract(&spec, &format),
         Commands::Guard {
             spec_dir,
@@ -2197,14 +2188,6 @@ fn topological_sort_scenarios(scenarios: &[crate::spec_core::Scenario]) -> Vec<u
 }
 
 // ── Brief (agent prompt generation) ─────────────────────────────
-
-fn cmd_brief(spec: &Path, format: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let gw = crate::spec_gateway::SpecGateway::load(spec)?;
-    eprintln!("warning: `agent-spec brief` is a compatibility alias; prefer `agent-spec contract`");
-    print!("{}", render_brief_output(&gw, format)?);
-
-    Ok(())
-}
 
 fn cmd_contract(spec: &Path, format: &str) -> Result<(), Box<dyn std::error::Error>> {
     let gw = crate::spec_gateway::SpecGateway::load(spec)?;

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "agent-spec/intent-compiler/requirement-traceability-v1",
+  "$id": "https://agent-spec.dev/schemas/agent-spec/intent-compiler/requirement-traceability-v1.schema.json",
   "title": "Requirement Traceability Projection v1",
   "description": "Deterministic projection of one requirement's evidence chain: clauses, satisfying specs, scenarios, bound test selectors, latest recorded verdicts, and derived liveness. A pure read over stored records; carries facts and digests only.",
   "type": "object",
@@ -19,21 +19,41 @@
     "schema": {
       "const": "agent-spec/intent-compiler/requirement-traceability-v1"
     },
-    "id": { "type": "string" },
-    "title": { "type": "string" },
-    "governance": {
-      "enum": ["proposed", "accepted", "superseded", "deprecated", "rejected", "missing"]
+    "id": {
+      "type": "string"
     },
-    "source": { "type": "string" },
+    "title": {
+      "type": "string"
+    },
+    "governance": {
+      "enum": [
+        "proposed",
+        "accepted",
+        "superseded",
+        "deprecated",
+        "rejected",
+        "missing"
+      ]
+    },
+    "source": {
+      "type": "string"
+    },
     "clauses": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id", "text"],
+        "required": [
+          "id",
+          "text"
+        ],
         "additionalProperties": false,
         "properties": {
-          "id": { "type": "string" },
-          "text": { "type": "string" }
+          "id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
         }
       }
     },
@@ -41,24 +61,51 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["path", "name", "scenarios"],
+        "required": [
+          "path",
+          "name",
+          "scenarios"
+        ],
         "additionalProperties": false,
         "properties": {
-          "path": { "type": "string" },
-          "name": { "type": "string" },
+          "path": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
           "scenarios": {
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["name"],
+              "required": [
+                "name"
+              ],
               "additionalProperties": false,
               "properties": {
-                "name": { "type": "string" },
-                "test_selector": { "type": ["string", "null"] },
+                "name": {
+                  "type": "string"
+                },
+                "test_selector": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "latest_verdict": {
                   "anyOf": [
-                    { "type": "null" },
-                    { "enum": ["pass", "fail", "skip", "uncertain", "pending_review"] }
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "enum": [
+                        "pass",
+                        "fail",
+                        "skip",
+                        "uncertain",
+                        "pending_review"
+                      ]
+                    }
                   ]
                 }
               }
@@ -66,14 +113,36 @@
           },
           "latest_verdict": {
             "anyOf": [
-              { "type": "null" },
-              { "enum": ["pass", "fail", "skip", "uncertain", "pending_review"] }
+              {
+                "type": "null"
+              },
+              {
+                "enum": [
+                  "pass",
+                  "fail",
+                  "skip",
+                  "uncertain",
+                  "pending_review"
+                ]
+              }
             ]
           }
         }
       }
     },
-    "latest_run": { "type": ["string", "null"] },
-    "liveness": { "enum": ["honored", "violated", "unproven", "na"] }
+    "latest_run": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "liveness": {
+      "enum": [
+        "honored",
+        "violated",
+        "unproven",
+        "na"
+      ]
+    }
   }
 }
