@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "work_unit_id": "WU-REQ-NOTE-CREATE",
+      "requirement_id": "REQ-NOTE-CREATE",
+      "batch": 1,
+      "base_branch": "main",
+      "branch": "feat/wu-req-note-create",
+      "path": "../agent-spec-worktrees/wu-req-note-create",
+      "spec_path": "fixtures/requirements-noteapp/specs/task-req-note-create.spec.md",
+      "depends_on": []
+    },
+    {
+      "work_unit_id": "WU-REQ-NOTE-LIST",
+      "requirement_id": "REQ-NOTE-LIST",
+      "batch": 2,
+      "base_branch": "main",
+      "branch": "feat/wu-req-note-list",
+      "path": "../agent-spec-worktrees/wu-req-note-list",
+      "spec_path": "fixtures/requirements-noteapp/specs/task-req-note-list.spec.md",
+      "depends_on": [
+        "REQ-NOTE-CREATE"
+      ]
+    }
+  ],
+  "diagnostics": []
+}

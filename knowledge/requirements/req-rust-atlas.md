@@ -11,12 +11,7 @@ tags: [atlas, code-graph, static-analysis, mcp]
 
 ## Problem
 
-Agents working on Rust projects rediscover structure by grepping text, reading
-whole files, and recompiling to find errors. That loop wastes tokens and guesses
-at facts the toolchain can produce deterministically. Agents need a queryable,
-incrementally invalidated project graph — symbols, module tree, impl relations,
-references — built from stable-toolchain static analysis and exposed through
-CLI and MCP surfaces.
+Agents working on Rust projects rediscover structure by grepping text, reading whole files, and recompiling to find errors. That loop wastes tokens and guesses at facts the toolchain can produce deterministically. Agents need a queryable, incrementally invalidated project graph — symbols, module tree, impl relations, references — built from stable-toolchain static analysis and exposed through CLI and MCP surfaces.
 
 ## Requirements
 
@@ -64,8 +59,31 @@ CLI and MCP surfaces.
 
 [REQ-RUST-ATLAS-NEGATIVE] Satisfying specs MUST include negative scenarios covering unknown symbol lookups, queries before any build, stale graphs with rebuild disabled, missing SCIP indexes, and unparsable source files.
 
+## Scenarios
+
+Scenario: Build without rust-analyzer present
+  Given no SCIP index is supplied and rust-analyzer is absent
+  When `atlas build` runs
+  Then the build succeeds with only provenance `syn` edges and metadata records the `scip` capability as absent
+
+Scenario: Frozen query on a stale graph
+  Given a built graph and one modified source file
+  When `atlas query` runs with `--frozen`
+  Then the result includes a `stale` field listing the modified file and no shard is rewritten
+
+Scenario: MCP tool without a built graph
+  Given a project with no built graph
+  When the `atlas_status` tool is invoked
+  Then the tool returns a structured error payload naming `atlas build` and the server does not panic
+
+Scenario: Syntax error in one source file
+  Given the analyzed crate contains one file with a syntax error
+  When `atlas build` runs
+  Then the command exits 0, the broken file is recorded as an `unparsed` diagnostic, and nodes from all other files are present
+
 ## Source Trace
 
+- requirements conversation: atlas planning session 2026-07-11, human-confirmed
 - design: docs/superpowers/specs/2026-07-11-rust-atlas-design.md
 - plan: docs/superpowers/plans/2026-07-11-rust-atlas-code-graph.md
 - staged contract: specs/roadmap/task-rust-atlas-code-graph.spec.md

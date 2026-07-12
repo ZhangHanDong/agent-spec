@@ -1,0 +1,43 @@
+{
+  "provider": "rust-cargo",
+  "root": "fixtures/wiki-mini",
+  "packages": [
+    {
+      "id": "path+.#0.1.0",
+      "name": "wiki-mini",
+      "version": "0.1.0",
+      "path": ".",
+      "language": "rust",
+      "kind": "workspace-member"
+    }
+  ],
+  "targets": [
+    {
+      "package": "wiki-mini",
+      "name": "wiki_mini",
+      "kind": "lib",
+      "src_path": "src/lib.rs"
+    }
+  ],
+  "dependencies": [],
+  "modules": [
+    {
+      "name": "lib",
+      "path": "src/lib.rs",
+      "kind": "rust-module"
+    }
+  ],
+  "module_edges": [],
+  "entrypoints": [
+    {
+      "name": "wiki_mini",
+      "path": "src/lib.rs",
+      "kind": "lib"
+    }
+  ],
+  "source_files": [
+    "Cargo.toml",
+    "src/lib.rs"
+  ],
+  "diagnostics": []
+}

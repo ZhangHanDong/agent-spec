@@ -14,6 +14,7 @@ tags: [bootstrap, roadmap, planning]
 - 未来阶段的 roadmap task specs 存放在 `specs/roadmap/`
 - roadmap specs 在被提升到顶层 `specs/` 前，不进入默认 top-level guard
 - roadmap 按 concern 分阶段拆分：Phase 0 Contract fidelity、Phase 1 review loop、Phase 2 traceability、Phase 3 governance、Phase 4 AI、Phase 5 ecosystem、Phase 6 advanced verification
+- 已验证完成的 roadmap specs 通过 `agent-spec archive` 移入 `.agent-spec/archive/specs/`（带 lifecycle 证据），阶段合同内容在归档位置继续可查
 - 嵌套 roadmap specs 仍应继承顶层 `specs/project.spec`
 
 ## 边界
@@ -42,7 +43,7 @@ tags: [bootstrap, roadmap, planning]
   测试:
     包: agent-spec
     过滤: test_roadmap_phase_zero_and_one_specs_exist_and_capture_priorities
-  假设 仓库内存在 roadmap task specs
+  假设 仓库内存在已归档的 phase task specs（`.agent-spec/archive/specs/`）
   当 用户查看前两个 phase spec
   那么 Phase 0 优先修 Contract fidelity
   并且 Phase 1 聚焦 explain、markdown PR 摘要与安全版 stamp
@@ -51,7 +52,7 @@ tags: [bootstrap, roadmap, planning]
   测试:
     包: agent-spec
     过滤: test_roadmap_later_phase_specs_exist_and_are_split_by_concern
-  假设 用户继续查看后续 phase spec
+  假设 用户继续查看已归档的后续 phase spec
   当 用户对比 Phase 2 到 Phase 6
   那么 过程追踪、Spec 治理、AI 扩展、生态集成与高级验证被拆成独立任务
   并且 `phase:` front matter 没有被纳入主路线
