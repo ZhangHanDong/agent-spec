@@ -8,6 +8,18 @@ All notable changes to `agent-spec` are documented here. Format follows
 
 ### Added
 
+- Reference-compiler parity layout (`REQ-REFERENCE-COMPILER-PARITY`):
+  `requirements compile --out <dir>` emits per-requirement bundles
+  (requirement document, draft task spec, traceability projection, and a
+  compilation manifest carrying per-artifact digests plus a bundle digest)
+  in the provider-neutral `agent-spec-v1` layout; `--layout arc-v1` projects
+  the same content under reference-compatible file names
+  (`<id>.requirements.md`, `<id>.spec.md`, `<id>.arc.traceability.json`,
+  `<id>.arc.compilation.json`). Writes are atomic (a failed render writes
+  nothing) and refuse to overwrite without `--force`. `verify-run` replays
+  compile manifests per artifact. A mechanical vocabulary check keeps the
+  reference token out of core schemas and the neutral layout.
+
 - Provenance run hardening (`REQ-PROVENANCE-RUN-HARDENING`): compilation-run
   manifests v2 record the exact compiler build (crate version + git commit
   embedded at build time, `unknown` fallback) and the effective command

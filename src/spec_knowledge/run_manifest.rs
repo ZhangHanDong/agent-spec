@@ -49,6 +49,9 @@ pub struct RunManifest {
     /// Knowledge corpus digest at record time.
     pub input: DigestEntry,
     pub outputs: Vec<DigestEntry>,
+    /// Bundle digest (blake3 over sorted `path:digest` lines); compile only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bundle_digest: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -156,6 +159,7 @@ pub fn write_run_provenance(
             path: out_path.to_string_lossy().replace('\\', "/"),
             blake3: blake3_hex(&output_bytes),
         }],
+        bundle_digest: None,
     };
     let mut text = serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?;
     text.push('\n');
@@ -184,14 +188,32 @@ pub fn verify_run(manifest_path: &Path) -> Result<VerifyRunReport, String> {
     }
     let manifest: RunManifest = serde_json::from_value(value)
         .map_err(|e| format!("{} is not a v2 run manifest: {e}", manifest_path.display()))?;
-    let fresh = render_run_artifact(&manifest.command, &manifest.config)?;
-    let fresh_digest = blake3_hex(fresh.as_bytes());
-    let drifted = manifest
-        .outputs
-        .iter()
-        .filter(|output| output.blake3 != fresh_digest)
-        .map(|output| output.path.clone())
-        .collect();
+    let drifted = if manifest.command == crate::spec_knowledge::COMPILE_COMMAND {
+        // Bundles have several content artifacts; replay each by its
+        // bundle-relative path. The manifest artifact itself is derived from
+        // the content digests, so content parity covers it.
+        let fresh = crate::spec_knowledge::render_bundle_artifacts(&manifest.config)?;
+        manifest
+            .outputs
+            .iter()
+            .filter(|output| {
+                fresh
+                    .iter()
+                    .find(|(path, _)| path == &output.path)
+                    .is_none_or(|(_, content)| blake3_hex(content.as_bytes()) != output.blake3)
+            })
+            .map(|output| output.path.clone())
+            .collect()
+    } else {
+        let fresh = render_run_artifact(&manifest.command, &manifest.config)?;
+        let fresh_digest = blake3_hex(fresh.as_bytes());
+        manifest
+            .outputs
+            .iter()
+            .filter(|output| output.blake3 != fresh_digest)
+            .map(|output| output.path.clone())
+            .collect()
+    };
     Ok(VerifyRunReport {
         command: manifest.command,
         manifest: manifest_path.to_string_lossy().into_owned(),

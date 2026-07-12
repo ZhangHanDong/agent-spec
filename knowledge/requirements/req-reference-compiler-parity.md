@@ -2,7 +2,7 @@
 kind: requirement
 id: REQ-REFERENCE-COMPILER-PARITY
 title: "Reference Compiler Parity Layout"
-status: proposed
+status: accepted
 liveness: auto
 tags: [intent-compiler, parity, compat, layout]
 ---

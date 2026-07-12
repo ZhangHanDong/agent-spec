@@ -1,0 +1,24 @@
+requirements:
+  - id: parity-booking
+    title: "Parity Booking"
+    type: FOLDER
+    description: "Reference-shaped booking requirement tree for parity checks."
+    status: accepted
+    scenarios:
+      - name: "booking succeeds"
+        given: "an available time slot"
+        when: "a visitor books the slot"
+        then: "the slot is reserved and confirmed"
+      - name: "double booking is rejected"
+        given: "a slot that is already reserved"
+        when: "a second visitor books the same slot"
+        then: "the booking is rejected with a conflict"
+    children:
+      - id: reserve
+        title: "Reserve Slot"
+        type: ATOMIC
+        statement: "The system MUST reserve an available slot exactly once."
+      - id: conflict
+        title: "Reject Conflicts"
+        type: ATOMIC
+        statement: "The system MUST reject a booking for an already-reserved slot."

@@ -670,6 +670,28 @@ enum RequirementCommands {
         #[arg(long)]
         provenance: Option<PathBuf>,
     },
+    /// Compile per-requirement bundles (requirement doc, draft spec,
+    /// traceability, compilation manifest) into a target directory
+    Compile {
+        #[arg(long, default_value = "knowledge")]
+        knowledge: PathBuf,
+        #[arg(long, default_value = "specs")]
+        specs: PathBuf,
+        #[arg(long, default_value = ".agent-spec/trace")]
+        trace_dir: PathBuf,
+        /// Target directory for the bundles
+        #[arg(long)]
+        out: PathBuf,
+        /// Restrict to these requirement ids (default: every accepted requirement)
+        #[arg(long)]
+        id: Vec<String>,
+        /// Bundle layout: agent-spec-v1 (neutral, default) | arc-v1 (edge compat)
+        #[arg(long, default_value = "agent-spec-v1")]
+        layout: String,
+        /// Overwrite existing bundle files
+        #[arg(long)]
+        force: bool,
+    },
     /// Replay a recorded compilation-run manifest and byte-compare outputs
     VerifyRun {
         /// Path to a compilation-provenance-v2 manifest
@@ -3553,6 +3575,30 @@ fn cmd_requirements(action: RequirementCommands) -> Result<(), Box<dyn std::erro
             provenance,
         } => {
             cmd_requirements_work_units(&knowledge, out.as_deref(), &format, provenance.as_deref())
+        }
+        RequirementCommands::Compile {
+            knowledge,
+            specs,
+            trace_dir,
+            out,
+            id,
+            layout,
+            force,
+        } => {
+            let layout = crate::spec_knowledge::BundleLayout::parse(&layout)?;
+            let compiled = crate::spec_knowledge::compile_bundles(
+                &knowledge, &specs, &trace_dir, &out, &id, layout, force,
+            )?;
+            for bundle in &compiled {
+                println!(
+                    "compiled {}: {} files (bundle {})",
+                    bundle.requirement_id,
+                    bundle.files.len(),
+                    bundle.bundle_digest
+                );
+            }
+            println!("bundles written: {} -> {}", compiled.len(), out.display());
+            Ok(())
         }
         RequirementCommands::VerifyRun { manifest, format } => {
             let report = crate::spec_knowledge::verify_run(&manifest)?;

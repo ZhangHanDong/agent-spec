@@ -38,7 +38,8 @@
         "requirements plan",
         "requirements work-units",
         "requirements test-obligations",
-        "requirements traceability"
+        "requirements traceability",
+        "requirements compile"
       ]
     },
     "config": {
@@ -58,6 +59,11 @@
     "outputs": {
       "type": "array",
       "items": { "$ref": "#/$defs/digestEntry" }
+    },
+    "bundle_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "blake3 over the bundle's sorted `path:digest` lines; present on compile manifests only."
     }
   },
   "$defs": {

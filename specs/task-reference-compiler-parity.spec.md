@@ -94,7 +94,7 @@ Scenario: A failing render writes nothing
   Test:
     Filter: test_compile_atomic_failure_leaves_no_partial_bundle
     Level: integration
-  Given a fixture requirement whose traceability projection fails validation
+  Given an accepted fixture requirement whose draft spec cannot render
   When `requirements compile` runs
   Then the exit code is non-zero
   And the target directory contains no file from the failed run
