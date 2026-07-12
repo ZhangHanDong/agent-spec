@@ -4,7 +4,13 @@ All notable changes to `agent-spec` are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.5.0] - 2026-07-12
+
+The **orchestrator machine surface** release: agent-spec becomes consumable as
+a deterministic compiler by any orchestrator — digest-bearing governance JSON,
+a traceability projection, replayable v2 provenance, and per-requirement
+compile bundles with an `arc-v1` reference-compat layout. Per ADR-001 the core
+stays orchestrator-neutral: facts and digests only, approvals live outside.
 
 ### Added
 

@@ -104,7 +104,7 @@ The primary planning surface is the **Task Contract**. The older `brief` view re
 
 ## Stability and the road to 1.0
 
-0.4.0 stabilizes the surfaces below; 1.0 will turn them into a compatibility
+0.5.0 stabilizes the surfaces below; 1.0 will turn them into a compatibility
 promise (breaking changes only with a major version):
 
 - **CLI commands and flags**: `init`, `parse`, `lint`, `contract`, `lifecycle`,
@@ -113,11 +113,13 @@ promise (breaking changes only with a major version):
   `mcp`, `plan`, `wiki *`, `atlas *`, and the `requirements` family
   (`import|export|transition|supersede|status|graph|work-units|plan|
   test-obligations|worktrees|draft-specs|questions|replay|explain-failure|
-  trace-graph`).
+  trace-graph|traceability|verify-run|compile`).
 - **Machine formats**: lifecycle/verify JSON top-level keys, the six verdicts
   and `is_passing` semantics, schema `$id` URIs under
   `agent-spec/requirements-compiler/` and `agent-spec/intent-compiler/`, the
-  YAML dialect v1.1, compilation provenance manifests, and the atlas graph
+  YAML dialect v1.1, compilation provenance manifests (v1 and the replayable
+  v2 run manifests), the requirement-traceability projection, the compile
+  bundle layouts (`agent-spec-v1`, `arc-v1`), and the atlas graph
   `schema_version`.
 - **Governance semantics**: the requirement state machine, the execution
   ladder, and derived (never stored) liveness.
