@@ -5,13 +5,100 @@
 [![CI](https://github.com/ZhangHanDong/agent-spec/actions/workflows/contract-guard.yml/badge.svg)](https://github.com/ZhangHanDong/agent-spec/actions/workflows/contract-guard.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-`agent-spec` is an AI-native BDD/spec verification tool for task execution.
+`agent-spec` is an **intent compiler（意图编译器）** for AI agent coding: it compiles
+human intent — through structured requirements as the intermediate representation
+(IR) — into verifiable Task Contracts, then mechanically verifies the implementation
+against them. BDD/spec verification is the backend of that compiler.
 
-The core idea is simple:
+The compilation pipeline:
 
-- humans review the contract
-- agents implement against the contract
-- the machine verifies whether the code satisfies the contract
+- **intent** (PRDs, issues, conversations) is captured as structured **requirements** — the IR
+- requirements lower into **Task Contracts** — the verifiable target
+- agents implement against the contract; the machine verifies the code satisfies it
+- **liveness tracing** keeps compiled knowledge honest after the fact
+
+The core review loop stays simple: humans review the contract, agents implement
+against the contract, the machine verifies whether the code satisfies the contract.
+
+## Architecture: the Intent Compiler
+
+> Current pipeline below; the staged **target architecture** (Requirement Governance Gate, Code Graph IR, Intent-Code Linker, Quality Planning, Execution Bundles) lives in [`docs/intent-compiler/architecture.md`](docs/intent-compiler/architecture.md).
+
+```mermaid
+flowchart TD
+    subgraph SRC["源 · Human Intent"]
+        A["PRD · Issues · 对话"]
+    end
+
+    subgraph FE["前端 · Intake"]
+        B["agent-spec-intent-compiler skill<br/>AI drafts Candidate Requirement Blocks,<br/>a human reviews and accepts"]
+        C["agent-spec requirements import<br/>deterministic — marked blocks or YAML dialect"]
+        CG{"Requirement Governance Gate (planned strict gate)<br/>proposed → accepted / rejected"}
+    end
+
+    subgraph IR["中间表示 · Requirement IR"]
+        D["accepted knowledge/requirements/*.md<br/>REQ-* clauses · MUST / SHOULD / MAY"]
+        E["lint-knowledge --gate<br/>EARS · ISO-29148 · governance"]
+        F["requirements graph --gate<br/>dependency DAG validation"]
+    end
+
+    subgraph PIR["程序中间表示 · Code Graph IR (planned)"]
+        P["Language code-intelligence providers<br/>Rust Atlas · future providers"]
+        PG["derived project graph<br/>symbols · impls · references · calls"]
+        P --> PG
+    end
+
+    subgraph ME["中端 · Lowering & Planning"]
+        G["requirements work-units<br/>executable or blocked units"]
+        X["Code Grounding / Intent-Code Linker (planned)<br/>REQ × work-unit × code bindings"]
+        K["Task Contracts (specs/*.spec.md)<br/>satisfies: REQ-* · Boundaries · planned Symbols"]
+        H["requirements plan --gate<br/>REQ × work-unit × spec DAG<br/>code bindings planned"]
+        I["requirements test-obligations<br/>spec-derived, code-independent"]
+        J["requirements worktrees<br/>parallel scheduling manifest"]
+        QP["Quality Planning (planned)<br/>toolchain + required skills"]
+        EB["Execution Bundle (planned)<br/>Contract + bindings + tools + skills"]
+    end
+
+    subgraph BE["后端 · Verifiable Target"]
+        L["agent implements within Boundaries"]
+        M["lifecycle: lint → structural →<br/>boundaries → bound tests"]
+        QT["Quality providers (planned)<br/>clippy · rustfmt · deny · miri · third-party"]
+    end
+
+    subgraph LK["链接 · Liveness"]
+        N["trace REQ-* --gate<br/>honored · violated · unproven"]
+        O["agent-spec mcp<br/>read-only knowledge serving"]
+    end
+
+    A --> B --> C --> CG
+    CG -->|accepted| D
+    CG -->|rejected| R["historical, non-executable"]
+    D --> E --> F --> G --> X --> K --> H --> QP --> EB --> L
+    PG --> X
+    PG --> M
+    H -.-> I
+    H -.-> J
+    QT --> M
+    L --> M --> N
+    N -. "liveness recomputed from verdicts,<br/>never stored" .-> D
+    D -.-> O
+    F -.-> Q["requirements questions<br/>deterministic clarification prompts"]
+    Q -. "human resolves ambiguity" .-> D
+```
+
+AI participates only at the edges — drafting candidate requirements and implementing
+contracts. Every gate in between (`lint-knowledge`, `graph`, `plan`, `lifecycle`,
+`trace`) is deterministic and model-free, and human acceptance sits at both ends:
+requirement review on the way in, Contract Acceptance on the way out.
+
+The nodes marked `planned` keep two different facts separate:
+Requirement IR records what the system must do; Code Graph IR records what the
+current program is. A provider-neutral Intent-Code Linker grounds accepted work
+units in code without turning derived code facts into KLL truth. Quality Planning
+then resolves deterministic tools and required agent skills into an Execution
+Bundle. Skills guide generation; tool results provide acceptance evidence.
+See [Intent Compiler Architecture](docs/intent-compiler/architecture.md) for the
+target-state contracts, state machines, provider roles, and failure semantics.
 
 The primary planning surface is the **Task Contract**. The older `brief` view remains available as a compatibility alias, but new workflows should use `contract`.
 
@@ -114,11 +201,13 @@ Or study the examples in [`examples/`](examples).
 
 ### AI Agent Skills
 
-This repo ships three agent skills under [`skills/`](skills):
+This repo ships five agent skills under [`skills/`](skills):
 
 - **`agent-spec-tool-first`**: the default integration path — tells the agent to use `agent-spec` as a CLI tool and drive tasks through `contract`, `lifecycle`, and `guard`.
 - **`agent-spec-authoring`**: the authoring path — helps write or revise Task Contracts in the DSL.
 - **`agent-spec-estimate`**: the estimation path — maps Task Contract elements (scenarios, decisions, boundaries) to round-based effort estimates.
+- **`agent-spec-intent-compiler`**: the intake path — drafts human-reviewed Candidate Requirement Blocks from unstructured PRDs/issues for the deterministic intent-compiler pipeline to import.
+- **`agent-spec-wiki`**: the working-memory path — maintains the repo-local code live wiki (stale detection, source-traced articles, architecture inventories).
 
 For rewrite/parity work, the authoring path should explicitly bind observable behavior before coding:
 
@@ -135,7 +224,7 @@ See [`examples/rewrite-parity-contract.spec`](examples/rewrite-parity-contract.s
 ./install-skills.sh
 ```
 
-This installs the `agent-spec` CLI via `cargo install` (if not already present) and copies all three skills to `~/.claude/skills/`.
+This installs the `agent-spec` CLI via `cargo install` (if not already present) and copies all five skills to `~/.claude/skills/`.
 
 #### Manual install for Claude Code
 
@@ -144,6 +233,8 @@ This installs the `agent-spec` CLI via `cargo install` (if not already present) 
 cp -r skills/agent-spec-tool-first ~/.claude/skills/
 cp -r skills/agent-spec-authoring ~/.claude/skills/
 cp -r skills/agent-spec-estimate ~/.claude/skills/
+cp -r skills/agent-spec-intent-compiler ~/.claude/skills/
+cp -r skills/agent-spec-wiki ~/.claude/skills/
 ```
 
 Or symlink for auto-updates:
@@ -152,6 +243,8 @@ Or symlink for auto-updates:
 ln -s "$(pwd)/skills/agent-spec-tool-first" ~/.claude/skills/
 ln -s "$(pwd)/skills/agent-spec-authoring" ~/.claude/skills/
 ln -s "$(pwd)/skills/agent-spec-estimate" ~/.claude/skills/
+ln -s "$(pwd)/skills/agent-spec-intent-compiler" ~/.claude/skills/
+ln -s "$(pwd)/skills/agent-spec-wiki" ~/.claude/skills/
 ```
 
 #### Install for Codex
@@ -390,6 +483,12 @@ For consistency, `verify` and `lifecycle` use the same precedence when `--change
 | `check-structure` | Mechanical structural check: forbid a reference within a file glob |
 | `audit` | Audit a spec library's health (unproven rules, open questions) |
 | `discover` | Reverse-engineer a draft task spec from a codebase's tests (`--from-codebase`) |
+| `init --workspace` | Scaffold the canonical `knowledge/` tree for KLL artifacts |
+| `requirements` | Import PRD/issue requirement blocks, validate a requirement graph, generate work units, and draft specs |
+| `wiki` | Generate, check, and export a local-first source trace wiki from code, KLL artifacts, specs, traces, and docs |
+| `trace` | Trace a decision/requirement id to satisfying specs and report derived liveness |
+| `lint-knowledge` | Lint the knowledge corpus and gate malformed or inconsistent artifacts |
+| `mcp` | Serve specs, knowledge, guidance, context, and live liveness over read-only MCP |
 | `contract` | Render the Task Contract view |
 | `plan` | Generate plan context: Contract + Codebase scan + Task Sketch |
 | `lifecycle` | Run lint + verify + report (the main quality gate) |
@@ -402,6 +501,170 @@ For consistency, `verify` and `lifecycle` use the same precedence when `--change
 | `install-hooks` | Install git hooks for automatic checking |
 | `measure-determinism` | [experimental] Measure contract verification variance |
 | `brief` | Compatibility alias for `contract` |
+
+## Code Live Wiki
+
+agent-spec can maintain a repo-local code live wiki from code, KLL artifacts,
+Task Contracts, docs, archive summaries, and lifecycle trace evidence. The
+default location is `.agent-spec/wiki`.
+
+```bash
+agent-spec wiki init --code . --wiki .agent-spec/wiki
+agent-spec wiki seed --code . --wiki .agent-spec/wiki
+agent-spec wiki seed --code . --wiki .agent-spec/wiki --check
+agent-spec wiki status --code . --wiki .agent-spec/wiki
+agent-spec wiki query "intent compiler" --wiki .agent-spec/wiki
+agent-spec wiki inspect src/spec_wiki/live.rs --code . --wiki .agent-spec/wiki
+agent-spec wiki inventory --code . --format json
+agent-spec wiki inventory --code . --format mermaid
+agent-spec wiki project-map --code . --wiki .agent-spec/wiki --format json --out .agent-spec/wiki/architecture/project-map.json
+agent-spec wiki project-map --code . --wiki .agent-spec/wiki --format mermaid --out .agent-spec/wiki/architecture/project-map.mmd
+agent-spec wiki inspect-project brain-rs --code . --wiki .agent-spec/wiki --format text
+agent-spec wiki index --wiki .agent-spec/wiki
+agent-spec wiki lint --code . --wiki .agent-spec/wiki
+agent-spec wiki check --code . --wiki .agent-spec/wiki
+agent-spec wiki meta update --code . --wiki .agent-spec/wiki
+```
+
+Wiki pages are maintained agent working memory, not KLL truth and not published
+human docs. Track `.agent-spec/wiki/**` in git, but keep `.agent-spec/runs`,
+`.agent-spec/trace`, temporary files, and other runtime state ignored. Each
+article declares `source_files`; `wiki status` reports stale pages when those
+files change, including dirty, staged, and untracked worktree changes. Use
+`wiki query` before broad source reading and `wiki inspect <path>` to find the
+wiki pages, KLL requirements, and task specs tied to a source or knowledge path.
+
+`wiki seed` creates focused draft module, concept, and decision pages without
+overwriting maintained articles. `wiki inventory` emits Rust architecture inventory,
+package/module data, and Mermaid graphs from Cargo metadata when available; non-Rust
+projects still get generic source inventory, status, index, lint, and metadata
+support. `wiki check` combines index freshness, lint, and current worktree stale
+status; in CI clean checkouts it acts as the tracked wiki structure gate.
+
+### Cross-Project Wiki
+
+Use project articles when the main repository depends on another important
+project. Project articles live under `.agent-spec/wiki/projects/*.md` and use
+stable `project_id` values. Use flow articles under `.agent-spec/wiki/flows/*.md`
+to document working mechanisms and data flow between projects.
+Project and flow articles must be regular Markdown files; symlinks are rejected
+so discovery, copying, and stale checks use one deterministic file boundary.
+Every field shown in the examples is required and non-empty. Invalid
+frontmatter lines, duplicate keys, and incomplete articles fail project-map
+validation instead of producing partial architecture records.
+
+`source_files` stay repo-local and participate in stale article checks.
+`external_sources` record outside project paths, URLs, or repo identifiers as
+evidence labels; agent-spec performs no external repository scan by default.
+
+Project article example:
+
+```md
+---
+title: "brain-rs"
+type: external-project
+project_id: brain-rs
+repo: rust-agents/brain-rs
+role: "Context provider"
+interfaces: [cli, json]
+protocols: [stdio]
+status: active
+source_files:
+  - src/integration/brain.rs
+external_sources:
+  - https://example.invalid/rust-agents/brain-rs
+---
+# brain-rs
+```
+
+Flow article example:
+
+```md
+---
+title: "agent-spec to brain-rs context flow"
+type: project-flow
+flow_id: agent-spec-to-brain
+projects:
+  - agent-spec
+  - brain-rs
+kind: calls
+protocols: [stdio, json]
+requirements:
+  - REQ-CROSS-PROJECT-WIKI
+specs:
+  - specs/task-cross-project-wiki.spec.md
+source_files:
+  - src/integration/brain.rs
+external_sources:
+  - https://example.invalid/rust-agents/brain-rs/src/lib.rs
+---
+# agent-spec to brain-rs context flow
+```
+
+The `projects` list is ordered; each adjacent pair becomes a directed edge.
+`requirements` and `specs` resolve inside the current repository. Put paths,
+URLs, and repository identifiers from outside the current repository in
+`external_sources` only.
+
+The `wiki project-map` command builds project-map JSON or Mermaid output under
+`.agent-spec/wiki/architecture/`. The maintained truth remains the project
+articles and flow articles; `project-map.json` and `project-map.mmd` are derived
+artifacts. Use `wiki inspect-project <project-id>` to list the project article,
+related flows, protocols, requirements, specs, and external source labels.
+`wiki lint` and `wiki check` also require both derived artifacts to match the
+maintained articles exactly.
+
+Archive old wiki material instead of deleting it abruptly. Move obsolete article
+content into a `learnings/` or `archive/` summary page that preserves source
+links and the reason it is no longer active. Non-goals: no built-in LLM
+long-form generation, no web UI, and no replacement for `knowledge/` as the
+durable requirements/decision layer.
+
+## Requirements Intake And Work Units
+
+Use the requirements workflow when the source material starts as a PRD or issue, but the implementation should be governed by long-lived KLL requirements and Task Contracts.
+
+If the PRD or issue is unstructured prose, use the `agent-spec-intent-compiler` skill first. The skill drafts human-reviewed Candidate Requirement Block entries with source excerpts, confidence, scenarios, and open questions; the CLI only imports those accepted blocks and never silently interprets raw prose.
+
+```bash
+agent-spec requirements import --from docs/prd.md --out knowledge/requirements
+agent-spec requirements import --from requirements.yaml --out knowledge/requirements
+agent-spec requirements transition REQ-101 --to accepted   # human governance action
+agent-spec lint-knowledge --knowledge knowledge --gate
+agent-spec requirements graph --knowledge knowledge --format json --gate
+agent-spec requirements work-units --knowledge knowledge --out .agent-spec/work_units.json
+agent-spec requirements draft-specs --knowledge knowledge --out specs/generated
+# Draft specs contain pending Test selectors; this lifecycle command is expected to fail until a human replaces them with real tests.
+agent-spec lifecycle specs/generated/task-req-101-user-login.spec.md --code .
+agent-spec trace REQ-101 --knowledge knowledge --specs specs --code .
+```
+
+Generated drafts are review artifacts. Their `Test:` selectors start with `pending_...`; `agent-spec lifecycle` reports those nonexistent selectors as `fail`. Replace each pending selector with a real test name before treating the draft as executable or using `trace` as acceptance evidence.
+
+PRD/issue import is explicit. Raw prose is not silently reinterpreted; wrap stable requirements in an `agent-spec:requirement` block:
+
+```md
+<!-- agent-spec:requirement id=REQ-101 title="User Login" tags=auth,web source=issue:#123 -->
+## Problem
+
+Users with existing accounts need to authenticate.
+
+## Requirements
+
+[REQ-101] The authentication service MUST create a login session when valid credentials are submitted.
+
+## Scenarios
+
+Scenario: Valid login
+  Given the visitor has a valid persisted account
+  When the visitor submits valid credentials
+  Then the system establishes a login session
+
+## Open Questions
+
+None.
+<!-- /agent-spec:requirement -->
+```
 
 ## Examples
 
@@ -473,3 +736,53 @@ For agents without skill support, the project includes `AGENTS.md` (Codex), `.cu
 Pull requests are evaluated through Contract Acceptance, not line-by-line code review. The reviewer checks two things: is the Contract definition correct (does it capture the right intent and edge cases), and did all verifications pass (lifecycle reports all-green). If both are yes, the PR is approved.
 
 This means the quality of your Contract matters as much as the quality of your code. A well-written Contract with thorough exception-path scenarios is a stronger contribution than clever code with a thin spec.
+
+## Intent Compiler Workflow
+
+> Terminology: **Intent Compiler（意图编译器）** is what agent-spec as a whole does; this
+> workflow is its pipeline. **Requirements are the compiler's intermediate representation
+> (IR)** — intent compiles into structured requirements, and requirements lower into Task
+> Contracts. That is why the artifact layer keeps the requirement noun
+> (`agent-spec requirements`, `knowledge/requirements/`, `REQ-*` ids): they name the IR,
+> not the compiler. Historical contract/requirement file stems predating the rename are
+> also unchanged.
+>
+> Acknowledgement: the intent compiler's borrowed validation invariants (requirement tree, dependency DAG, scenario grounding, test-first obligations, traceability) draw on the ARC (Agentic Requirement Compiler) reference project; this note is the repository's only reference to that name, and `docs/intent-compiler/reference-validation-matrix.md` records the invariant mapping.
+
+The requirements workflow is a compiler pipeline. `requirements graph` validates the KLL requirement graph, `requirements work-units` lowers graph nodes into executable or blocked work, `requirements plan` joins requirement, work-unit, and spec nodes into one DAG with explicit `satisfies` and `spec_depends` edges, `requirements test-obligations` emits spec-derived test obligations independently of implementation code, `requirements worktrees` maps ready work units to git worktree execution entries for parallel agents, `requirements trace`/`requirements replay`/`requirements explain-failure`/`requirements trace-graph` expose the latest requirement-to-scenario-to-test-to-code evidence chain, and `requirements questions` emits deterministic clarification prompts for unresolved ambiguity. The CLI does not call an AI model; AI-assisted PRD translation and reverse interviewing live in skills that write reviewed KLL artifacts back to disk.
+
+Compiler inputs are strict trust boundaries. Requirement ids must be safe stable identifiers, frontmatter must begin on the first line and contain no malformed or duplicate keys, declared kind must match the `knowledge/` subdirectory, required roots must exist, and recursive compilation rejects symlinks. Missing or malformed inputs are diagnostics, never an empty successful graph.
+
+DORA-inspired gates: specs may declare `risk: A`, `risk: B`, or `risk: C`. This is the QA class gate. Class A work requires lifecycle, trace, targeted tests, and adversarial review evidence; Class B requires lifecycle and trace; Class C requires lifecycle. Requirements with protocol or lifecycle behavior should use a `## State Machine` section so state-machine lint can check transition coverage.
+
+Requirement replay is evidence replay, not deterministic LLM replay. It reconstructs every scenario in the latest stored run from requirement id to work unit, spec, lifecycle scenario, test selector, code target, worktree, and VCS reference. A single-requirement spec owns all its scenarios; multi-requirement specs use KLL scenario names for disambiguation instead of producing a requirement-by-scenario Cartesian product. When no code target is known, the command reports `unknown` instead of inferring ownership from filenames or natural language.
+
+agent-spec development dogfoods this workflow on its own repository. The self-hosting gate uses `knowledge/requirements/req-requirements-compiler-plan-dag.md` and `specs/task-requirements-compiler-plan-dag.spec.md` as the primary proof that requirements remain guarded by code. Example fixtures demonstrate the workflow for other projects; they do not replace the self-hosting dogfood gate.
+
+Completed specs should eventually leave the active specs scan set. Use `agent-spec archive --spec-dir specs --archive-dir .agent-spec/archive/specs --summary knowledge/context/spec-archives.md --run-log-dir . --dry-run` to preview which completed contracts can be archived and what compressed summary will be written. The archive command requires specs to be tagged `done` or `completed` and to have latest passing lifecycle evidence bound to the current canonical spec path and content fingerprint; missing, failing, or stale evidence blocks archival and appears as an archive diagnostic. Application preflights all sources and targets before moving any spec. Archived specs are historical evidence and are ignored by default active specs scans.
+
+Use `requirements questions` as the deterministic input to the reverse interview workflow. The reverse interview happens in skills or human workflow, not inside CLI code.
+
+```bash
+agent-spec requirements plan --knowledge knowledge --specs specs --format json --gate
+agent-spec requirements test-obligations --knowledge knowledge --specs specs --format json --out .agent-spec/test_obligations.json
+agent-spec requirements worktrees --knowledge knowledge --specs specs --base main --path-prefix ../agent-spec-worktrees --out .agent-spec/worktrees.json
+agent-spec requirements replay REQ-123 --format text
+agent-spec requirements explain-failure REQ-123 --format json
+agent-spec requirements trace-graph REQ-123 --format mermaid
+agent-spec requirements questions --knowledge knowledge --specs specs --format json
+agent-spec archive --spec-dir specs --archive-dir .agent-spec/archive/specs --summary knowledge/context/spec-archives.md --run-log-dir . --dry-run
+```
+
+### Documentation Engineering
+
+agent-spec adopts Lore-style documentation engineering for human-facing docs:
+doc types, canon, operational checklists, and docs lint tooling. Use `docs/`
+for reader-facing prose and `knowledge/` for machine-consumable truth. Run
+`bash scripts/docs-lint.sh` before publishing substantial documentation changes.
+KLL gates and docs gates are complementary: docs gates check readability,
+structure, English prose style, Chinese project style, and links with Harper,
+agent-spec's built-in Chinese docs lint, markdownlint, and lychee; KLL/spec
+gates check traceability and behavior. Treat these checks as pre-publish review
+for substantial documentation changes. CI uses `DOCS_LINT_REQUIRE_EXTERNAL=all`
+so Harper, markdownlint, and lychee must all run.

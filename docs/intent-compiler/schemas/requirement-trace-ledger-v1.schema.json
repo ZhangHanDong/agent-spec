@@ -1,0 +1,205 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-spec.dev/schemas/agent-spec/intent-compiler/requirement-trace-ledger-v1.schema.json",
+  "title": "agent-spec requirement trace ledger v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "records",
+    "diagnostics"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "records": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/record"
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/diagnostic"
+      }
+    }
+  },
+  "$defs": {
+    "record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_id",
+        "requirement_id",
+        "requirement_source",
+        "work_unit_id",
+        "spec_path",
+        "scenario_name",
+        "test_selector",
+        "code_targets",
+        "verdict",
+        "evidence",
+        "worktree_path",
+        "branch",
+        "vcs",
+        "timestamp"
+      ],
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requirement_id": {
+          "type": "string",
+          "pattern": "^REQ-[A-Z0-9][A-Z0-9-]*$"
+        },
+        "requirement_source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "work_unit_id": {
+          "type": "string",
+          "pattern": "^WU-REQ-[A-Z0-9][A-Z0-9-]*$"
+        },
+        "spec_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scenario_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "test_selector": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "code_targets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "verdict": {
+          "enum": [
+            "pass",
+            "fail",
+            "skip",
+            "uncertain",
+            "pendingreview"
+          ]
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence"
+          }
+        },
+        "worktree_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "vcs": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/vcs"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "wiki_articles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "timestamp": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "summary"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string"
+        }
+      }
+    },
+    "vcs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "vcs_type",
+        "change_ref"
+      ],
+      "properties": {
+        "vcs_type": {
+          "enum": [
+            "git",
+            "jj",
+            "none"
+          ]
+        },
+        "change_ref": {
+          "type": "string"
+        },
+        "operation_ref": {
+          "type": "string"
+        }
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requirement_id",
+        "code",
+        "severity",
+        "message"
+      ],
+      "properties": {
+        "requirement_id": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "severity": {
+          "enum": [
+            "info",
+            "warning",
+            "error"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

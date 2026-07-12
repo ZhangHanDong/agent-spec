@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>agent-spec — Contract-Driven AI Coding</title>
+<title>agent-spec — The Intent Compiler for AI Coding</title>
 <meta name="description" content="An AI-native BDD/spec verification tool. Humans write contracts. Agents implement. Machines verify.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,300;0,8..60,400;0,8..60,600;0,8..60,700;1,8..60,400&display=swap" rel="stylesheet">
@@ -568,14 +568,16 @@ footer a:hover { text-decoration: underline; }
 <!-- ═══════════════════════════════════════════════ -->
 <nav id="nav">
   <div class="inner">
-    <a href="#" class="logo">agent-spec<span> v0.2</span></a>
+    <a href="#" class="logo">agent-spec<span> v0.4</span></a>
     <div class="links">
       <a href="#shift">Why</a>
+      <a href="#architecture">Architecture</a>
       <a href="#skills">Skills</a>
       <a href="#contract">Contract</a>
       <a href="#workflow">Workflow</a>
       <a href="#verify">Verify</a>
       <a href="#ai-verify">AI</a>
+      <a href="#knowledge">Knowledge</a>
       <a href="#start">Start</a>
       <a href="https://github.com/ZhangHanDong/agent-spec" target="_blank">GitHub</a>
     </div>
@@ -589,13 +591,17 @@ footer a:hover { text-decoration: underline; }
   <div class="container hero-content">
     <h1>agent-spec<span class="cursor"></span></h1>
     <p class="tagline">
-      Humans write the <em>contract</em>. Agents implement. Machines verify.<br>
-      An AI-native BDD/spec tool that shifts code review from <em>reading diffs</em> to <em>defining intent</em>.
+      The <em>intent compiler</em>（意图编译器）for AI coding: intent compiles into
+      requirement IR, lowers into verifiable <em>contracts</em>, and machines verify the code.<br>
+      Humans define intent. Agents implement. Nothing ships unverified.
     </p>
     <div class="hero-badges">
       <span class="badge accent">Rust</span>
       <span class="badge">BDD / Spec</span>
       <span class="badge">CLI-first</span>
+      <span class="badge">Knowledge Layer (KLL)</span>
+      <span class="badge">Intent Compiler</span>
+      <span class="badge">Read-only MCP</span>
       <span class="badge">中文 + English</span>
       <span class="badge">Git & jj aware</span>
       <span class="badge">Agent-agnostic</span>
@@ -658,6 +664,126 @@ footer a:hover { text-decoration: underline; }
 </section>
 
 <!-- ═══════════════════════════════════════════════ -->
+<!--  Intent Compiler Architecture                  -->
+<!-- ═══════════════════════════════════════════════ -->
+<section id="architecture">
+  <div class="container">
+    <div class="reveal">
+      <div class="section-label">Architecture</div>
+      <h2 class="section-title">The Intent Compiler Pipeline</h2>
+      <p class="section-desc">
+        Intent compiles into requirement IR, lowers into verifiable contracts, and liveness
+        tracing links verdicts back to the knowledge that produced them. AI works only at the
+        edges — every gate in between is deterministic and model-free.
+      </p>
+    </div>
+
+    <div class="reveal" style="background:var(--bg-subtle); border:1px solid var(--border); border-radius:8px; padding:24px; overflow-x:auto;">
+      <svg viewBox="0 0 1080 408" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Intent compiler pipeline: intent through intake into requirement IR, lowered through a plan DAG into task contracts, implemented by agents, verified by lifecycle, with liveness traced back to the IR" style="min-width:920px; width:100%; height:auto; display:block;">
+        <defs>
+          <marker id="ac-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#7a7a88"/>
+          </marker>
+          <marker id="ac-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#e8a845"/>
+          </marker>
+        </defs>
+
+        <!-- arrows first, boxes above -->
+        <line x1="252" y1="92" x2="288" y2="92" stroke="#7a7a88" stroke-width="1.2" marker-end="url(#ac-arrow)"/>
+        <line x1="520" y1="92" x2="556" y2="92" stroke="#7a7a88" stroke-width="1.2" marker-end="url(#ac-arrow)"/>
+        <line x1="788" y1="92" x2="824" y2="92" stroke="#7a7a88" stroke-width="1.2" marker-end="url(#ac-arrow)"/>
+        <line x1="942" y1="136" x2="942" y2="216" stroke="#7a7a88" stroke-width="1.2" marker-end="url(#ac-arrow)"/>
+        <line x1="828" y1="264" x2="792" y2="264" stroke="#7a7a88" stroke-width="1.2" marker-end="url(#ac-arrow)"/>
+        <line x1="560" y1="264" x2="524" y2="264" stroke="#7a7a88" stroke-width="1.2" marker-end="url(#ac-arrow)"/>
+        <line x1="292" y1="264" x2="256" y2="264" stroke="#7a7a88" stroke-width="1.2" marker-end="url(#ac-arrow)"/>
+        <path d="M 138 220 L 138 176 L 674 176 L 674 140" fill="none" stroke="#e8a845" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#ac-arrow-accent)"/>
+        <rect x="324" y="168" width="168" height="16" rx="2" fill="#111115"/>
+        <text x="408" y="180" fill="#e8a845" font-size="10" font-family="'JetBrains Mono', monospace" text-anchor="middle" letter-spacing="0.08em">LIVENESS · NEVER STORED</text>
+
+        <!-- row 1 -->
+        <g>
+          <rect x="24" y="48" width="228" height="88" rx="6" fill="#111115"/>
+          <rect x="24" y="48" width="228" height="88" rx="6" fill="#16161b" stroke="#3a3a48" stroke-width="1"/>
+          <text x="36" y="68" fill="#7a7a88" font-size="10" font-family="'JetBrains Mono', monospace" letter-spacing="0.12em">SOURCE</text>
+          <text x="138" y="96" fill="#eeeef2" font-size="16" font-weight="600" font-family="'Source Serif 4', Georgia, serif" text-anchor="middle">意图 · Intent</text>
+          <text x="138" y="120" fill="#7a7a88" font-size="11" font-family="'JetBrains Mono', monospace" text-anchor="middle">PRD · issues · 对话</text>
+        </g>
+        <g>
+          <rect x="292" y="48" width="228" height="88" rx="6" fill="#111115"/>
+          <rect x="292" y="48" width="228" height="88" rx="6" fill="rgba(167,139,250,0.06)" stroke="#a78bfa" stroke-width="1" stroke-dasharray="4,3"/>
+          <text x="304" y="68" fill="#a78bfa" font-size="10" font-family="'JetBrains Mono', monospace" letter-spacing="0.12em">AI + HUMAN REVIEW</text>
+          <text x="406" y="96" fill="#eeeef2" font-size="16" font-weight="600" font-family="'Source Serif 4', Georgia, serif" text-anchor="middle">Intake</text>
+          <text x="406" y="120" fill="#7a7a88" font-size="11" font-family="'JetBrains Mono', monospace" text-anchor="middle">skill 起草 → requirements import</text>
+        </g>
+        <g>
+          <rect x="560" y="48" width="228" height="88" rx="6" fill="#111115"/>
+          <rect x="560" y="48" width="228" height="88" rx="6" fill="#16161b" stroke="#3a3a48" stroke-width="1"/>
+          <text x="572" y="68" fill="#7a7a88" font-size="10" font-family="'JetBrains Mono', monospace" letter-spacing="0.12em">IR</text>
+          <rect x="716" y="56" width="60" height="16" rx="2" fill="transparent" stroke="rgba(74,222,128,0.5)" stroke-width="0.8"/>
+          <text x="746" y="68" fill="#4ade80" font-size="10" font-family="'JetBrains Mono', monospace" text-anchor="middle" letter-spacing="0.08em">GATE ×2</text>
+          <text x="674" y="96" fill="#eeeef2" font-size="16" font-weight="600" font-family="'Source Serif 4', Georgia, serif" text-anchor="middle">需求 · Requirement IR</text>
+          <text x="674" y="120" fill="#7a7a88" font-size="11" font-family="'JetBrains Mono', monospace" text-anchor="middle">REQ-* · lint-knowledge · graph</text>
+        </g>
+        <g>
+          <rect x="828" y="48" width="228" height="88" rx="6" fill="#111115"/>
+          <rect x="828" y="48" width="228" height="88" rx="6" fill="#16161b" stroke="#3a3a48" stroke-width="1"/>
+          <text x="840" y="68" fill="#7a7a88" font-size="10" font-family="'JetBrains Mono', monospace" letter-spacing="0.12em">LOWERING</text>
+          <rect x="996" y="56" width="48" height="16" rx="2" fill="transparent" stroke="rgba(74,222,128,0.5)" stroke-width="0.8"/>
+          <text x="1020" y="68" fill="#4ade80" font-size="10" font-family="'JetBrains Mono', monospace" text-anchor="middle" letter-spacing="0.08em">GATE</text>
+          <text x="942" y="96" fill="#eeeef2" font-size="16" font-weight="600" font-family="'Source Serif 4', Georgia, serif" text-anchor="middle">Plan DAG</text>
+          <text x="942" y="120" fill="#7a7a88" font-size="11" font-family="'JetBrains Mono', monospace" text-anchor="middle">work-units · plan · obligations</text>
+        </g>
+
+        <!-- row 2 -->
+        <g>
+          <rect x="828" y="220" width="228" height="88" rx="6" fill="#111115"/>
+          <rect x="828" y="220" width="228" height="88" rx="6" fill="rgba(232,168,69,0.08)" stroke="#e8a845" stroke-width="1.2"/>
+          <text x="840" y="240" fill="#e8a845" font-size="10" font-family="'JetBrains Mono', monospace" letter-spacing="0.12em">TARGET</text>
+          <text x="942" y="268" fill="#eeeef2" font-size="16" font-weight="600" font-family="'Source Serif 4', Georgia, serif" text-anchor="middle">Task Contract</text>
+          <text x="942" y="292" fill="#7a7a88" font-size="11" font-family="'JetBrains Mono', monospace" text-anchor="middle">specs/*.spec.md · satisfies: REQ-*</text>
+        </g>
+        <g>
+          <rect x="560" y="220" width="228" height="88" rx="6" fill="#111115"/>
+          <rect x="560" y="220" width="228" height="88" rx="6" fill="rgba(167,139,250,0.06)" stroke="#a78bfa" stroke-width="1" stroke-dasharray="4,3"/>
+          <text x="572" y="240" fill="#a78bfa" font-size="10" font-family="'JetBrains Mono', monospace" letter-spacing="0.12em">AI</text>
+          <text x="674" y="268" fill="#eeeef2" font-size="16" font-weight="600" font-family="'Source Serif 4', Georgia, serif" text-anchor="middle">Agent Implements</text>
+          <text x="674" y="292" fill="#7a7a88" font-size="11" font-family="'JetBrains Mono', monospace" text-anchor="middle">within Boundaries</text>
+        </g>
+        <g>
+          <rect x="292" y="220" width="228" height="88" rx="6" fill="#111115"/>
+          <rect x="292" y="220" width="228" height="88" rx="6" fill="#16161b" stroke="#3a3a48" stroke-width="1"/>
+          <text x="304" y="240" fill="#7a7a88" font-size="10" font-family="'JetBrains Mono', monospace" letter-spacing="0.12em">VERIFY</text>
+          <rect x="460" y="228" width="48" height="16" rx="2" fill="transparent" stroke="rgba(74,222,128,0.5)" stroke-width="0.8"/>
+          <text x="484" y="240" fill="#4ade80" font-size="10" font-family="'JetBrains Mono', monospace" text-anchor="middle" letter-spacing="0.08em">GATE</text>
+          <text x="406" y="268" fill="#eeeef2" font-size="16" font-weight="600" font-family="'Source Serif 4', Georgia, serif" text-anchor="middle">lifecycle</text>
+          <text x="406" y="292" fill="#7a7a88" font-size="11" font-family="'JetBrains Mono', monospace" text-anchor="middle">lint · structural · boundaries · tests</text>
+        </g>
+        <g>
+          <rect x="24" y="220" width="228" height="88" rx="6" fill="#111115"/>
+          <rect x="24" y="220" width="228" height="88" rx="6" fill="rgba(232,168,69,0.08)" stroke="#e8a845" stroke-width="1.2"/>
+          <text x="36" y="240" fill="#e8a845" font-size="10" font-family="'JetBrains Mono', monospace" letter-spacing="0.12em">LIVENESS</text>
+          <text x="138" y="268" fill="#eeeef2" font-size="16" font-weight="600" font-family="'Source Serif 4', Georgia, serif" text-anchor="middle">trace</text>
+          <text x="138" y="292" fill="#7a7a88" font-size="11" font-family="'JetBrains Mono', monospace" text-anchor="middle">honored · violated · unproven</text>
+        </g>
+
+        <!-- legend -->
+        <line x1="24" y1="356" x2="1056" y2="356" stroke="#2a2a35" stroke-width="0.8"/>
+        <text x="24" y="384" fill="#7a7a88" font-size="10" font-family="'JetBrains Mono', monospace" letter-spacing="0.14em">LEGEND</text>
+        <rect x="120" y="372" width="16" height="16" rx="3" fill="rgba(167,139,250,0.06)" stroke="#a78bfa" stroke-width="1" stroke-dasharray="4,3"/>
+        <text x="144" y="384" fill="#c8c8d0" font-size="11" font-family="'JetBrains Mono', monospace">AI-assisted, human-reviewed</text>
+        <rect x="392" y="372" width="16" height="16" rx="3" fill="transparent" stroke="rgba(74,222,128,0.5)" stroke-width="0.8"/>
+        <text x="416" y="384" fill="#c8c8d0" font-size="11" font-family="'JetBrains Mono', monospace">deterministic gate, exit code</text>
+        <rect x="664" y="372" width="16" height="16" rx="3" fill="rgba(232,168,69,0.08)" stroke="#e8a845" stroke-width="1.2"/>
+        <text x="688" y="384" fill="#c8c8d0" font-size="11" font-family="'JetBrains Mono', monospace">the contract loop</text>
+        <line x1="864" y1="380" x2="904" y2="380" stroke="#e8a845" stroke-width="1.2" stroke-dasharray="5,4"/>
+        <text x="912" y="384" fill="#c8c8d0" font-size="11" font-family="'JetBrains Mono', monospace">recomputed liveness</text>
+      </svg>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════ -->
 <!--  Skills                                        -->
 <!-- ═══════════════════════════════════════════════ -->
 <section id="skills">
@@ -677,7 +803,7 @@ footer a:hover { text-decoration: underline; }
         <span class="cmd-text">./install-skills.sh</span>
         <span class="copy-hint">click to copy</span>
       </div>
-      <div class="skills-install-note">Installs agent-spec CLI + all 3 skills into ~/.claude/skills/ with one command</div>
+      <div class="skills-install-note">Installs agent-spec CLI + all 5 skills into ~/.claude/skills/ with one command</div>
     </div>
 
     <div class="skills-grid reveal">
@@ -706,6 +832,24 @@ footer a:hover { text-decoration: underline; }
           The estimation path. Maps Task Contract elements — scenarios, decisions,
           boundaries — to round-based effort estimates with risk coefficients.
           Produces breakdown tables, wallclock projections, and confidence levels.
+        </p>
+      </div>
+      <div class="skill-card">
+        <h3>agent-spec-intent-compiler</h3>
+        <div class="skill-tag skill-tag-author">intent compiler</div>
+        <p>
+          The intake path. Turns unstructured PRDs and issues into human-reviewed
+          Candidate Requirement Blocks — with source excerpts, confidence, scenarios,
+          and open questions — that the deterministic Intent Compiler then imports.
+        </p>
+      </div>
+      <div class="skill-card">
+        <h3>agent-spec-wiki</h3>
+        <div class="skill-tag skill-tag-workflow">live wiki</div>
+        <p>
+          The working-memory path. Maintains the repo-local code live wiki:
+          stale-article detection, source-traced module and concept pages,
+          architecture inventories, and cross-project maps.
         </p>
       </div>
     </div>
@@ -1106,6 +1250,63 @@ footer a:hover { text-decoration: underline; }
       <div class="hier-layer hier-l2">
         <span class="hier-tag">L2 · task.spec</span>
         <span class="hier-desc">Intent, boundaries, BDD completion criteria — one per task</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════ -->
+<!--  Knowledge & Liveness Layer                    -->
+<!-- ═══════════════════════════════════════════════ -->
+<section id="knowledge">
+  <div class="container">
+    <div class="reveal">
+      <div class="section-label">0.4.0 · Knowledge & Liveness Layer</div>
+      <h2 class="section-title">Knowledge That Stays Honest</h2>
+      <p class="section-desc">
+        Contracts verify tasks. KLL makes the knowledge <em>around</em> them durable:
+        decisions and requirements live under <code>knowledge/</code>, specs link back with
+        <code>satisfies:</code>, and liveness is recomputed from current verdicts — never stored,
+        never stale.
+      </p>
+    </div>
+
+    <div class="skills-grid reveal">
+      <div class="skill-card">
+        <h3>Typed knowledge + derived liveness</h3>
+        <div class="skill-tag skill-tag-workflow">trace</div>
+        <p>
+          <code>decision</code> / <code>requirement</code> / <code>guidance</code> / <code>proposal</code>
+          artifacts with governance lint. <code>agent-spec trace REQ-001 --gate</code> answers
+          "is this still guarded by passing specs?" — honored, violated, or unproven.
+        </p>
+      </div>
+      <div class="skill-card">
+        <h3>Intent Compiler（意图编译器）</h3>
+        <div class="skill-tag skill-tag-author">requirements</div>
+        <p>
+          A compiler pipeline from PRD to verified work: <code>requirements import</code> →
+          <code>graph --gate</code> → <code>work-units</code> → <code>draft-specs</code> →
+          one plan DAG joining requirements, work units, and specs. Deterministic, model-free.
+        </p>
+      </div>
+      <div class="skill-card">
+        <h3>Code live wiki</h3>
+        <div class="skill-tag skill-tag-workflow">working memory</div>
+        <p>
+          A tracked, source-traced wiki under <code>.agent-spec/wiki</code>: module and concept
+          pages, staleness detection, architecture inventory, cross-project maps —
+          agent working memory that lint keeps honest.
+        </p>
+      </div>
+      <div class="skill-card">
+        <h3>Read-only MCP server</h3>
+        <div class="skill-tag skill-tag-estimate">mcp</div>
+        <p>
+          <code>agent-spec mcp</code> serves knowledge, liveness, contracts, and guidance
+          over JSON-RPC — deterministic tools, no RAG, so any MCP client queries
+          project truth live instead of re-reading files.
+        </p>
       </div>
     </div>
   </div>

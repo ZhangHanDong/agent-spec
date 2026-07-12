@@ -16,8 +16,11 @@ Commands:
   gen-integrations    Generate per-tool integration files from a single source
   promote             Promote a passing task Rule into a capability spec (living-spec library)
   init                Create a starter .spec.md file (or --workspace for the knowledge tree)
-  trace               Trace a decision to satisfying specs and report liveness (KLL)
+  trace               Trace a decision/requirement to satisfying specs and report liveness (KLL)
   lint-knowledge      Lint the knowledge corpus (per-doc + governance); text/json/sarif (KLL)
+  requirements        Import, validate, plan, and draft from KLL requirements
+  archive             Archive completed specs with latest passing lifecycle evidence
+  wiki                Maintain a repo-local code live wiki with source trace and architecture inventory
   mcp                 Serve the knowledge layer over MCP (read-only, stdio) (KLL)
   lifecycle           Run full lifecycle: lint -> verify -> report
   brief               Compatibility alias for the contract view
@@ -333,12 +336,13 @@ renderer, so "check passes" is equivalent to "write is a no-op".
 into each generated file as a delimited `<!-- agent-spec:guidance -->` block —
 scope, instructions, applies-to globs, and designated skills.
 
-## Knowledge & Liveness Layer (KLL)
+## Knowledge & Liveness Layer (0.4.0 KLL)
 
 KLL adds a typed knowledge layer beside specs. Artifacts live under
 `knowledge/` (one kind per subdirectory); specs stay in `specs/` and link back
-with a `satisfies:` frontmatter edge. **Liveness is derived, never stored** —
-recomputed from current spec verdicts on every `trace`.
+with a `satisfies:` frontmatter edge to decisions or requirements.
+**Liveness is derived, never stored** — recomputed from current spec verdicts on
+every `trace`.
 
 ### Artifact kinds
 
@@ -356,6 +360,7 @@ Knowledge frontmatter (identity only):
 ---
 kind: decision            # decision | requirement | guidance | proposal
 id: ADR-001               # canonical; falls back to <letters>-<digits> filename prefix
+title: "Decision title"   # required for generated requirement work units
 status: Accepted          # Proposed | Accepted | Superseded | Deprecated | Rejected
 supersedes: ADR-000       # optional
 liveness: auto            # auto (verifiable) | n/a (governance, never code-gated)
@@ -380,9 +385,10 @@ agent-spec trace <ID> \
   [--gate]
 ```
 
-Resolves a decision id (case-insensitive) to the specs that `satisfy:` it, runs
-verification on each, and rolls the verdicts up into a **liveness** state.
-`--gate` exits 2 on `violated` and warns (exit 0) on `unproven`.
+Resolves a decision or requirement id (case-insensitive) to the specs that
+`satisfy:` it, runs verification on each, and rolls the verdicts up into a
+**liveness** state. `--gate` exits 2 on `violated` and warns (exit 0) on
+`unproven`.
 
 **Liveness ladder** (precedence, total and mutually exclusive):
 1. declared `n/a` → `na`
@@ -403,9 +409,109 @@ Lints the whole knowledge corpus: per-doc rules (required sections + forcing
 functions, by kind) **plus** governance integrity — `knowledge-id-conflict`
 (Error), `supersession-dangling` (Error), `supersession-target-not-marked`
 (Warning), `references-superseded` (Warning), `produces-dangling` (Warning).
+Malformed knowledge files are reported as `knowledge-parse-error` (Error);
+they are never silently dropped from the gate.
 `--gate` exits 2 on any Error-level finding. `--format sarif` emits SARIF 2.1.0
 for GitHub Code Scanning. `README.md` and `*-template.md` are exempt
 (self-referential exemption).
+
+### requirements
+
+```bash
+agent-spec requirements import \
+  --from <PRD_OR_ISSUE_MD> \
+  [--out knowledge/requirements] \
+  [--check]
+
+agent-spec requirements graph \
+  [--knowledge knowledge] \
+  [--format text|json] \
+  [--gate]
+
+agent-spec requirements work-units \
+  [--knowledge knowledge] \
+  [--out .agent-spec/work_units.json] \
+  [--format text|json]
+
+agent-spec requirements draft-specs \
+  [--knowledge knowledge] \
+  [--out specs/generated] \
+  [--check]
+```
+
+Requirements intake is the PRD/issue → KLL → executable unit → Task Contract
+bridge:
+
+```text
+PRD/issue
+  -> knowledge/requirements/*.md
+  -> requirements graph
+  -> work_units.json
+  -> specs/generated/task-*.spec.md
+```
+
+#### `docs/` vs `knowledge/`
+
+`docs/` is for human-facing explanatory material: PRDs, issue writeups, design
+notes, plans, retrospectives, tutorials, and background context. It can contain
+raw source material, but it is not governed KLL truth: files there do not need
+stable IDs, KLL frontmatter, or schema-valid sections.
+
+`knowledge/` is for machine-consumable project truth. Typed artifacts under
+`knowledge/decisions`, `knowledge/requirements`, `knowledge/guidance`, and
+`knowledge/proposals` carry stable IDs and frontmatter, are checked by
+`lint-knowledge`, can be served over MCP, and can be connected to specs through
+`satisfies: [ADR-*|REQ-*]` for `trace` liveness.
+
+Pipeline rule: keep raw PRD/issue prose in `docs/` if useful, but generate work
+units and Task Contract drafts from imported `knowledge/requirements/*.md`, not
+directly from raw prose. Exception: `knowledge/context/` is a free-form KLL
+escape hatch served by MCP; it is intentionally untyped, unlinted, and not
+trace-gated.
+
+`import` consumes explicitly marked Markdown blocks (below) or the constrained
+YAML dialect for `.yaml`/`.yml` sources (`docs/intent-compiler/yaml-frontend-v1.md`):
+
+```markdown
+<!-- agent-spec:requirement id=REQ-101 title="User Login" tags=auth,web source=issue:#123 -->
+## Problem
+
+Users with existing accounts need to authenticate.
+
+## Requirements
+
+[REQ-101] The authentication service MUST create a login session when valid
+credentials are submitted.
+
+## Scenarios
+
+Scenario: Valid login
+  Given the visitor has a valid persisted account
+  When the visitor submits valid credentials
+  Then the system establishes a login session
+
+## Dependencies
+
+- REQ-100
+
+## Open Questions
+
+None.
+<!-- /agent-spec:requirement -->
+```
+
+Consumable requirement artifacts use `kind: requirement`, an explicit `id`, a
+frontmatter `title`, `liveness: auto`, and these sections when known:
+`## Problem`, `## Requirements`, `## Scenarios`, `## Dependencies`,
+`## Child Requirements`, `## Source Trace`, and `## Open Questions`.
+
+`graph --gate` fails on parse errors and Error-level graph diagnostics. Open
+questions and missing leaf scenarios are warnings; work units with open questions
+or no scenarios are blocked rather than emitted as ready implementation work.
+
+`draft-specs` renders reviewable task spec drafts with `satisfies: [REQ-*]`.
+Generated drafts intentionally use `pending_...` test selectors; `lifecycle` is
+expected to fail until a human replaces them with real tests.
 
 ### mcp
 
@@ -428,6 +534,9 @@ stdio (`initialize`, `tools/list`, `tools/call`). Read-only and deterministic:
 | `spec.contract` | `name` | the task contract for a spec |
 | `guidance.for` | `path` \| `stack` | guidance + designated skills for the scope |
 | `context.read` | `path` (optional) | free-form context file, or the file listing |
+
+`context.read` serves only regular files under `knowledge/context/`; path
+traversal and symlinks are rejected before reading.
 
 ## Frontmatter: depends and estimate
 
@@ -500,3 +609,133 @@ estimate: 1d
 - `前置:` / `Depends:` → lifecycle executes in topological order
 - Prerequisite fail → dependent scenario auto-skipped with evidence
 - Circular dependencies detected by lint
+
+## Intent Compiler Commands
+
+```bash
+agent-spec requirements plan \
+  [--knowledge knowledge] \
+  [--specs specs] \
+  [--format text|json] \
+  [--gate]
+
+agent-spec requirements test-obligations \
+  [--knowledge knowledge] \
+  [--specs specs] \
+  [--format text|json] \
+  [--out .agent-spec/test_obligations.json]
+
+agent-spec requirements worktrees \
+  [--knowledge knowledge] \
+  [--specs specs] \
+  [--base main] \
+  [--path-prefix ../agent-spec-worktrees] \
+  [--format text|json] \
+  [--out .agent-spec/worktrees.json]
+
+agent-spec requirements trace REQ-123 \
+  [--trace-dir .agent-spec/trace] \
+  [--format text|json]
+
+agent-spec requirements replay REQ-123 \
+  [--trace-dir .agent-spec/trace] \
+  [--format text|json]
+
+agent-spec requirements explain-failure REQ-123 \
+  [--trace-dir .agent-spec/trace] \
+  [--format text|json]
+
+agent-spec requirements trace-graph REQ-123 \
+  [--trace-dir .agent-spec/trace] \
+  [--format mermaid|json]
+
+agent-spec requirements questions \
+  [--knowledge knowledge] \
+  [--specs specs] \
+  [--format text|json]
+
+agent-spec archive \
+  [--spec-dir specs] \
+  [--archive-dir .agent-spec/archive/specs] \
+  [--summary knowledge/context/spec-archives.md] \
+  [--run-log-dir .] \
+  [--dry-run] \
+  [--check]
+```
+
+`plan --gate` fails on parse errors and Error-level plan diagnostics such as dangling requirement dependencies, requirement cycles, and ready requirements without satisfying specs.
+
+`test-obligations` emits requirement/scenario/test-selector obligations without reading implementation code. It carries QA class evidence requirements so Class A/B/C work can demand different review strength.
+
+`worktrees` emits deterministic branch/path/spec entries for ready work units only. It skips blocked, missing-scenario, and grouping-only work units and does not mutate git state.
+
+`trace` queries stored requirement-level trace records. `replay` reconstructs every scenario from the latest known run; one satisfied requirement owns all spec scenarios, while multi-requirement specs use KLL scenario names for disambiguation. `explain-failure` filters that chain to non-pass scenario evidence. `trace-graph` renders the same chain as Mermaid or JSON for visualization. These commands replay evidence, not LLM execution.
+
+`questions` emits deterministic reverse interview prompts derived from blocking open questions and ambiguity diagnostics. It does not call a model and does not edit files.
+
+`archive` summarizes completed specs and moves them out of the active specs scan path when not in `--dry-run` mode. A spec is archiveable only when it is tagged `done` or `completed` and the latest lifecycle run log under `--run-log-dir` is passing and matches the current canonical spec path and content fingerprint. Missing, failing, name-only, or stale lifecycle evidence is reported as an archive diagnostic, and all targets are preflighted before any move. Archived specs are historical evidence; default active `guard`, `trace`, and `requirements plan` scans do not treat them as current liveness guards.
+
+For agent-spec itself, dogfood these commands against the repository's own KLL requirements and task specs before using fixtures as external demonstrations.
+
+Command docs must preserve these exact terms for documentation tests: QA class, state-machine, reverse interview, active specs, dogfood.
+
+## Documentation Engineering Commands
+
+Use Lore-style doc types, canon, and operational review before publishing substantial agent-spec documentation. Run the pre-publish docs lint gate:
+
+```bash
+bash scripts/docs-lint.sh
+```
+
+The docs lint script runs Harper for English prose when installed, always runs
+agent-spec's built-in Chinese docs lint, and also runs markdownlint and lychee
+when installed. It is separate from KLL/spec gates: docs lint checks
+readability, rendered preview, structure, style, and links; `lint-knowledge`,
+`requirements plan`, `lifecycle`, and `trace` check machine-consumable truth
+and behavior.
+
+## wiki
+
+```bash
+agent-spec wiki init --code . --wiki .agent-spec/wiki
+agent-spec wiki seed --code . --wiki .agent-spec/wiki
+agent-spec wiki seed --code . --wiki .agent-spec/wiki --check
+agent-spec wiki status --code . --wiki .agent-spec/wiki
+agent-spec wiki query "intent compiler" --wiki .agent-spec/wiki
+agent-spec wiki inspect src/spec_wiki/live.rs --code . --wiki .agent-spec/wiki
+agent-spec wiki inventory --code . --format json
+agent-spec wiki inventory --code . --format mermaid
+agent-spec wiki index --wiki .agent-spec/wiki
+agent-spec wiki lint --code . --wiki .agent-spec/wiki
+agent-spec wiki check --code . --wiki .agent-spec/wiki
+agent-spec wiki meta update --code . --wiki .agent-spec/wiki
+```
+
+`wiki init` scaffolds the code live wiki under `.agent-spec/wiki` and writes
+`_index.md`, `_architecture.md`, `_patterns.md`, `_log.md`, `_meta.json`,
+`architecture/inventory.json`, `architecture/workspace.mmd`, and
+`architecture/modules.mmd`. `wiki seed` creates focused draft module, concept,
+and decision pages without overwriting maintained articles; `--check` reports
+missing seed pages without writing files. `wiki status` compares dirty, staged,
+and untracked current worktree files against article `source_files`
+frontmatter and reports stale articles. `wiki query` searches titles, tags,
+source files, and article bodies. `wiki inspect <path>` lists related wiki
+pages, KLL requirements, and task specs. `wiki inventory` emits the Rust architecture inventory
+and module graphs from Cargo metadata when available and falls back to a
+generic source inventory for non-Rust repositories. `wiki index` rebuilds
+`_index.md`; `wiki lint` rejects missing required files, missing
+`source_files`, unsafe source paths, broken internal links, and stale index
+content. `wiki check` combines index freshness, lint, and current worktree stale
+status. In CI clean checkouts it is the tracked wiki structure gate. `wiki meta
+update` records the current repository metadata.
+
+The wiki is agent working memory, not KLL truth and not human docs. Durable
+requirements still live in `knowledge/`, executable contracts live in `specs/`,
+and published prose lives in `docs/`. Track `.agent-spec/wiki/**` when the
+project wants live wiki memory in git, but keep `.agent-spec/runs`,
+`.agent-spec/trace`, temp files, and runtime state ignored. Use the code live
+wiki before reading raw source broadly, then update the affected article and run
+`wiki index` plus `wiki lint` or `wiki check`. Archive old wiki material into
+`learnings/` or `archive/` summaries with source links instead of deleting it
+abruptly. Non-goals: no built-in LLM long-form generation, no web UI, and no
+replacement for KLL.

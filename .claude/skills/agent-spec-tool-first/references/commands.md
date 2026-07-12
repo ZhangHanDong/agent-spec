@@ -469,7 +469,8 @@ directly from raw prose. Exception: `knowledge/context/` is a free-form KLL
 escape hatch served by MCP; it is intentionally untyped, unlinted, and not
 trace-gated.
 
-`import` only consumes explicitly marked blocks:
+`import` consumes explicitly marked Markdown blocks (below) or the constrained
+YAML dialect for `.yaml`/`.yml` sources (`docs/intent-compiler/yaml-frontend-v1.md`):
 
 ```markdown
 <!-- agent-spec:requirement id=REQ-101 title="User Login" tags=auth,web source=issue:#123 -->
@@ -609,7 +610,7 @@ estimate: 1d
 - Prerequisite fail → dependent scenario auto-skipped with evidence
 - Circular dependencies detected by lint
 
-## Requirements Compiler Commands
+## Intent Compiler Commands
 
 ```bash
 agent-spec requirements plan \
@@ -700,7 +701,7 @@ agent-spec wiki init --code . --wiki .agent-spec/wiki
 agent-spec wiki seed --code . --wiki .agent-spec/wiki
 agent-spec wiki seed --code . --wiki .agent-spec/wiki --check
 agent-spec wiki status --code . --wiki .agent-spec/wiki
-agent-spec wiki query "requirements compiler" --wiki .agent-spec/wiki
+agent-spec wiki query "intent compiler" --wiki .agent-spec/wiki
 agent-spec wiki inspect src/spec_wiki/live.rs --code . --wiki .agent-spec/wiki
 agent-spec wiki inventory --code . --format json
 agent-spec wiki inventory --code . --format mermaid

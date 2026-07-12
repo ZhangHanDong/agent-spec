@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-spec.dev/schemas/agent-spec/intent-compiler/test-obligations-v1.schema.json",
+  "title": "agent-spec requirements test obligations v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "obligations",
+    "diagnostics"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "obligations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/obligation"
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/diagnostic"
+      }
+    }
+  },
+  "$defs": {
+    "path_or_null": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "obligation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requirement_id",
+        "scenario_name",
+        "suggested_selector",
+        "verification_strength",
+        "spec_path",
+        "required_evidence"
+      ],
+      "properties": {
+        "requirement_id": {
+          "type": "string",
+          "pattern": "^REQ-[A-Z0-9][A-Z0-9-]*$"
+        },
+        "scenario_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "suggested_selector": {
+          "type": "string",
+          "minLength": 1
+        },
+        "verification_strength": {
+          "type": "string",
+          "minLength": 1
+        },
+        "spec_path": {
+          "$ref": "#/$defs/path_or_null"
+        },
+        "required_evidence": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "lifecycle",
+              "trace",
+              "targeted_tests",
+              "adversarial_review"
+            ]
+          }
+        }
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "severity",
+        "requirement_id",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "severity": {
+          "enum": [
+            "info",
+            "warning",
+            "error"
+          ]
+        },
+        "requirement_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

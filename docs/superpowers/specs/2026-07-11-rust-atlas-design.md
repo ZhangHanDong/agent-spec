@@ -23,6 +23,29 @@
 4. **解析后端**：syn 自解析为基座（自包含、零外部工具依赖）；检测到 rust-analyzer
    时可叠加 SCIP 索引获得精确跨文件引用边；缺席时优雅降级并在 meta 标注 capability。
 
+## 在意图编译器中的位置
+
+Rust Atlas 是语言专用的 Code Graph Provider，不是 Requirement IR 前端，也不负责解释或
+修改 KLL 需求。它把 Rust 源码编译成派生、可失效的 Code Graph IR；计划中的
+Code Grounding / Intent-Code Linker 在 work-unit lowering 之后消费这张图，将 leaf work
+unit 绑定到 crate、module、trait、type 和 function，再由 Task Contract 固化人工确认的
+Boundaries 与 Symbols。
+
+```text
+Accepted Requirement IR -> Work Units --+
+                                        +-> Intent-Code Linker -> Task Contract / Plan DAG
+Rust Source -> Rust Atlas -> Code Graph -+
+```
+
+同一份图随后可被 lifecycle、trace、wiki 和 MCP 只读复用。图事实始终是派生数据，
+stale 图不能产生确定性绑定，也不能被提升为长期 KLL 真相。完整的双 IR、治理门禁和
+质量工具架构见 `docs/intent-compiler/architecture.md`。
+
+Clippy、rustfmt、cargo-deny、Miri 等不属于 Atlas。它们是 Diagnostic、Transformation
+或 Verification Provider，由计划中的 Quality Planning 阶段在 code grounding 之后按
+风险等级和项目 profile 选择，并与必需 skills 一起形成 Execution Bundle。Skills 指导
+AI 生成代码；工具和 lifecycle 输出才是验收证据。
+
 ## 架构
 
 ```
@@ -63,12 +86,15 @@ agent-spec atlas check          # 新鲜度，CI 可用退出码
 |-------|------|--------|
 | 1（本期） | workspace 转换、rust-atlas 核心、CLI、SCIP 可选增强、MCP 工具 | stable |
 | 2 | MIR 增强器（优先评估 Charon，其次 rustc_public 自写 driver），精确 Calls/CFG 摘要 | nightly feature |
-| 3 | KLL 集成：spec boundary/trace 引用图节点，lint 校验符号存在性 | stable |
+| 3 | Intent-Code Linker 首个切片：spec symbol boundary、lifecycle/trace 引用图节点，校验符号存在性与图新鲜度 | stable |
+
+完整的 provider-neutral binding schema、planning-time grounding 与 Quality Planning
+分别进入后续独立合约，避免 Atlas 专用接口反向污染通用意图编译器。
 
 ## 相关文件
 
 - 合约：`specs/task-rust-atlas-code-graph.spec.md`
-- 需求：`knowledge/requirements/req-rust-atlas-code-graph.md`
+- 需求：`knowledge/requirements/req-rust-atlas.md`（人类确认的正典；YAML 兼容投影待导出器实现后派生）
 - 实施计划：`docs/superpowers/plans/2026-07-11-rust-atlas-code-graph.md`
 - Roadmap specs：`specs/roadmap/task-atlas-mir-layer.spec.md`、
   `specs/roadmap/task-atlas-kll-integration.spec.md`

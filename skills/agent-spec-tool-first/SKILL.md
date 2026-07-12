@@ -102,6 +102,7 @@ still live in `specs/`.
 | `agent-spec init --workspace` | Scaffold the canonical `knowledge/` tree (decisions/requirements/proposals/guidance/context + canon + `.agent-spec/config.yaml`). Idempotent | Once, to lay down the knowledge workspace beside `specs/` |
 | `agent-spec trace <id> [--gate]` | Trace a decision or requirement id to the specs that `satisfy:` it and report **liveness** (honored / violated / unproven / n/a). `--gate` exits 2 on violated, warns on unproven | Check whether a recorded knowledge artifact is still enforced by passing specs; use `--gate` in CI |
 | `agent-spec lint-knowledge [--format text\|json\|sarif] [--gate]` | Lint the knowledge corpus: per-doc rules + governance (id-conflict, supersession integrity, stale refs). `--gate` exits 2 on any Error | Governance gate for the knowledge base; `--format sarif` feeds GitHub Code Scanning |
+| `agent-spec requirements transition <ID> --to <status>` / `requirements supersede <ID> --by <NEW>` | Explicit human governance transitions (proposed→accepted/rejected, accepted→deprecated, atomic supersession); missing status fails `graph --gate` | Accept requirements before lowering; compilation never mutates status |
 | `agent-spec requirements import/graph/work-units/draft-specs` | Convert marked PRD/issue requirement blocks into KLL artifacts, validate the graph, generate executable work units, and draft Task Contracts with `satisfies: [REQ-*]` | Use when raw product requirements need to become verifiable agent-spec work |
 | `agent-spec mcp` | Serve the knowledge layer over MCP (JSON-RPC 2.0 over stdio, read-only, deterministic) | Wire into an MCP client so agents query knowledge live |
 | `agent-spec gen-integrations --with-guidance <knowledge>` | Project `guidance/` artifacts into the generated CLAUDE.md/AGENTS.md/.cursorrules | Push stack/path-scoped guidance into agent tool config |
@@ -110,13 +111,16 @@ Requirements intake flow:
 
 ```bash
 agent-spec requirements import --from docs/prd.md --out knowledge/requirements
+agent-spec requirements import --from requirements.yaml --out knowledge/requirements
 agent-spec lint-knowledge --knowledge knowledge --gate
 agent-spec requirements graph --knowledge knowledge --format json --gate
 agent-spec requirements work-units --knowledge knowledge --out .agent-spec/work_units.json
 agent-spec requirements draft-specs --knowledge knowledge --out specs/generated
 ```
 
-`requirements import` only reads explicit `<!-- agent-spec:requirement ... -->`
+`requirements import` reads explicit `<!-- agent-spec:requirement ... -->`
+Markdown blocks, or the constrained YAML dialect for `.yaml`/`.yml` sources
+(`docs/intent-compiler/yaml-frontend-v1.md`); it never interprets raw prose. Marked blocks need
 blocks with `id` and `title`. Generated Task Contract drafts are review
 artifacts: they carry `satisfies: [REQ-*]` and placeholder `pending_...` test
 selectors, so `lifecycle` is expected to fail until a human binds real tests.
@@ -159,7 +163,7 @@ agent-spec wiki init --code . --wiki .agent-spec/wiki
 agent-spec wiki seed --code . --wiki .agent-spec/wiki
 agent-spec wiki seed --code . --wiki .agent-spec/wiki --check
 agent-spec wiki status --code . --wiki .agent-spec/wiki
-agent-spec wiki query "requirements compiler" --wiki .agent-spec/wiki
+agent-spec wiki query "intent compiler" --wiki .agent-spec/wiki
 agent-spec wiki inspect src/spec_wiki/live.rs --code . --wiki .agent-spec/wiki
 agent-spec wiki inventory --code . --format json
 agent-spec wiki inventory --code . --format mermaid
@@ -560,9 +564,9 @@ Switch to library integration only when:
 - Testing `spec-gateway` internals
 - Injecting a host `AiBackend` via `verify_with_backend(Arc<dyn AiBackend>)`
 
-## Requirements Compiler
+## Intent Compiler
 
-Requirements compiler loop:
+Intent Compiler loop:
 
 1. Keep raw PRD/issue text in `docs/`.
 2. Convert stable requirements into `knowledge/requirements/*.md`.
