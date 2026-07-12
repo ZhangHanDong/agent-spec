@@ -35,3 +35,4 @@ Thumbs.db
 !.agent-spec/archive/
 !.agent-spec/archive/**
 books/harness-spec-ai/
+/docs/book/

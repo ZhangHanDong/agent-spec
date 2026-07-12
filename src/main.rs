@@ -7284,6 +7284,180 @@ name: "退款"
         }
     }
 
+    /// Parse `SUMMARY.md` links and return referenced files that are missing or
+    /// smaller than 500 bytes. The book's structure guard.
+    fn book_summary_thin_files(book_src: &std::path::Path) -> Vec<String> {
+        let summary = std::fs::read_to_string(book_src.join("SUMMARY.md")).unwrap_or_default();
+        let mut thin = Vec::new();
+        for line in summary.lines() {
+            let Some(start) = line.find("](") else {
+                continue;
+            };
+            let Some(end) = line[start + 2..].find(')') else {
+                continue;
+            };
+            let rel = &line[start + 2..start + 2 + end];
+            if !rel.ends_with(".md") {
+                continue;
+            }
+            let path = book_src.join(rel);
+            let ok = std::fs::metadata(&path)
+                .map(|meta| meta.len() > 500)
+                .unwrap_or(false);
+            if !ok {
+                thin.push(rel.to_string());
+            }
+        }
+        thin
+    }
+
+    fn book_chapter_files() -> Vec<std::path::PathBuf> {
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("book/src");
+        let summary = std::fs::read_to_string(src.join("SUMMARY.md")).unwrap_or_default();
+        summary
+            .lines()
+            .filter_map(|line| {
+                let start = line.find("](")?;
+                let end = line[start + 2..].find(')')?;
+                let rel = &line[start + 2..start + 2 + end];
+                (rel.starts_with("ch") && rel.ends_with(".md")).then(|| src.join(rel))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_book_summary_lists_chapters_and_files_exist() {
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("book/src");
+        let thin = book_summary_thin_files(&src);
+        assert!(
+            thin.is_empty(),
+            "every SUMMARY entry must exist with >500 bytes; thin/missing: {thin:?}"
+        );
+        let summary = fs::read_to_string(src.join("SUMMARY.md")).unwrap();
+        for required in [
+            "preface.md",
+            "appendix-a",
+            "appendix-b",
+            "appendix-c",
+            "appendix-d",
+        ] {
+            assert!(summary.contains(required), "SUMMARY must list {required}");
+        }
+        assert_eq!(
+            book_chapter_files().len(),
+            19,
+            "the outline promises nineteen chapters"
+        );
+    }
+
+    #[test]
+    fn test_book_chapters_carry_anchor_baseline_and_mermaid() {
+        let chapters = book_chapter_files();
+        assert_eq!(chapters.len(), 19, "SUMMARY must list nineteen chapters");
+        for path in chapters {
+            let text = fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("{} must be readable: {e}", path.display()));
+            assert!(
+                text.contains("> **定位**"),
+                "{} must open with a positioning anchor",
+                path.display()
+            );
+            assert!(
+                text.contains("agent-spec 1.0.0"),
+                "{} must state the 1.0.0 baseline",
+                path.display()
+            );
+            assert!(
+                text.contains("```mermaid"),
+                "{} must carry at least one mermaid diagram",
+                path.display()
+            );
+        }
+    }
+
+    #[test]
+    fn test_book_toml_configures_mermaid_preprocessor() {
+        let toml = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("book/book.toml"))
+            .expect("book/book.toml must exist");
+        assert!(toml.contains("[preprocessor.mermaid]"));
+        assert!(
+            toml.contains("mermaid.min.js"),
+            "mermaid assets must be wired"
+        );
+    }
+
+    #[test]
+    fn test_book_preface_has_reading_paths_and_knowledge_map() {
+        let preface =
+            fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("book/src/preface.md"))
+                .expect("preface must exist");
+        assert!(preface.contains("路径 A"), "preface needs reading path A");
+        assert!(preface.contains("路径 B"), "preface needs reading path B");
+        assert!(
+            preface.contains("```mermaid"),
+            "preface needs the knowledge map"
+        );
+        assert!(
+            preface.contains("英文版"),
+            "the English edition must be declared as follow-up work"
+        );
+    }
+
+    #[test]
+    fn test_book_dogfood_appendix_embeds_own_contract() {
+        let appendix = fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("book/src/appendix-c-dogfood.md"),
+        )
+        .expect("appendix C must exist");
+        assert!(appendix.contains("REQ-AGENT-SPEC-BOOK"));
+        assert!(appendix.contains("task-agent-spec-book.spec.md"));
+    }
+
+    #[test]
+    fn test_book_traces_span_chapters_with_diagrams() {
+        let traces = fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("book/src/appendix-d-traces.md"),
+        )
+        .expect("appendix D must exist");
+        let trace_count = traces.matches("### 轨迹").count();
+        assert!(
+            trace_count >= 2,
+            "appendix D needs at least two E2E traces, found {trace_count}"
+        );
+        let mermaid_count = traces.matches("```mermaid").count();
+        assert!(
+            mermaid_count >= 2,
+            "each trace needs a diagram, found {mermaid_count}"
+        );
+        let referenced = (1..=19)
+            .filter(|n| {
+                traces.contains(&format!("第 {n} 章")) || traces.contains(&format!("ch{n:02}"))
+            })
+            .count();
+        assert!(
+            referenced >= 3,
+            "traces must span at least three chapters, referenced {referenced}"
+        );
+    }
+
+    #[test]
+    fn test_book_guard_fails_on_missing_chapter_fixture() {
+        let dir = std::env::temp_dir().join(format!("book-guard-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("SUMMARY.md"),
+            "# Summary\n\n- [Ghost](ch99-ghost.md)\n",
+        )
+        .unwrap();
+        let thin = book_summary_thin_files(&dir);
+        assert!(
+            thin.iter().any(|p| p == "ch99-ghost.md"),
+            "the guard must name the missing chapter: {thin:?}"
+        );
+        fs::remove_dir_all(dir).ok();
+    }
+
     #[test]
     fn test_docs_lint_ci_installs_and_requires_all_docs_tools() {
         let workflow = include_str!("../.github/workflows/docs-lint.yml");

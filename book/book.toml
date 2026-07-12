@@ -1,0 +1,16 @@
+[book]
+title = "agent-spec 1.0 — 意图编译器之书"
+description = "由浅入深的 agent-spec 官方读物：用法、理念与架构"
+authors = ["AlexZ", "Claude"]
+language = "zh-CN"
+src = "src"
+
+[output.html]
+git-repository-url = "https://github.com/ZhangHanDong/agent-spec"
+site-url = "/agent-spec/book/"
+additional-js = ["mermaid.min.js", "mermaid-init.js"]
+
+[preprocessor]
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"

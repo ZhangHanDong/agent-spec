@@ -1,0 +1,1660 @@
+<!DOCTYPE HTML>
+<html lang="zh-CN" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>agent-spec 1.0 — 意图编译器之书</title>
+        <meta name="robots" content="noindex">
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="由浅入深的 agent-spec 官方读物：用法、理念与架构">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-0392ca55.css">
+        <link rel="stylesheet" href="css/chrome-fc474251.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "searchindex-75b06212.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-98d15170.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">agent-spec 1.0 — 意图编译器之书</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ZhangHanDong/agent-spec" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="前言"><a class="header" href="#前言">前言</a></h1>
+<p>agent-spec 是一个<strong>意图编译器（Intent Compiler）</strong>：人类的意图经它编译为结构化
+需求（IR），再降低为可机械验证的任务合同（Task Contract），最后由确定性管线证明
+“代码仍然遵守着当初的意图”。它是给 AI 协作时代准备的工程底座——当实现代码越来越
+多地由 Agent 写出，人类的注意力应该花在<strong>定义正确</strong>上，而把<strong>验证正确</strong>交给机器。</p>
+<p>本书基于 <strong>agent-spec 1.0.0</strong>（兼容性承诺生效版）写成，中文先行；<strong>英文版</strong>作为
+后续工作，将在本书结构稳定后启动。全书由浅入深，以用法为主线：第一、二部分让你
+从零跑通并精通合同工作流；第三、四部分进入意图编译与知识层；第五部分收束于设计
+哲学与架构全景。</p>
+<p>本书自身就是 agent-spec 工作流的展品：它有自己的 KLL 需求（<code>REQ-AGENT-SPEC-BOOK</code>）
+与任务合同，每一章的定位锚、Mermaid 图、目录完整性都由绑定测试机械守卫——细节见
+附录 C。</p>
+<h2 id="阅读准备"><a class="header" href="#阅读准备">阅读准备</a></h2>
+<h3 id="前置知识"><a class="header" href="#前置知识">前置知识</a></h3>
+<ul>
+<li><strong>命令行基础</strong>：会在终端运行命令、读输出。</li>
+<li><strong>Git 常识</strong>：知道 commit / branch / staged 是什么。</li>
+<li><strong>不需要</strong>：Rust 编程能力（除非你读第 16 章 Atlas 的实现细节）、任何特定 AI
+工具的经验——agent-spec 是 agent-agnostic 的。</li>
+</ul>
+<h3 id="推荐阅读路径"><a class="header" href="#推荐阅读路径">推荐阅读路径</a></h3>
+<p><strong>路径 A：实践者速通</strong>（今天就要用起来）</p>
+<blockquote>
+<p>前言 → 第 1 章 → 第 2 章 → 第 3 章 → 第 4 章 → 第 5 章 → 第 7 章 → 附录 A</p>
+</blockquote>
+<p>读完你能独立写合同、跑验证、看懂五种 verdict，并把 guard 挂进 CI。</p>
+<p><strong>路径 B：架构师深读</strong>（评估它是否值得引入团队）</p>
+<blockquote>
+<p>前言 → 第 1 章 → 第 18 章 → 第 19 章 → 第 10 章 → 第 11 章 → 第 13 章 → 附录 D</p>
+</blockquote>
+<p>先看哲学与架构再回到编译管线，最后用两条端到端轨迹验证叙事的完整性。</p>
+<h3 id="全书知识地图"><a class="header" href="#全书知识地图">全书知识地图</a></h3>
+<pre class="mermaid">graph TD
+    subgraph P1["第一部分 入门"]
+        C1[ch01 意图编译器] --&gt; C2[ch02 第一个合同] --&gt; C3[ch03 七步工作流]
+    end
+    subgraph P2["第二部分 合同"]
+        C4[ch04 四要素] --&gt; C5[ch05 场景 DSL] --&gt; C6[ch06 lint]
+        C6 --&gt; C7[ch07 lifecycle] --&gt; C8[ch08 边界与守卫] --&gt; C9[ch09 验收追溯]
+    end
+    subgraph P3["第三部分 意图编译"]
+        C10[ch10 PRD→IR] --&gt; C11[ch11 治理三轴] --&gt; C12[ch12 计划]
+        C12 --&gt; C13[ch13 溯源重放] --&gt; C14[ch14 编译束]
+    end
+    subgraph P4["第四部分 知识与生态"]
+        C15[ch15 KLL] --&gt; C16[ch16 Atlas] --&gt; C17[ch17 Wiki与MCP]
+    end
+    subgraph P5["第五部分 理念与架构"]
+        C18[ch18 哲学] --&gt; C19[ch19 架构全景]
+    end
+    C3 --&gt; C4
+    C9 --&gt; C10
+    C14 --&gt; C15
+    C17 --&gt; C18
+    C8 -.符号验证.-&gt; C16
+    C13 -.证据链.-&gt; C15
+</pre>
+
+<h3 id="标记约定"><a class="header" href="#标记约定">标记约定</a></h3>
+<ul>
+<li>命令块中的输出都来自 <strong>真实运行</strong>（agent-spec 1.0.0），未经虚构。</li>
+<li><code>file:line</code> 形式的引用指向 agent-spec 仓库源码。</li>
+<li>“详见第 N 章” 是全书统一的交叉引用格式。</li>
+<li>每章开篇的 <code>&gt; **定位**</code> 告诉你这一章讲什么、依赖哪一章、什么时候需要读它。</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="第-1-章-意图编译器是什么"><a class="header" href="#第-1-章-意图编译器是什么">第 1 章 意图编译器是什么</a></h1>
+<blockquote>
+<p><strong>定位</strong>：本章用一次对比和一张图讲清 agent-spec 的核心命题——审查点位移。
+无前置依赖。适用于所有读者的第一站。基于 agent-spec 1.0.0。</p>
+</blockquote>
+<h2 id="一个熟悉的困境"><a class="header" href="#一个熟悉的困境">一个熟悉的困境</a></h2>
+<p>你让 AI Agent 实现一个用户注册接口。十分钟后它交回 500 行 diff。现在轮到你了：
+逐行读代码、猜它有没有处理重复邮箱、担心它偷偷改了不该动的文件。你的时间花在了
+<strong>读实现</strong>上，而实现恰恰是 Agent 最擅长产出的东西。</p>
+<p>传统协作与 agent-spec 协作的注意力分配对比：</p>
+<pre><code>传统:       写 Issue (10%) → Agent 写码 (0%) → 读 diff (80%) → 批准 (10%)
+agent-spec: 写合同 (60%)  → Agent 写码 (0%) → 读 explain (30%) → 批准 (10%)
+</code></pre>
+<p>这就是<strong>审查点位移（Review Point Displacement）</strong>：人类的高价值时间从“读 500 行
+代码 diff“移动到“写 50-80 行自然语言合同“。合同定义什么是正确；机器验证代码是否
+正确；人类最后做的是<strong>合同验收</strong>，不是代码审查。</p>
+<h2 id="为什么叫编译器"><a class="header" href="#为什么叫编译器">为什么叫“编译器“</a></h2>
+<p>编译器的本质是：把一种表达（源语言）确定性地变换为另一种表达（目标语言），并在
+每一步给出可检查的中间产物。agent-spec 对“意图“做同样的事：</p>
+<pre class="mermaid">graph LR
+    A[人类意图&lt;br/&gt;PRD·对话·Issue] --&gt;|intake| B[需求 IR&lt;br/&gt;REQ-* 文档]
+    B --&gt;|lower| C[任务合同&lt;br/&gt;Task Contract]
+    C --&gt;|Agent 实现| D[代码]
+    D --&gt;|lifecycle 验证| E[五种 verdict]
+    E -.liveness 回灌.-&gt; B
+</pre>
+
+<ul>
+<li><strong>需求 IR</strong>：人类确认后的结构化需求（<code>knowledge/requirements/REQ-*.md</code>），是
+编译器的中间表示——就像编译器的 IR 一样，它是后续一切变换的锚点。</li>
+<li><strong>任务合同</strong>：需求降低（lower）后的可执行契约，四要素齐备（详见第 4 章）。</li>
+<li><strong>验证</strong>：lint → 结构 → 边界 → 测试的确定性四层管线（详见第 7 章），零 token
+成本，无假阴性。</li>
+<li><strong>liveness 回灌</strong>：验证结果实时回答“这条需求现在还被守着吗“——honored /
+violated / unproven，永远重算，从不落盘（详见第 15 章）。</li>
+</ul>
+<h2 id="它不做什么"><a class="header" href="#它不做什么">它不做什么</a></h2>
+<p>诚实是这个工具的性格。agent-spec 不替你判断产品方向（合同写错了它只能证明“错的
+被实现了“）；不评审命名品味；不承诺性能验证（NFR 需要专门 runner）；也不托管审批
+工作流——谁批准了什么，是编排系统的事，编译器只提供事实与摘要（ADR-001，详见
+第 18 章）。</p>
+<p>从下一章开始动手。五分钟后你会有第一个被机器证明的合同。</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="第-2-章-安装与第一个合同"><a class="header" href="#第-2-章-安装与第一个合同">第 2 章 安装与第一个合同</a></h1>
+<blockquote>
+<p><strong>定位</strong>：本章带你在五分钟内完成安装、初始化第一个合同并跑通第一次验证。
+前置依赖：第 1 章的心智模型。基于 agent-spec 1.0.0。</p>
+</blockquote>
+<h2 id="安装"><a class="header" href="#安装">安装</a></h2>
+<pre><code class="language-bash">cargo install agent-spec
+agent-spec --version
+</code></pre>
+<pre><code class="language-text">agent-spec 1.0.0
+</code></pre>
+<p>也可以克隆仓库一键安装 CLI + 全部技能文件（供 Claude Code / Codex / Cursor 等
+Agent 使用）：</p>
+<pre><code class="language-bash">git clone https://github.com/ZhangHanDong/agent-spec &amp;&amp; cd agent-spec &amp;&amp; ./install-skills.sh
+</code></pre>
+<h2 id="初始化第一个合同"><a class="header" href="#初始化第一个合同">初始化第一个合同</a></h2>
+<pre><code class="language-bash">agent-spec init --level task --lang zh --name "用户注册API"
+</code></pre>
+<p>生成的 <code>specs/用户注册api.spec.md</code> 是一个骨架。合同的完整语法在第 4、5 章展开，
+这里先感受最小可用形态：</p>
+<pre><code class="language-markdown">spec: task
+name: "用户注册API"
+---
+
+## 意图
+
+为认证模块添加注册端点：邮箱+密码注册，成功后发送验证邮件。
+
+## 边界
+
+### 允许修改
+- src/auth/**
+- tests/auth/**
+
+## 完成条件
+
+场景: 注册成功
+  测试: test_register_returns_201
+  假设 不存在该邮箱的用户
+  当 客户端提交注册请求
+  那么 响应状态码为 201
+
+场景: 重复邮箱被拒绝
+  测试: test_register_rejects_duplicate
+  假设 已存在该邮箱的用户
+  当 客户端提交相同邮箱的注册请求
+  那么 响应状态码为 409
+</code></pre>
+<p>注意两点纪律：<strong>每个场景都绑定一个测试</strong>（<code>测试:</code> 行），<strong>异常场景不少于正常场景</strong>
+——这两条会被质量门强制（详见第 6 章）。</p>
+<h2 id="第一次质量门与验证"><a class="header" href="#第一次质量门与验证">第一次质量门与验证</a></h2>
+<pre><code class="language-bash">agent-spec lint specs/用户注册api.spec.md --min-score 0.7
+agent-spec lifecycle specs/用户注册api.spec.md --code . --format json
+</code></pre>
+<p>lifecycle 是主质量门：先重跑 lint（防合同被篡改），再依次跑结构、边界、测试三层
+验证。此刻测试还没写，你会看到 <code>skip</code> verdict——<strong>skip 不等于 pass</strong>，五种 verdict
+各司其职（详见第 7 章）。当 Agent（或你）补上实现与测试后，输出会收敛为：</p>
+<pre><code class="language-text">"summary": { "failed": 0, "passed": 2, "skipped": 0, "total": 2, "uncertain": 0 }
+</code></pre>
+<h2 id="你刚刚经历了什么"><a class="header" href="#你刚刚经历了什么">你刚刚经历了什么</a></h2>
+<pre class="mermaid">sequenceDiagram
+    participant H as 人类
+    participant CLI as agent-spec
+    participant A as Agent
+    H-&gt;&gt;CLI: init（骨架）
+    H-&gt;&gt;H: 填四要素（高价值时间在这里）
+    H-&gt;&gt;CLI: lint（合同质量门）
+    A-&gt;&gt;CLI: contract（读执行计划）
+    A-&gt;&gt;A: 实现 + 测试
+    A-&gt;&gt;CLI: lifecycle（自检重试循环）
+    CLI--&gt;&gt;H: explain（合同级摘要，验收）
+</pre>
+
+<p>这条链路的完整版就是下一章的七步工作流。</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="第-3-章-七步工作流"><a class="header" href="#第-3-章-七步工作流">第 3 章 七步工作流</a></h1>
+<blockquote>
+<p><strong>定位</strong>：本章给出 agent-spec 协作的全景流程：谁在哪一步做什么、用什么命令。
+前置依赖：第 2 章。适合建立整体骨架后再深入各章。基于 agent-spec 1.0.0。</p>
+</blockquote>
+<h2 id="三个角色七个步骤"><a class="header" href="#三个角色七个步骤">三个角色，七个步骤</a></h2>
+<p>人类定义正确（合同），Agent 实现代码，机器验证正确性。每一步都有明确的所有者：</p>
+<pre class="mermaid">graph TD
+    S1["① 人写合同&lt;br/&gt;agent-spec init"] --&gt; S2["② 合同质量门&lt;br/&gt;agent-spec lint --min-score 0.7"]
+    S2 --&gt; S3["③ Agent 读合同&lt;br/&gt;agent-spec contract"]
+    S3 --&gt; S4["④ Agent 自检循环&lt;br/&gt;agent-spec lifecycle --code ."]
+    S4 --&gt;|fail → 修码重试| S4
+    S4 --&gt; S5["⑤ 守卫门&lt;br/&gt;agent-spec guard（pre-commit/CI）"]
+    S5 --&gt; S6["⑥ 合同验收&lt;br/&gt;agent-spec explain --format markdown"]
+    S6 --&gt; S7["⑦ 盖章归档&lt;br/&gt;agent-spec stamp / archive"]
+    style S1 fill:#2a2a35,stroke:#e8a845
+    style S6 fill:#2a2a35,stroke:#e8a845
+</pre>
+
+<p>琥珀色的两步（①⑥）是人类注意力所在；其余全部机械化。</p>
+<h2 id="每一步一句话"><a class="header" href="#每一步一句话">每一步一句话</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>步</th><th>所有者</th><th>命令</th><th>要点</th></tr>
+</thead>
+<tbody>
+<tr><td>① 写合同</td><td>人</td><td><code>init</code> 后手写四要素</td><td>异常场景 ≥ 正常场景</td></tr>
+<tr><td>② 质量门</td><td>机器</td><td><code>lint --min-score 0.7</code></td><td>对合同做“代码审查“（详见第 6 章）</td></tr>
+<tr><td>③ 读合同</td><td>Agent</td><td><code>contract &lt;spec&gt;</code></td><td>决策、边界、完成条件三重约束</td></tr>
+<tr><td>④ 自检循环</td><td>Agent</td><td><code>lifecycle --code . --format json</code></td><td>fail→读证据→修码→重跑，不许改合同</td></tr>
+<tr><td>⑤ 守卫</td><td>机器</td><td><code>guard --spec-dir specs --code .</code></td><td>全仓合同一次验证，CI 阻断</td></tr>
+<tr><td>⑥ 验收</td><td>人</td><td><code>explain --format markdown</code></td><td>读合同级摘要，不读 diff</td></tr>
+<tr><td>⑦ 盖章</td><td>机器</td><td><code>stamp --dry-run</code> / <code>archive</code></td><td>Git trailer 建立合同↔提交溯源</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="重试协议第④步的纪律"><a class="header" href="#重试协议第④步的纪律">重试协议（第④步的纪律）</a></h2>
+<p>lifecycle 失败时，Agent 的义务是<strong>修代码，不是改合同</strong>：</p>
+<ol>
+<li><code>--format json</code> 拿到每个场景的 <code>verdict</code> 与 <code>evidence</code>；</li>
+<li><code>fail</code>：测试真的跑了且失败——读证据修码；</li>
+<li><code>skip</code>：测试没找到——检查 <code>测试:</code> 选择器是否对得上真实测试名；</li>
+<li><code>uncertain</code>：需要 AI 或人工评审的场景（详见第 7 章 caller 模式）;</li>
+<li>同一场景连续三次失败：停下来，升级给人类。</li>
+</ol>
+<p>改合同让验证变绿是谄媚（sycophancy），不是修复——若合同本身错了，显式切回
+写作模式修订合同，绝不静默放宽验收标准。</p>
+<h2 id="何时不用它"><a class="header" href="#何时不用它">何时不用它</a></h2>
+<p>探索性原型（还不知道“做完“长什么样）、大型架构重构（边界难以定义）——这些先
+自由写码，等能回答“什么是完成“了再立合同。合同适合边界清晰的功能与可复现的
+bug 修复。</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="第-4-章-合同四要素"><a class="header" href="#第-4-章-合同四要素">第 4 章 合同四要素</a></h1>
+<blockquote>
+<p><strong>定位</strong>：本章逐一拆解任务合同的四个组成部分——意图、决策、边界、完成条件。
+前置依赖：第 3 章。这是全书最值得反复翻的用法章之一。基于 agent-spec 1.0.0。</p>
+</blockquote>
+<p>合同不是模糊的 Issue，而是一份精确的规格。四要素各自回答一个问题：</p>
+<pre class="mermaid">graph LR
+    I["意图 Intent&lt;br/&gt;做什么、为什么"] --&gt; D["决策 Decisions&lt;br/&gt;怎么做（已定，不再讨论）"]
+    D --&gt; B["边界 Boundaries&lt;br/&gt;能动什么、不能动什么"]
+    B --&gt; C["完成条件 Completion Criteria&lt;br/&gt;怎样才算做完（可机械判定）"]
+</pre>
+
+<h2 id="意图intent2-到-4-句话"><a class="header" href="#意图intent2-到-4-句话">意图（Intent）——2 到 4 句话</a></h2>
+<p>聚焦“做什么和为什么“，带上下文（现状、这件事在整体中的位置），不写成小说：</p>
+<pre><code class="language-markdown">## 意图
+
+为现有认证模块添加用户注册端点。新用户通过邮箱+密码注册，成功后发送验证
+邮件。这是用户体系的第一步，后续在此基础上添加登录与密码重置。
+</code></pre>
+<h2 id="决策decisions已定的技术选择"><a class="header" href="#决策decisions已定的技术选择">决策（Decisions）——已定的技术选择</a></h2>
+<p>只写<strong>已经定死</strong>的选择：具体技术、版本、参数。Agent 照做，不再购物：</p>
+<pre><code class="language-markdown">## 已定决策
+
+- 路由: POST /api/v1/auth/register
+- 密码哈希: bcrypt, cost factor = 12
+- 验证 Token: crypto.randomUUID(), 存数据库, 24h 过期
+- 邮件: 使用现有 EmailService，不新建
+</code></pre>
+<p>三条纪律（lint 会盯着，详见第 6 章）：每条决策至少被一个场景覆盖
+（<code>decision-coverage</code>）；说“所有入口/每个二进制“这类全称断言需要成比例的场景
+（<code>universal-claim</code>）；平台特定的照抄决策要打 <code>[platform-specific]</code> 标记。</p>
+<h2 id="边界boundaries三重约束"><a class="header" href="#边界boundaries三重约束">边界（Boundaries）——三重约束</a></h2>
+<pre><code class="language-markdown">## 边界
+
+### 允许修改
+- src/auth/**
+- tests/auth/**
+- migrations/
+
+### 禁止
+- 不要添加新依赖
+- 不要修改现有登录端点
+
+## 排除范围
+
+- 登录、密码重置、OAuth（后续任务）
+</code></pre>
+<ul>
+<li><strong>路径 glob 是机械执法的</strong>：BoundariesVerifier 用实际变更文件对照 glob
+（详见第 8 章）。</li>
+<li><strong>自然语言禁令</strong>由 lint 检查、结构验证器模式匹配，但不做文件级执法——两者
+配合使用。</li>
+<li><strong>排除范围</strong>防止范围蔓延：Agent 明确知道什么不该碰。</li>
+<li>1.0 还支持第四个子节 <code>### Symbols</code>——把合同钉到真实代码符号上（详见第 8 章）。</li>
+</ul>
+<h2 id="完成条件completion-criteria确定性的通过失败"><a class="header" href="#完成条件completion-criteria确定性的通过失败">完成条件（Completion Criteria）——确定性的通过/失败</a></h2>
+<p>BDD 场景 + 显式测试绑定。<strong>核心原则：异常场景 ≥ 正常场景</strong>——这逼你在写码之前
+想清楚边缘情况：</p>
+<pre><code class="language-markdown">## 完成条件
+
+场景: 注册成功                       ← 1 条正常路径
+  测试: test_register_returns_201
+  ...
+
+场景: 重复邮箱被拒绝                 ← 异常路径 ×3
+场景: 弱密码被拒绝
+场景: 缺少必填字段
+</code></pre>
+<p>每个场景没有 <code>测试:</code> 选择器就无法被 TestVerifier 执行，结果是 <code>skip</code>——而
+<strong>skip 永远不等于 pass</strong>。场景 DSL 的全部细节在下一章。</p>
+<h2 id="写合同前的自检"><a class="header" href="#写合同前的自检">写合同前的自检</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>问题</th><th>若答“否“</th></tr>
+</thead>
+<tbody>
+<tr><td>能定义“做完“长什么样吗？</td><td>先自由探索，之后再立合同</td></tr>
+<tr><td>能写出至少一个确定性测试吗？</td><td>还没到合同阶段</td></tr>
+<tr><td>范围小到能列出允许修改的路径吗？</td><td>拆成多个任务</td></tr>
+<tr><td>关键技术决策已定吗？</td><td>先做 spike</td></tr>
+</tbody>
+</table>
+</div>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="第-5-章-场景-dsl-与测试绑定"><a class="header" href="#第-5-章-场景-dsl-与测试绑定">第 5 章 场景 DSL 与测试绑定</a></h1>
+<blockquote>
+<p><strong>定位</strong>：本章是完成条件的语法手册：BDD 关键字、测试选择器、步骤表格、
+标签与场景依赖。前置依赖：第 4 章。基于 agent-spec 1.0.0。</p>
+</blockquote>
+<h2 id="bdd-关键字中英等价"><a class="header" href="#bdd-关键字中英等价">BDD 关键字（中英等价）</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>English</th><th>中文</th><th>语义</th></tr>
+</thead>
+<tbody>
+<tr><td><code>Given</code></td><td><code>假设</code></td><td>前置条件</td></tr>
+<tr><td><code>When</code></td><td><code>当</code></td><td>动作</td></tr>
+<tr><td><code>Then</code></td><td><code>那么</code></td><td>期望结果</td></tr>
+<tr><td><code>And</code></td><td><code>并且</code></td><td>同类补充步骤</td></tr>
+<tr><td><code>But</code></td><td><code>但是</code></td><td>反向补充步骤</td></tr>
+</tbody>
+</table>
+</div>
+<p>措辞必须<strong>确定性</strong>：“返回 201“而不是“应该返回 201”——<code>should/might/应该</code>
+会被 determinism linter 拦下。</p>
+<h2 id="测试选择器"><a class="header" href="#测试选择器">测试选择器</a></h2>
+<pre><code class="language-markdown">场景: 正常路径
+  测试: test_happy_path            # 简单形式
+
+场景: 跨包验证
+  测试:                            # 结构化形式
+    包: spec-gateway
+    过滤: test_contract_prompt_format
+    级别: integration
+</code></pre>
+<p>选择器过滤的是真实测试名。改了测试函数名合同就会 skip——这是特性不是缺陷：
+溯源链宁断勿假。</p>
+<h2 id="步骤表格"><a class="header" href="#步骤表格">步骤表格</a></h2>
+<p>结构化输入用表格，别发明散文格式：</p>
+<pre><code class="language-markdown">场景: 批量校验
+  测试: test_batch_validation
+  假设 如下输入记录:
+    | name  | email          | valid |
+    | Alice | alice@test.com | true  |
+    | Bob   | invalid        | false |
+  当 校验器处理该批次
+  那么 "1" 条通过且 "1" 条失败
+</code></pre>
+<h2 id="标签与模式"><a class="header" href="#标签与模式">标签与模式</a></h2>
+<pre class="mermaid">graph TD
+    S[场景] --&gt; T1["标签: critical&lt;br/&gt;失败 ⇒ gate_blocked=true, exit 2"]
+    S --&gt; T2["审核: human&lt;br/&gt;测试过 ⇒ pending_review"]
+    S --&gt; T3["模式: optimize&lt;br/&gt;通过进 optimization_candidates,失败仍阻断"]
+    S --&gt; T4["前置: 另一场景名&lt;br/&gt;前置失败 ⇒ 本场景自动跳过"]
+</pre>
+
+<ul>
+<li><code>critical</code>：必须通过的场景，CI 友好的硬门。</li>
+<li><code>审核: human</code>：测试通过后仍需人签——<code>--review-mode strict</code> 下不算通过。</li>
+<li><code>前置:</code> 声明场景执行顺序；循环依赖由 lint 检出。</li>
+</ul>
+<h2 id="rule-分组bdd-spine"><a class="header" href="#rule-分组bdd-spine">Rule 分组（BDD-spine）</a></h2>
+<p>相关场景可组织在 <code>### Rule:</code> 下——一条系统承诺，由一组例子证明：</p>
+<pre><code class="language-markdown">### Rule: reject-invalid-input — 拒绝非法输入
+场景: 空邮箱被拒绝
+  测试: test_rejects_empty_email
+  ...
+场景: 弱密码被拒绝
+  测试: test_rejects_weak_password
+  ...
+</code></pre>
+<p>Rule 的 kebab-case id 是稳定锚（改显示名随意，id 不动），成熟后可用
+<code>agent-spec promote</code> 升入能力库（<code>specs/capabilities/</code>）。id 与显示名之间用
+<strong>em dash <code>—</code> 或两个以上空格</strong>分隔——普通 <code>--</code> 会被吞进 id。</p>
+<h2 id="一份体检清单"><a class="header" href="#一份体检清单">一份体检清单</a></h2>
+<p>写完场景过一遍：每个场景都有选择器吗？异常 ≥ 正常吗？措辞确定吗？表格代替了
+自造格式吗？关键场景打了 critical 吗？——这五问的机械版就是下一章的 lint。</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="第-6-章-质量门lint"><a class="header" href="#第-6-章-质量门lint">第 6 章 质量门:lint</a></h1>
+<blockquote>
+<p><strong>定位</strong>：本章讲合同自身的“代码审查“——linter 家族、评分门槛与 lint-ack
+豁免机制。前置依赖：第 5 章。基于 agent-spec 1.0.0。</p>
+</blockquote>
+<p>合同是要交给 Agent 执行的输入，输入的质量决定输出的上限。<code>agent-spec lint</code>
+对合同做机械审查：</p>
+<pre><code class="language-bash">agent-spec parse specs/task.spec.md          # 先确认结构:段落数、场景数非零
+agent-spec lint specs/task.spec.md --min-score 0.7
+</code></pre>
+<pre><code class="language-text">Spec: agent-spec 1.0 Book (Chinese Edition)
+Quality: 100% (determinism: 100%, testability: 100%, coverage: 100%)
+  No issues found.
+</code></pre>
+<p>上面这段输出来自本书自己的合同——真实运行，未经修饰。</p>
+<h2 id="linter-家族一览"><a class="header" href="#linter-家族一览">linter 家族一览</a></h2>
+<pre class="mermaid">mindmap
+  root((lint))
+    结构
+      malformed 结构畸形
+      零场景验收段
+      implicit-dep 缺测试选择器
+    语言
+      vague-verb 模糊动词
+      unquantified 未量化
+      determinism 非确定措辞
+      sycophancy 谄媚偏置
+    覆盖
+      coverage 约束未覆盖
+      decision-coverage 决策未覆盖
+      error-path 缺异常路径
+      universal-claim 全称断言场景不足
+      flag-combination 旗标组合未测
+    边界
+      boundary-entry-point 多入口未逐一验证
+      platform-decision-tag 平台决策未标记
+</pre>
+
+<p>几个高频警告的修法：</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>警告</th><th>症状</th><th>修法</th></tr>
+</thead>
+<tbody>
+<tr><td><code>vague-verb</code></td><td>“处理邮箱”</td><td>改为“校验邮箱格式“</td></tr>
+<tr><td><code>unquantified</code></td><td>“响应要快”</td><td>改为“200ms 内响应“</td></tr>
+<tr><td><code>error-path</code></td><td>全是正常路径</td><td>补异常场景至 ≥ 正常场景</td></tr>
+<tr><td><code>decision-coverage</code></td><td>决策没人验证</td><td>为该决策补一个场景</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="lint-ack有理由的豁免"><a class="header" href="#lint-ack有理由的豁免">lint-ack：有理由的豁免</a></h2>
+<p>当某条 Warning 确属正当例外，用<strong>带强制理由</strong>的行内确认，而不是扭曲合同：</p>
+<pre><code class="language-markdown">&lt;!-- lint-ack: error-path — 本任务是只读查询，无失败路径 --&gt;
+</code></pre>
+<p>三条规则：<code>lint-ack:</code> 后的码与理由必须用 em dash <code>—</code> 或冒号分隔（否则整串被
+当作码，什么也没确认）；被确认的 lint 从报告中过滤但<strong>计入 audit</strong>（豁免上了
+台账，不是消音）；<strong>Error 永远不可确认</strong>——机械硬失败没有商量余地。</p>
+<h2 id="questions诚实的未完成"><a class="header" href="#questions诚实的未完成">Questions：诚实的未完成</a></h2>
+<p>合同成形前，把未决问题放进 <code>## 问题</code> 段（非阻塞，Info/Warning 级）：</p>
+<pre><code class="language-markdown">## 问题
+
+- 折扣能否叠加?
+- [x] 退款按折后价(已确认)
+</code></pre>
+<p><code>agent-spec discover --from-codebase</code> 反向生成草稿合同时也会播种这一段——
+一份冷启动草稿诚实地标着“已知不完整“，好过伪装成品。</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="第-7-章-验证与重试lifecycle"><a class="header" href="#第-7-章-验证与重试lifecycle">第 7 章 验证与重试:lifecycle</a></h1>
+<blockquote>
+<p><strong>定位</strong>：本章是验证管线的完整手册——四层验证器、五种 verdict、重试协议与
+AI caller 模式。前置依赖：第 6 章。基于 agent-spec 1.0.0。</p>
+</blockquote>
+<h2 id="四层确定性管线"><a class="header" href="#四层确定性管线">四层确定性管线</a></h2>
+<pre><code class="language-bash">agent-spec lifecycle specs/task.spec.md --code . --format json --run-log-dir .agent-spec/runs
+</code></pre>
+<pre class="mermaid">graph LR
+    L1["lint&lt;br/&gt;合同质量复检"] --&gt; L2["StructuralVerifier&lt;br/&gt;Must NOT 模式匹配"]
+    L2 --&gt; L3["BoundariesVerifier&lt;br/&gt;变更文件 × 允许路径"]
+    L3 --&gt; L4["TestVerifier&lt;br/&gt;执行绑定测试"]
+    L4 --&gt; L5["AI Verifier&lt;br/&gt;可选,默认 off"]
+    style L1 fill:#16321f
+    style L2 fill:#16321f
+    style L3 fill:#16321f
+    style L4 fill:#16321f
+    style L5 fill:#2a2440,stroke-dasharray:4
+</pre>
+
+<p>绿色四层是确定性的：零 token 成本、无假阴性。第五层 AI 只处理机械层够不着的
+残余，且默认关闭。1.0 里还有第六个隐形成员：Atlas 符号验证器——当合同声明了
+<code>### Symbols</code> 时激活（详见第 8 章）。</p>
+<h2 id="五种-verdict"><a class="header" href="#五种-verdict">五种 verdict</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>verdict</th><th>含义</th><th>动作</th></tr>
+</thead>
+<tbody>
+<tr><td><code>pass</code></td><td>场景被证实</td><td>无</td></tr>
+<tr><td><code>fail</code></td><td>绑定测试跑了且失败</td><td>读证据，修代码</td></tr>
+<tr><td><code>skip</code></td><td>测试没找到/没跑</td><td>补测试或修选择器</td></tr>
+<tr><td><code>uncertain</code></td><td>AI 桩/待人工评审</td><td>人工看或接 AI 后端</td></tr>
+<tr><td><code>pending_review</code></td><td>测试过了但要人签</td><td>走人工签核</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>skip ≠ pass</strong> 是这套体系的第一铁律。<code>is_passing</code> 要求 total&gt;0 且
+failed=skipped=uncertain=0——任何“没验证“都不会被静默当作“验证通过“。</p>
+<h2 id="重试循环"><a class="header" href="#重试循环">重试循环</a></h2>
+<pre class="mermaid">sequenceDiagram
+    participant A as Agent
+    participant L as lifecycle
+    A-&gt;&gt;L: 第 1 次运行
+    L--&gt;&gt;A: fail (2/5) + evidence
+    A-&gt;&gt;A: 读证据 → 修代码（不改合同！）
+    A-&gt;&gt;L: 第 2 次运行
+    L--&gt;&gt;A: fail (4/5)
+    A-&gt;&gt;A: 再修
+    A-&gt;&gt;L: 第 3 次运行
+    L--&gt;&gt;A: pass (5/5) ✓
+</pre>
+
+<p><code>--run-log-dir</code> 记下每一次运行——<code>explain --history</code> 能给出“这份合同重试了
+几次才过“的表格（详见第 9 章）。长合同用 <code>--resume</code> 跳过已过场景；
+<code>--resume=conservative</code> 全部重跑但检测回归。</p>
+<h2 id="ai-caller-模式"><a class="header" href="#ai-caller-模式">AI caller 模式</a></h2>
+<p>机械层覆盖不了的场景（设计意图、代码品质）可以让<strong>调用方 Agent 自己当验证器</strong>：</p>
+<pre><code class="language-bash">agent-spec lifecycle specs/task.spec.md --code . --ai-mode caller --format json
+# 输出含 "ai_pending": true 与 pending 请求文件
+# Agent 逐场景分析后写 decisions.json（scenario/verdict/confidence/reasoning）
+agent-spec resolve-ai specs/task.spec.md --code . --decisions decisions.json
+</code></pre>
+<p>合并后的报告里，skip 被 Agent 的判定替换——但 provenance 会标注这是
+Inferential（推理证据），与 Computational（机械证据）在 <code>matrix</code> 中泾渭分明。</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="第-8-章-边界守卫与符号"><a class="header" href="#第-8-章-边界守卫与符号">第 8 章 边界、守卫与符号</a></h1>
+<blockquote>
+<p><strong>定位</strong>：本章覆盖变更集执法（BoundariesVerifier）、全仓守卫（guard）与
+1.0 的符号验证（<code>### Symbols</code>，Intent-Code Linker 的入口）。
+前置依赖：第 7 章。基于 agent-spec 1.0.0。</p>
+</blockquote>
+<h2 id="变更集从哪来"><a class="header" href="#变更集从哪来">变更集从哪来</a></h2>
+<p>边界执法需要知道“这次改了哪些文件“：</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>旗标</th><th>行为</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--change &lt;path&gt;</code></td><td>显式指定文件/目录</td></tr>
+<tr><td><code>--change-scope staged</code></td><td>Git 暂存区（guard 默认）</td></tr>
+<tr><td><code>--change-scope worktree</code></td><td>全部工作区变更</td></tr>
+<tr><td><code>--change-scope jj</code></td><td>Jujutsu 变更（jj 仓库自动适用）</td></tr>
+<tr><td><code>--change-scope none</code></td><td>不做变更检测（lifecycle 默认）</td></tr>
+</tbody>
+</table>
+</div>
+<p>BoundariesVerifier 把每个变更文件对照合同的 glob：命中禁止 → fail；有允许清单
+却不在其中 → fail；证据（PatternMatch）逐文件记录。</p>
+<h2 id="guard全仓一次验证"><a class="header" href="#guard全仓一次验证">guard：全仓一次验证</a></h2>
+<pre><code class="language-bash">agent-spec guard --spec-dir specs --code . --change-scope staged   # pre-commit
+agent-spec guard --spec-dir specs --code . --change-scope worktree # CI
+</code></pre>
+<pre><code class="language-text">agent-spec guard: 54 spec(s) passed
+</code></pre>
+<p>这行输出来自 agent-spec 自己的仓库——54 份活跃合同在每次提交前全部复验。
+任何一份合同 lint 不过或验证不过，提交被阻断。</p>
+<h2 id="-symbols把合同钉到真实符号上"><a class="header" href="#-symbols把合同钉到真实符号上"><code>### Symbols</code>：把合同钉到真实符号上</a></h2>
+<p>1.0 的合同可以在边界下声明代码符号引用：</p>
+<pre><code class="language-markdown">## Boundaries
+
+### Allowed Changes
+- src/**
+
+### Symbols
+- rust-atlas: spec_verify::Verifier
+- rust-atlas: spec_knowledge::build_work_units
+</code></pre>
+<p>lifecycle 管线中的 Atlas 符号验证器会拿<strong>新鲜图</strong>逐一核对：</p>
+<pre class="mermaid">graph TD
+    A[合同声明 Symbols] --&gt; B{图存在且新鲜?}
+    B --&gt;|图缺失/滞后| S["atlas-stale&lt;br/&gt;先失败,绝不产生假的 symbol-missing"]
+    B --&gt;|新鲜| C{每个符号都在图里?}
+    C --&gt;|缺失| M["atlas-symbol-missing&lt;br/&gt;逐符号 step verdict"]
+    C --&gt;|全部命中| P["静默通过&lt;br/&gt;报告形状不变"]
+    N[未声明 Symbols] --&gt; Z["验证器隐身&lt;br/&gt;非 Rust 项目零负担"]
+</pre>
+
+<p>三条语义值得背下来：<strong>stale 优先</strong>（图滞后时不指控符号缺失）；<strong>全对即静默</strong>
+（不给报告添噪音）；<strong>不声明即免税</strong>（没有 Symbols 的合同永远不需要图）。
+“合同里提到的符号已经不存在了“从此是机械诊断，不是考古发现——这是
+Intent-Code Linker 的第一块（架构全景详见第 19 章，图的构建详见第 16 章）。</p>
+<h2 id="vcs-感知"><a class="header" href="#vcs-感知">VCS 感知</a></h2>
+<p><code>.jj/</code> 存在（哪怕同时有 <code>.git/</code>）就用 <code>--change-scope jj</code>，且不要跑
+<code>git add</code>——jj 自动快照。<code>stamp</code> 在 jj 仓库会带 <code>Spec-Change:</code> trailer；
+<code>explain --history</code> 可通过 operation id 给出运行间的文件级 diff。</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="第-9-章-验收与追溯"><a class="header" href="#第-9-章-验收与追溯">第 9 章 验收与追溯</a></h1>
+<blockquote>
+<p><strong>定位</strong>：本章讲人类在环的最后一步（合同验收）与合同↔提交的溯源链：
+explain、stamp、matrix、audit、archive。前置依赖：第 7、8 章。
+基于 agent-spec 1.0.0。</p>
+</blockquote>
+<h2 id="合同验收不是代码审查"><a class="header" href="#合同验收不是代码审查">合同验收，不是代码审查</a></h2>
+<pre><code class="language-bash">agent-spec explain specs/task.spec.md --code . --format markdown
+</code></pre>
+<p>产出一份可直接贴进 PR 的合同级摘要。评审者只回答两个问题：</p>
+<ol>
+<li><strong>合同定义对吗？</strong>（意图、决策、边界讲得通吗）</li>
+<li><strong>验证全过了吗？</strong>（含异常路径的 N/N pass）</li>
+</ol>
+<p>两个“是“就批准。这比读 500 行 diff 快一个数量级，而且注意力落在真正需要人类
+判断的地方。想看过程再加 <code>--history</code>：</p>
+<pre><code class="language-text">run                    pass  fail  skip  Δ
+2026-07-12T20:14:03    3     2     0     -
+2026-07-12T20:31:17    5     0     0     +2 pass
+</code></pre>
+<h2 id="stamp合同--提交"><a class="header" href="#stamp合同--提交">stamp：合同 ↔ 提交</a></h2>
+<pre><code class="language-bash">agent-spec stamp specs/task.spec.md --dry-run
+</code></pre>
+<pre><code class="language-text">Spec-Name: 用户注册API
+Spec-Passing: true
+Spec-Summary: 4/4 passed, 0 failed, 0 skipped, 0 uncertain
+</code></pre>
+<p>trailer 进 commit message，溯源链完成：从任意提交都能回答“它兑现的是哪份合同、
+当时的验证状态如何“。</p>
+<h2 id="matrix-与-audit证据的台账"><a class="header" href="#matrix-与-audit证据的台账">matrix 与 audit：证据的台账</a></h2>
+<pre class="mermaid">graph LR
+    M["matrix&lt;br/&gt;Rule × Scenario × Test × Verdict × Provenance"] --&gt; P["Computational&lt;br/&gt;机械证据"]
+    M --&gt; I["Inferential&lt;br/&gt;AI 证据"]
+    A["audit&lt;br/&gt;库健康度:未证明的 Rule·未分组场景·打开的问题·lint-ack 台账"] -.只观察,永不阻断.- M
+</pre>
+
+<p><code>matrix</code> 回答“哪条规则由哪些测试以何种证据证明“；<code>audit</code> 是周期性健康快照——
+它<strong>只观察从不阻断</strong>，包括 lint-ack 的豁免记录也在这里可查。</p>
+<h2 id="archive完成即出场"><a class="header" href="#archive完成即出场">archive：完成即出场</a></h2>
+<p>验收后的合同应该离开活跃扫描集：</p>
+<pre><code class="language-bash">agent-spec archive --spec-dir specs --archive-dir .agent-spec/archive/specs \
+  --summary knowledge/context/spec-archives.md --run-log-dir . --dry-run
+</code></pre>
+<p>先 <code>--dry-run</code> 审阅压缩摘要，再对 <code>done/completed</code> 且<strong>最新 lifecycle 证据仍然
+通过</strong>的合同实际归档。证据缺失或失败会阻断归档并给出诊断——归档不是遗忘，
+归档处的合同内容与证据依旧可查（三轴状态里 archived 是执行阶梯的顶端，
+详见第 11 章）。</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="第-10-章-从-prd-到需求-ir"><a class="header" href="#第-10-章-从-prd-到需求-ir">第 10 章 从 PRD 到需求 IR</a></h1>
+<blockquote>
+<p><strong>定位</strong>：本章进入意图编译的入口——原始 PRD/Issue 如何变成人类确认的需求 IR，
+以及 YAML 方言侧门。前置依赖：第 3 章；建议先读第 4 章。基于 agent-spec 1.0.0。</p>
+</blockquote>
+<h2 id="谁拥有需求所有权规则"><a class="header" href="#谁拥有需求所有权规则">谁拥有需求：所有权规则</a></h2>
+<p>正常流程是：人和 AI 聊需求 → 聊出一份<strong>手写的自然语言文档</strong> → 人类确认 →
+这份文档（<code>knowledge/requirements/req-*.md</code>）成为<strong>手工拥有的规范 IR</strong> → 之后
+才交给编译器降低。两条铁律：</p>
+<ol>
+<li><strong>确认后的需求文档是唯一真相</strong>。YAML 只是侧门输入方言与导出投影，永远不是
+已确认需求的源头。</li>
+<li><strong>编译只读治理状态</strong>。<code>import/graph/work-units/plan</code> 任何一步都不会改动
+需求文档一个字节。</li>
+</ol>
+<pre class="mermaid">graph LR
+    RAW["原始材料&lt;br/&gt;PRD·Issue·对话"] --&gt;|"AI 起草候选块&lt;br/&gt;(人审)"| MARK["标记块&lt;br/&gt;&amp;lt;!-- agent-spec:requirement --&amp;gt;"]
+    MARK --&gt;|requirements import| IR["需求 IR&lt;br/&gt;req-*.md · status: proposed"]
+    YAML["requirements.yaml&lt;br/&gt;(侧门方言)"] --&gt;|import --from *.yaml| IR
+    IR --&gt;|人类 transition| ACC["status: accepted"]
+    IR -.export 投影.-&gt; YAML
+</pre>
+
+<h2 id="标记块-intake"><a class="header" href="#标记块-intake">标记块 intake</a></h2>
+<p><code>requirements import</code> 只消费<strong>显式标记块</strong>——它从不静默解读散文：</p>
+<pre><code class="language-markdown">&lt;!-- agent-spec:requirement id=REQ-NOTE-CREATE title="创建笔记" --&gt;
+## Problem
+用户需要快速创建笔记。
+## Requirements
+[REQ-NOTE-CREATE] 系统 MUST 在 200ms 内完成笔记创建。
+&lt;!-- /agent-spec:requirement --&gt;
+</code></pre>
+<pre><code class="language-bash">agent-spec requirements import --from docs/prd.md --out knowledge/requirements
+</code></pre>
+<p>生成的文档带 <code>status: proposed</code>——<strong>候选</strong>身份，直到人类显式接受（下一章）。
+原始散文的结构化由 <code>agent-spec-requirements-compiler</code> 技能辅助起草：候选块必须
+带源摘录、置信度、场景与打开的问题，人审后才进 import。</p>
+<h2 id="yaml-方言v11"><a class="header" href="#yaml-方言v11">YAML 方言（v1.1）</a></h2>
+<p>对接外部生态时，<code>requirements.yaml</code> 树可以直接导入：</p>
+<pre><code class="language-yaml">requirements:
+  - id: booking
+    title: "Booking"
+    type: FOLDER
+    status: accepted
+    scenarios:
+      - name: "booking succeeds"
+        given: "an available slot"
+        when: "a visitor books it"
+        then: "the slot is reserved"
+    children:
+      - id: reserve
+        title: "Reserve"
+        type: ATOMIC
+        statement: "The system MUST reserve a slot exactly once."
+</code></pre>
+<p>方言是<strong>受约束的子集</strong>：两空格缩进、无锚点、无 flow 集合（<code>[]</code> 也不行）——
+超出子集的构造会得到指名道姓的 <code>yaml-unsupported-construct</code> 诊断，而不是猜测性
+解析。导入产物带 <code>source: imported-yaml</code> 溯源标记，且不带 <code>--force</code> 时拒绝
+覆盖已有文档。</p>
+<p>反方向的导出（<code>requirements export --out requirements.yaml</code>）是<strong>派生投影</strong>：
+往返是不动点（导出→导入→再导出逐字节相同），<code>--check</code> 做漂移门，装不下的内容
+（Source Trace、tags 等）进 lossiness 清单而非静默丢弃。</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="第-11-章-治理与三轴状态"><a class="header" href="#第-11-章-治理与三轴状态">第 11 章 治理与三轴状态</a></h1>
+<blockquote>
+<p><strong>定位</strong>：本章讲需求的生命周期治理——显式人类转换、原子替换与一条命令看清
+三个独立状态轴。前置依赖：第 10 章。基于 agent-spec 1.0.0。</p>
+</blockquote>
+<h2 id="状态机接受是显式动作"><a class="header" href="#状态机接受是显式动作">状态机：接受是显式动作</a></h2>
+<pre class="mermaid">stateDiagram-v2
+    [*] --&gt; proposed: intake 产出
+    proposed --&gt; accepted: transition --to accepted
+    proposed --&gt; rejected: transition --to rejected
+    accepted --&gt; deprecated: transition --to deprecated
+    accepted --&gt; superseded: supersede --by NEW
+    note right of accepted: 缺失 status 会让\nplan --gate 直接失败
+</pre>
+
+<pre><code class="language-bash">agent-spec requirements transition REQ-BOOKING --to accepted
+</code></pre>
+<pre><code class="language-text">REQ-BOOKING: proposed -&gt; accepted (knowledge/requirements/req-booking.md)
+</code></pre>
+<p>三条纪律：改写是<strong>行精确</strong>的（只动 frontmatter 的 <code>status:</code> 行）；非法转换是
+诊断（accepted 回不到 proposed）；<code>superseded</code> 只能经 <code>supersede</code> 命令到达——
+它原子地改写两份文档（旧文档标 superseded，新文档记 <code>supersedes:</code>），第二次
+写入失败会回滚第一次。</p>
+<p>机器消费加 <code>--format json</code>——输出带改写后文档的 blake3 摘要，且<strong>没有</strong>
+actor/authority/approval 字段（谁批准的由编排系统在自己的证据链里绑定到摘要上，
+详见第 18 章 ADR-001）：</p>
+<pre><code class="language-json">{
+  "document": "knowledge/requirements/req-provenance-run-hardening.md",
+  "document_digest": "4a974a05742095071661737b5b676ef50a5bc07ce8f24c60486518a47b60f28f",
+  "from": "proposed",
+  "id": "REQ-PROVENANCE-RUN-HARDENING",
+  "to": "accepted"
+}
+</code></pre>
+<h2 id="三轴状态一条命令回答req-x-现在怎么样了"><a class="header" href="#三轴状态一条命令回答req-x-现在怎么样了">三轴状态：一条命令回答“REQ-X 现在怎么样了“</a></h2>
+<p>治理（人定、持久化）、执行（从工件推导）、liveness（从当前 verdict 重算）是
+<strong>三个独立的轴</strong>：</p>
+<pre><code class="language-bash">agent-spec requirements status REQ-INTENT-CODE-LINKER
+</code></pre>
+<pre><code class="language-text">REQ-INTENT-CODE-LINKER
+  governance: accepted
+  execution:  verified (work unit: ready)
+  liveness:   honored
+</code></pre>
+<p>执行阶梯自底向上：<code>unplanned → planned → ready → active → verified → archived</code>
+——staged 合同是 planned，工作单元就绪是 ready，活跃合同是 active，活跃且
+honored 是 verified，归档是 archived。liveness 三值 honored / violated /
+unproven（外加声明性的 na），<strong>永远重算，从不存储</strong>——不存在“上次是绿的“这种
+陈旧安慰（详见第 15 章）。</p>
+<h2 id="开工仪式"><a class="header" href="#开工仪式">开工仪式</a></h2>
+<p>接受一条需求意味着排期义务。plan 门会强制配对：accepted 而无活跃合同 →
+<code>requirement-uncovered</code> 失败。因此标准开工动作是一次变更里同时完成——</p>
+<pre><code class="language-bash">agent-spec requirements transition REQ-X --to accepted
+git mv specs/roadmap/task-x.spec.md specs/
+</code></pre>
+<p>这套仪式在本书自己的写作中如实上演过（详见附录 C）。</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="第-12-章-计划与工作单元"><a class="header" href="#第-12-章-计划与工作单元">第 12 章 计划与工作单元</a></h1>
+<blockquote>
+<p><strong>定位</strong>：本章讲需求 IR 的降低（lowering）：验证需求图、生成工作单元、
+汇成计划 DAG，直至可评审的合同草稿。前置依赖：第 11 章。基于 agent-spec 1.0.0。</p>
+</blockquote>
+<h2 id="降低管线"><a class="header" href="#降低管线">降低管线</a></h2>
+<pre class="mermaid">graph TD
+    IR["需求 IR&lt;br/&gt;knowledge/requirements/"] --&gt; G["requirements graph --gate&lt;br/&gt;结构校验:悬空依赖·环·治理缺失"]
+    G --&gt; W["requirements work-units&lt;br/&gt;WU-REQ-*:ready/blocked/informational"]
+    W --&gt; P["requirements plan --gate&lt;br/&gt;需求×工作单元×合同 三层 DAG"]
+    P --&gt; D["requirements draft-specs&lt;br/&gt;可评审的任务合同草稿"]
+    P --&gt; Q["requirements questions&lt;br/&gt;从诊断生成澄清问题"]
+    P --&gt; T["requirements test-obligations&lt;br/&gt;独立于代码的测试义务"]
+</pre>
+
+<h2 id="graph-与-work-units"><a class="header" href="#graph-与-work-units">graph 与 work-units</a></h2>
+<pre><code class="language-bash">agent-spec requirements graph --knowledge knowledge --format json --gate
+agent-spec requirements work-units --knowledge knowledge --out .agent-spec/work_units.json
+</code></pre>
+<p>graph 校验依赖 DAG（悬空引用、环）与治理完整性——<strong>没有 status 的需求会直接
+让 gate 失败</strong>。work-units 把每条需求降低为工作单元并给出状态：</p>
+<ul>
+<li><code>ready</code>：accepted + 场景齐备 + 可排期；</li>
+<li><code>blocked</code>：缺场景等（<code>blocked: missing_scenarios</code>）；</li>
+<li><code>informational</code>：proposed/缺状态——<strong>治理未接受的工作永不 ready</strong>。</li>
+</ul>
+<h2 id="plan一个-dag-看三层"><a class="header" href="#plan一个-dag-看三层">plan：一个 DAG 看三层</a></h2>
+<pre><code class="language-bash">agent-spec requirements plan --knowledge knowledge --specs specs --gate
+</code></pre>
+<pre><code class="language-text">batch 1: REQ-CODE-LIVE-WIKI, REQ-KLL-WORK-UNITS, REQ-RUST-ATLAS
+batch 2: REQ-CODE-LIVE-WIKI-DEEPENING, REQ-REQUIREMENTS-COMPILER-PLAN-DAG
+batch 3: REQ-CROSS-PROJECT-WIKI
+</code></pre>
+<p>批次即拓扑序：同批次可并行。gate 语义里最重要的一条是
+<code>requirement-uncovered</code>——accepted 的需求没有活跃合同守护时失败。这正是上一章
+“开工仪式“的机械依据：<strong>接受即排期义务</strong>。</p>
+<h2 id="draft-specs草稿不是成品"><a class="header" href="#draft-specs草稿不是成品">draft-specs：草稿不是成品</a></h2>
+<pre><code class="language-bash">agent-spec requirements draft-specs --knowledge knowledge --out specs/generated
+</code></pre>
+<p>只有 <code>ready</code> 单元会生成草稿。草稿自带 <code>satisfies: [REQ-*]</code> 与占位选择器
+（<code>pending_...</code>）——<strong>lifecycle 对草稿本来就应该失败</strong>，直到人类评审、补上真实
+测试选择器并提升到 <code>specs/</code>。草稿是起点，不是可以直接執行的合同。</p>
+<p>worktree 并行开发的机械配套：</p>
+<pre><code class="language-bash">agent-spec requirements worktrees --base main --path-prefix ../ws --out .agent-spec/worktrees.json
+</code></pre>
+<p>为每个 ready 单元生成确定性的 git worktree 条目（路径、分支名），供编排系统
+直接消费。</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="第-13-章-溯源与重放"><a class="header" href="#第-13-章-溯源与重放">第 13 章 溯源与重放</a></h1>
+<blockquote>
+<p><strong>定位</strong>：本章讲证据链——一条需求的可追溯投影、编译的可重放清单与漂移检测。
+前置依赖：第 11 章；trace ledger 细节关联第 15 章。基于 agent-spec 1.0.0。</p>
+</blockquote>
+<h2 id="traceability一个文档看完整证据链"><a class="header" href="#traceability一个文档看完整证据链">traceability：一个文档看完整证据链</a></h2>
+<pre><code class="language-bash">agent-spec requirements traceability REQ-X --format json --out trace.json
+</code></pre>
+<p>投影是<strong>纯读</strong>且<strong>字节稳定</strong>（同输入两次运行逐字节相同）：条款 → 满足它的合同
+→ 场景 → 绑定测试 → 最近记录的 verdict → 派生 liveness，一次给全。verdict 来自
+存储的 trace ledger（不重跑测试），schema 为 <code>requirement-traceability-v1</code>。
+仪表盘和编排系统消费这一个文档就够了，不必自己重推导。</p>
+<h2 id="编译运行清单provenance-v2"><a class="header" href="#编译运行清单provenance-v2">编译运行清单（provenance v2）</a></h2>
+<p>每个写 <code>--out</code> 工件的 requirements 命令都能附带清单：</p>
+<pre><code class="language-bash">agent-spec requirements work-units --out wu.json --provenance wu.compilation.json
+</code></pre>
+<pre><code class="language-text">provenance: wu.compilation.json (build 85b8f4f5dba5cf19c1d6c8ba34e9777d0e01cba8)
+</code></pre>
+<p>v2 清单绑定四件事：<strong>编译器构建身份</strong>（crate 版本 + 构建期嵌入的 git commit，
+无 git 环境则为 <code>unknown</code>）、<strong>生效配置</strong>（子命令 + 旗标数组）、<strong>输入语料摘要</strong>
+（知识树 blake3）、<strong>输出摘要</strong>。v1 清单（import/export）继续有效。</p>
+<h2 id="verify-run确定性成为可执行检查"><a class="header" href="#verify-run确定性成为可执行检查">verify-run：确定性成为可执行检查</a></h2>
+<pre><code class="language-bash">agent-spec requirements verify-run --manifest wu.compilation.json
+</code></pre>
+<pre><code class="language-text">verify-run requirements work-units: 0 output(s) drifted
+</code></pre>
+<p>重放在<strong>内存中</strong>进行（什么都不写——最强形式的沙箱）：按清单记录的命令与配置
+重新渲染，逐字节对照记录的摘要，漂移的输出逐个点名、非零退出。记录与重放共用
+同一渲染函数，<strong>字节奇偶性是构造保证</strong>而非测试巧合。</p>
+<pre class="mermaid">sequenceDiagram
+    participant C as 编译命令
+    participant M as v2 清单
+    participant V as verify-run
+    C-&gt;&gt;M: 记录(构建身份+配置+输入/输出摘要)
+    Note over C,M: 时间流逝,有人改了知识树?
+    V-&gt;&gt;M: 读清单
+    V-&gt;&gt;V: 内存重渲染(同一函数)
+    V--&gt;&gt;M: 逐字节对照
+    V--&gt;&gt;C: 0 drifted / 点名漂移文件,exit≠0
+</pre>
+
+<h2 id="trace--replay--explain-failure"><a class="header" href="#trace--replay--explain-failure">trace / replay / explain-failure</a></h2>
+<p>需求级证据的三个读命令：<code>trace REQ-X</code> 列出全部 trace 记录；<code>replay REQ-X</code> 取
+<strong>最近一次运行</strong>的证据链（是证据重放，不是“确定性 LLM 重放“）；
+<code>explain-failure REQ-X</code> 聚焦非 pass 链并解释。这些记录从 lifecycle 的
+<code>--run-log-dir</code>/trace 写入，1.0 起还携带类型化代码目标（详见第 14 章）。</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="第-14-章-编译束与代码绑定"><a class="header" href="#第-14-章-编译束与代码绑定">第 14 章 编译束与代码绑定</a></h1>
+<blockquote>
+<p><strong>定位</strong>：本章讲编译器的打包出口：per-requirement 四件套编译束、工作单元的
+代码绑定与一体化执行束。前置依赖：第 12、13 章；符号语义见第 8 章。
+基于 agent-spec 1.0.0。</p>
+</blockquote>
+<h2 id="requirements-compile四件套"><a class="header" href="#requirements-compile四件套">requirements compile：四件套</a></h2>
+<pre><code class="language-bash">agent-spec requirements compile --out bundles/ --layout arc-v1
+</code></pre>
+<pre><code class="language-text">compiled REQ-PARITY-BOOKING: 4 files (bundle eabda2986cdcdeced70613b89e1ec500...)
+bundles written: 1 -&gt; bundles/
+</code></pre>
+<p>每条 accepted 需求产出：需求文档、合同草稿、traceability 投影、编译清单
+（含逐工件摘要 + <strong>bundle 总摘要</strong>——外部准入检查可以钉住整个束）。两种布局：</p>
+<ul>
+<li><code>agent-spec-v1</code>（默认，中立）：<code>&lt;id&gt;/requirements.md</code>、<code>spec.md</code>、
+<code>traceability.json</code>、<code>compilation.json</code>；</li>
+<li><code>arc-v1</code>（边缘兼容投影）：<code>&lt;id&gt;.requirements.md</code>、<code>&lt;id&gt;.spec.md</code>、
+<code>&lt;id&gt;.arc.traceability.json</code>、<code>&lt;id&gt;.arc.compilation.json</code>——内容与中立布局
+完全相同，只有文件命名不同。像 SARIF/SCIP 一样，兼容是<strong>文件布局层面的事</strong>，
+核心 schema 里没有任何外部项目的词汇（有机械测试守着这条纪律）。</li>
+</ul>
+<p>写入是<strong>原子</strong>的：全部工件先在内存渲染校验，任何失败什么都不落盘；已有文件
+不带 <code>--force</code> 拒绝覆盖并逐个点名。compile 清单同样可 <code>verify-run</code> 重放。</p>
+<h2 id="requirements-bind把工作单元钉到代码"><a class="header" href="#requirements-bind把工作单元钉到代码">requirements bind：把工作单元钉到代码</a></h2>
+<pre><code class="language-bash">agent-spec requirements bind --code . --graph .agent-spec/graph
+</code></pre>
+<p>对每个 ready 工作单元，取其合同声明的 <code>### Symbols</code>，在 provider 图（首个
+provider 是 rust-atlas，详见第 16 章）中解析成真实代码目标，写出
+<code>.agent-spec/code-bindings.json</code>：需求 id、工作单元 id、provider、<strong>图指纹</strong>、
+排序后的目标（node id / kind / file / provenance）。三条硬语义：</p>
+<ul>
+<li><strong>图滞后即失败</strong>：stale 文件逐个点名，绝不产出绑定；</li>
+<li><strong>未知 provider 即诊断</strong>：指名 spec 与注册表；</li>
+<li><strong>绑定是派生工作数据，永远不是 KLL 真相</strong>——随时可从图重新生成。</li>
+</ul>
+<h2 id="requirements-bundle一个工件给-agent-全部上下文"><a class="header" href="#requirements-bundle一个工件给-agent-全部上下文">requirements bundle：一个工件给 Agent 全部上下文</a></h2>
+<pre><code class="language-bash">agent-spec requirements bundle --unit WU-REQ-X --out bundle.json
+</code></pre>
+<pre class="mermaid">graph TD
+    B[Execution Bundle] --&gt; W[work_unit]
+    B --&gt; K["contracts&lt;br/&gt;(内嵌全文+blake3)"]
+    B --&gt; CB["code_bindings&lt;br/&gt;(本单元的绑定)"]
+    B --&gt; QP["quality_profile&lt;br/&gt;(argv 数组,永不 shell 字符串)"]
+    B --&gt; SK["required_skills + receipts&lt;br/&gt;(id/版本/源/内容哈希)"]
+    B --&gt; FC["fast_checks&lt;br/&gt;(clippy/fmt 先跑)"]
+    B --&gt; AG["acceptance_gates&lt;br/&gt;(lifecycle + 必需验证 provider)"]
+</pre>
+
+<p>质量 provider 有类型化角色（code-intelligence / diagnostic / verification /
+transformation / agent-guidance）与归一化 outcome（pass / fail / unavailable /
+error / 授权 skip）。两条被类型层面固化的纪律：<strong>必需 provider 不可用永远不算
+通过证据</strong>；<strong>技能回执是来源凭证，永远不是验收证据</strong>——验收只认确定性工具输出
+与 lifecycle verdict。</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="第-15-章-kll-与-liveness"><a class="header" href="#第-15-章-kll-与-liveness">第 15 章 KLL 与 liveness</a></h1>
+<blockquote>
+<p><strong>定位</strong>：本章讲合同之外的持久知识层：四类知识文档、satisfies 边与永远重算的
+liveness。前置依赖：第 9 章。基于 agent-spec 1.0.0。</p>
+</blockquote>
+<h2 id="知识为什么需要一层"><a class="header" href="#知识为什么需要一层">知识为什么需要一层</a></h2>
+<p>合同验证任务，但团队的持久知识——为什么这么决定、哪些需求还活着、给 AI 的
+指导——散落在 PR 描述和聊天记录里会腐烂。KLL（Knowledge &amp; Liveness Layer）
+把它们放进 <code>knowledge/</code>，用类型化文档承载，用 <code>satisfies:</code> 边连回合同：</p>
+<pre class="mermaid">graph LR
+    subgraph knowledge/
+        D["decision&lt;br/&gt;ADR-*"]
+        R["requirement&lt;br/&gt;REQ-*"]
+        G["guidance&lt;br/&gt;给 AI 的指导"]
+        P["proposal&lt;br/&gt;提案,恒 na"]
+    end
+    S["specs/*.spec.md&lt;br/&gt;satisfies: [REQ-*, ADR-*]"] --&gt;|守护| R
+    S --&gt;|守护| D
+    P --&gt;|"Produces: ADR-x"| D
+    V["当前 verdict"] -.重算.-&gt; L["liveness&lt;br/&gt;honored/violated/unproven/na"]
+    R -.-&gt; L
+    D -.-&gt; L
+</pre>
+
+<ul>
+<li><strong>decision（ADR）</strong>：accepted 的决策强制 <code>Alternatives Considered</code> 非空、
+<code>Consequences</code> 正反两面（forcing functions）——写决策时就被迫诚实。</li>
+<li><strong>requirement（REQ）</strong>：BCP-14 规范句（MUST/SHOULD/MAY），一行一条款。</li>
+<li><strong>guidance</strong>：作用域化的 AI 指导（<code>Applies To</code> glob + <code>Skills</code> 指定）。</li>
+<li><strong>proposal</strong>：治理型提案，liveness 恒 <code>na</code>，永不进代码门，经
+<code>## Produces:</code> 链到它催生的决策。</li>
+</ul>
+<h2 id="liveness从不存储的答案"><a class="header" href="#liveness从不存储的答案">liveness：从不存储的答案</a></h2>
+<pre><code class="language-bash">agent-spec trace REQ-X --gate
+</code></pre>
+<p>回答“这条知识现在还被通过中的合同守着吗“：</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>liveness</th><th>含义</th></tr>
+</thead>
+<tbody>
+<tr><td><code>honored</code></td><td>有满足它的合同且全部通过</td></tr>
+<tr><td><code>violated</code></td><td>有合同在失败</td></tr>
+<tr><td><code>unproven</code></td><td>没有合同守护或证据不足</td></tr>
+<tr><td><code>na</code></td><td>声明性不适用（如 proposal）</td></tr>
+</tbody>
+</table>
+</div>
+<p>关键设计：<strong>它是派生值，重算于每次询问，从不落盘</strong>。不存在“数据库里记着绿色
+但代码早烂了“的陈旧状态。<code>--gate</code> 让 violated 退出码 2，可直接进 CI。</p>
+<h2 id="治理-lint"><a class="header" href="#治理-lint">治理 lint</a></h2>
+<pre><code class="language-bash">agent-spec lint-knowledge --knowledge knowledge --gate
+</code></pre>
+<pre><code class="language-text">19 docs, 202 findings (0 errors)
+</code></pre>
+<p>语料级校验：id 冲突、supersession 完整性（superseded 必须有对应的
+<code>supersedes:</code> 回链）、陈旧引用；文档级 forcing functions（上文的 ADR 规则等）。
+<code>--format sarif</code> 可直接喂 GitHub Code Scanning。</p>
+<p>一键铺设整个知识工作区：<code>agent-spec init --workspace</code>（幂等）。</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="第-16-章-rust-atlas"><a class="header" href="#第-16-章-rust-atlas">第 16 章 Rust Atlas</a></h1>
+<blockquote>
+<p><strong>定位</strong>：本章讲代码图 provider——查结构而非查文本：构建、查询、新鲜度与
+冻结模式。前置依赖：第 8 章的符号语义。基于 agent-spec 1.0.0
+（rust-atlas crate 0.1.0）。</p>
+</blockquote>
+<h2 id="为什么不用-grep"><a class="header" href="#为什么不用-grep">为什么不用 grep</a></h2>
+<p>Agent 理解代码时反复 grep 是在用文本近似结构。Atlas 用 <code>syn</code> 在 stable 工具链
+上把 Rust 源码提取成<strong>项目图</strong>：模块、类型、trait、impl、调用边——每条边带
+provenance（syn / scip / mir），每个分片带源文件 blake3。</p>
+<pre><code class="language-bash">agent-spec atlas build --code .            # 构建/增量刷新(逐文件分片+blake3)
+agent-spec atlas query spec_verify::Verifier --format json
+agent-spec atlas refs Verifier             # 谁引用/调用它
+agent-spec atlas impls Verifier            # 哪些 impl 触及该 trait/类型
+agent-spec atlas tree --code .             # 确定性模块大纲
+agent-spec atlas check --code .            # 新鲜度门:任何分片滞后即非零退出
+</code></pre>
+<pre class="mermaid">graph TD
+    SRC["src/**.rs"] --&gt;|syn 提取| SH["逐文件分片&lt;br/&gt;nodes+edges+源文件 blake3"]
+    SCIP["SCIP 索引(可选)"] -.叠加锐化边.-&gt; SH
+    SH --&gt; Q["query/refs/impls/tree"]
+    SH --&gt; CK["check:分片 hash × 当前文件 hash"]
+    CK --&gt;|滞后| STALE["点名 stale 文件,exit≠0"]
+    Q --&gt;|"--frozen"| FR["拒绝静默陈旧答案"]
+</pre>
+
+<h2 id="新鲜度是门不是提示"><a class="header" href="#新鲜度是门不是提示">新鲜度是门，不是提示</a></h2>
+<p>分片记录它来自哪个字节状态的源文件。<code>check</code> 在 CI 里把“图落后于代码“变成硬失败；
+读命令加 <code>--frozen</code> 则拒绝在陈旧图上给出答案。第 8 章的 <code>atlas-stale</code> 优先语义、
+第 14 章 bind 的滞后即失败，根源都在这里：<strong>宁可说“我不知道“，不给过期事实</strong>。</p>
+<h2 id="图的消费者们"><a class="header" href="#图的消费者们">图的消费者们</a></h2>
+<ul>
+<li><strong>合同符号验证</strong>（第 8 章）：lifecycle 拿新鲜图核对 <code>### Symbols</code>。</li>
+<li><strong>代码绑定</strong>（第 14 章）：ready 工作单元解析成带图指纹的代码目标。</li>
+<li><strong>类型化 trace 目标</strong>：通过验证的运行把 provider/node/kind/file/provenance/
+图指纹写进 trace 证据。</li>
+<li><strong>MCP</strong>：<code>atlas_tree / atlas_query / atlas_refs / atlas_impls / atlas_status</code>
+五个只读工具，任何 MCP 客户端“问谁调用了它“得到的是带 provenance 的边，
+不是 grep 命中（详见第 17 章）。</li>
+</ul>
+<h2 id="增量与自托管"><a class="header" href="#增量与自托管">增量与自托管</a></h2>
+<p>分片只在源文件 hash 变化时重建——大仓库重索引的成本是一个文件而不是全世界。
+agent-spec 仓库自托管：75 个文件全图零 unparsed。MIR 层（rustc 驱动的深度事实）
+是 0.7 弧的 additive 深化，已在路线图合同中staged。</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="第-17-章-live-wiki-与-mcp"><a class="header" href="#第-17-章-live-wiki-与-mcp">第 17 章 Live Wiki 与 MCP</a></h1>
+<blockquote>
+<p><strong>定位</strong>：本章讲 Agent 的工作记忆（源码溯源的 live wiki）与知识层的在线服务
+（只读 MCP）。前置依赖：第 15 章。基于 agent-spec 1.0.0。</p>
+</blockquote>
+<h2 id="live-wiki会过期报警的工作记忆"><a class="header" href="#live-wiki会过期报警的工作记忆">Live Wiki：会过期报警的工作记忆</a></h2>
+<p><code>.agent-spec/wiki</code> 是仓库内被 git 跟踪的 wiki——不是 KLL 真相，不是发布文档，
+而是 <strong>Agent 的工作记忆</strong>：模块页、概念页、决策页、架构清单、跨项目地图。
+每篇文章声明 <code>source_files</code>，源码一变即被标记陈旧：</p>
+<pre><code class="language-bash">agent-spec wiki init --code .            # 铺目录(各文章目录带 .gitkeep)
+agent-spec wiki seed --code .            # 聚焦式草稿页,不覆盖手工维护页
+agent-spec wiki status                   # 哪些页陈旧了(含 worktree 未提交变更)
+agent-spec wiki query "requirements compiler"
+agent-spec wiki inspect src/spec_wiki/live.rs
+agent-spec wiki check                    # 索引新鲜度+lint+陈旧状态,CI 结构门
+</code></pre>
+<pre class="mermaid">graph LR
+    CODE[源码] --&gt;|source_files| ART[wiki 文章]
+    ART --&gt;|"wiki status"| STALE{源码变了?}
+    STALE --&gt;|是| WARN[标记陈旧页]
+    PROJ["projects/*.md&lt;br/&gt;外部项目页"] --&gt; MAP["project-map.json/.mmd&lt;br/&gt;派生地图"]
+    FLOW["flows/*.md&lt;br/&gt;跨项目数据流"] --&gt; MAP
+    MAP -.lint 要求与文章精确一致.- ART
+</pre>
+
+<p>跨项目场景用 project/flow 文章：<code>projects</code> 列表的相邻对构成有向边，仓库外的
+路径只进 <code>external_sources</code> 证据标签（agent-spec 不扫描外部仓库）。派生的
+project-map 必须与维护文章精确一致，<code>wiki lint</code> 守着。工作纪律：大量读源码前
+先 <code>wiki query</code>；旧内容移入 <code>learnings/</code> 存档而非粗暴删除。</p>
+<h2 id="只读-mcp项目真相在线可查"><a class="header" href="#只读-mcp项目真相在线可查">只读 MCP：项目真相在线可查</a></h2>
+<pre><code class="language-bash">agent-spec mcp --knowledge knowledge
+</code></pre>
+<p>通过 stdio JSON-RPC 提供 <strong>11 个确定性只读工具</strong>（无 RAG、无网络）：</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>组</th><th>工具</th></tr>
+</thead>
+<tbody>
+<tr><td>知识</td><td><code>knowledge.find</code> / <code>knowledge.governing</code> / <code>context.read</code></td></tr>
+<tr><td>活性</td><td><code>liveness.status</code></td></tr>
+<tr><td>合同</td><td><code>spec.contract</code></td></tr>
+<tr><td>指导</td><td><code>guidance.for</code></td></tr>
+<tr><td>代码图</td><td><code>atlas_tree</code> / <code>atlas_query</code> / <code>atlas_refs</code> / <code>atlas_impls</code> / <code>atlas_status</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>任何 MCP 客户端（Claude Code、Codex、自研编排器）都能实时查询项目真相，而
+不是反复重读文件。<strong>只读</strong>是边界承诺：审批、治理转换等写操作永远走 CLI——
+这与第 18 章的 ADR-001 一脉相承。</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="第-18-章-设计哲学"><a class="header" href="#第-18-章-设计哲学">第 18 章 设计哲学</a></h1>
+<blockquote>
+<p><strong>定位</strong>：本章把散在前十七章里的设计选择收拢成五条原则——它们解释了这个
+工具为什么长这样。前置依赖：通读第一、二部分任意深度。基于 agent-spec 1.0.0。</p>
+</blockquote>
+<h2 id="一审查点位移"><a class="header" href="#一审查点位移">一、审查点位移</a></h2>
+<p>人类时间最贵的用法不是读 Agent 写的代码，而是定义“什么是正确“。整个工具链
+围绕这一点组织：合同是人写的（50-80 行自然语言），验证是机器做的（四层确定性
+管线），人类最后只回答“合同对吗、验证全过了吗“。</p>
+<h2 id="二确定性优先ai-在边缘"><a class="header" href="#二确定性优先ai-在边缘">二、确定性优先，AI 在边缘</a></h2>
+<pre class="mermaid">graph TD
+    DET["确定性核心&lt;br/&gt;lint·结构·边界·测试·符号&lt;br/&gt;零 token·无假阴性·可重放"] --&gt; AI["AI 只在边缘&lt;br/&gt;intake 起草(人审)·caller 验证(标注 Inferential)"]
+    style DET fill:#16321f
+    style AI fill:#2a2440,stroke-dasharray:4
+</pre>
+
+<p>每个新增检查都是<strong>传感器</strong>（lint/report/audit），从不静默改变 pass/fail 语义。
+AI 证据与机械证据在 matrix 里 provenance 分明——<code>Inferential</code> 永远不会被
+默默当作 <code>Computational</code>。</p>
+<h2 id="三skip--pass诚实的五值逻辑"><a class="header" href="#三skip--pass诚实的五值逻辑">三、skip ≠ pass（诚实的五值逻辑）</a></h2>
+<p>“没验证“与“验证通过“是两件事。五种 verdict 各司其职，<code>is_passing</code> 只认
+“跑了且全过”。同族的诚实还有：required provider 不可用<strong>不是</strong> pass；技能
+回执<strong>不是</strong>验收证据；lint-ack 豁免<strong>计入台账</strong>而非消音；draft-specs 的占位
+选择器<strong>本来就该失败</strong>。工具宁可红着，不给虚假的绿。</p>
+<h2 id="四derived-never-stored派生值从不落盘"><a class="header" href="#四derived-never-stored派生值从不落盘">四、derived, never stored（派生值从不落盘）</a></h2>
+<p>liveness 每次询问都重算；traceability 是纯读投影；代码绑定随时可从图重生成；
+wiki 的陈旧标记来自当下的源码对照。<strong>任何会腐烂的答案都不允许缓存成“真相“</strong>。
+反过来，被持久化的只有事实：需求文档、trace 记录、编译清单——以及它们的
+blake3 摘要。</p>
+<h2 id="五编排器中立adr-001"><a class="header" href="#五编排器中立adr-001">五、编排器中立（ADR-001）</a></h2>
+<blockquote>
+<p>agent-spec 提供确定性编译产物、稳定机器格式、digest 和重放能力；任何编排器
+都可以在命令之间插入审批，但<strong>审批身份、权威和工作流永远不进入编译器核心</strong>。</p>
+</blockquote>
+<p>CLI 无法可信证明“谁批准了“，所以它不假装能：JSON 输出带文档摘要，外部系统把
+审批绑定到摘要上。依赖方向是单向的——编排器依赖 agent-spec 的冻结表面，
+agent-spec 不知道任何编排器的存在。schema 里没有 actor/authority/approval/
+policy 字段，这条纪律本身有机械测试守着。被否掉的备选方案（审批协议入核、
+编排器命名的命令、双 canonical 所有权）连同否决理由记录在
+<code>knowledge/decisions/adr-001-orchestrator-neutral-core.md</code>——用它自己要求的
+forcing functions 格式写成。</p>
+<h2 id="这些原则的代价诚实清单"><a class="header" href="#这些原则的代价诚实清单">这些原则的代价（诚实清单）</a></h2>
+<p>确定性优先意味着 NFR（性能/可靠性）只能给 <code>uncertain</code>；测试选择器改名会让
+合同 skip（溯源宁断勿假的代价）；编排器中立意味着没有开箱即用的审批 UI。
+工具把这些代价写在 README 的 “What agent-spec doesn’t solve” 里，而不是藏起来。</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="第-19-章-架构全景"><a class="header" href="#第-19-章-架构全景">第 19 章 架构全景</a></h1>
+<blockquote>
+<p><strong>定位</strong>：本章是全书的收束——双 IR 收敛架构、五个交付边界与 1.0 兼容性
+承诺的完整清单。前置依赖：第 18 章。基于 agent-spec 1.0.0。</p>
+</blockquote>
+<h2 id="双-ir-收敛"><a class="header" href="#双-ir-收敛">双 IR 收敛</a></h2>
+<p>agent-spec 1.0 的架构是两条独立编译轨道在 Intent-Code Linker 汇合：</p>
+<pre class="mermaid">graph TB
+    subgraph 人类轨道
+        H["人类意图&lt;br/&gt;PRD·对话"] --&gt; INTAKE["Intake&lt;br/&gt;(AI 起草,人审)"]
+        INTAKE --&gt; RIR["需求 IR&lt;br/&gt;human-owned KLL 真相&lt;br/&gt;REQ-* · 治理状态机"]
+    end
+    subgraph 代码轨道
+        RS["Rust 源码"] --&gt; ATLAS["Rust Atlas"]
+        ATLAS --&gt; CIR["代码图 IR&lt;br/&gt;derived · blake3 staleness&lt;br/&gt;provenance 边"]
+    end
+    RIR --&gt; LINKER["Intent-Code Linker&lt;br/&gt;### Symbols 验证 · 代码绑定&lt;br/&gt;类型化 trace 目标"]
+    CIR --&gt; LINKER
+    LINKER --&gt; PLAN["可验证 Plan DAG&lt;br/&gt;需求×工作单元×合同"]
+    PLAN --&gt; AGENT["Agent 实现&lt;br/&gt;(边界+符号约束内)"]
+    AGENT --&gt; LC["lifecycle 验证"]
+    LC -.liveness 回灌,从不存储.-&gt; RIR
+</pre>
+
+<p>两条铁律贯穿始终：<strong>派生的代码事实永远不改写 KLL 真相</strong>（Linker 产出的绑定与
+trace 事实都是 derived 工作数据）；<strong>陈旧的图阻断一切定论</strong>（stale 优先于任何
+symbol 判断）。</p>
+<h2 id="五个交付边界10-全部落地"><a class="header" href="#五个交付边界10-全部落地">五个交付边界（1.0 全部落地）</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>边界</th><th>交付物</th><th>章节</th></tr>
+</thead>
+<tbody>
+<tr><td>1 治理门与转换</td><td>状态机、transition/supersede、缺状态即失败</td><td>第 11 章</td></tr>
+<tr><td>2 代码图 IR 与绑定</td><td>CodeGraphProvider 契约、<code>requirements bind</code></td><td>第 14、16 章</td></tr>
+<tr><td>3 Intent-Code Linker</td><td><code>### Symbols</code> 验证、类型化 trace 目标</td><td>第 8 章</td></tr>
+<tr><td>4 质量计划与执行束</td><td>provider 角色/outcome、<code>requirements bundle</code></td><td>第 14 章</td></tr>
+<tr><td>5 三轴状态查询</td><td><code>requirements status</code></td><td>第 11 章</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="schema-家族"><a class="header" href="#schema-家族">Schema 家族</a></h2>
+<p>机器格式的每一员都有版本化、命名空间化的 <code>$id</code>
+（<code>agent-spec/intent-compiler/*</code>），文件形式为可解析 URL：</p>
+<p><code>requirements-plan-v1</code> · <code>test-obligations-v1</code> · <code>worktree-manifest-v1</code> ·
+<code>clarification-questions-v1</code> · <code>requirement-trace-ledger-v1</code>（含类型化
+<code>code_target_facts</code>）· <code>compilation-provenance-v1</code> / <code>-v2</code>（可重放）·
+<code>requirement-traceability-v1</code> · <code>code-bindings-v1</code> · <code>execution-bundle-v1</code></p>
+<h2 id="10-兼容性承诺"><a class="header" href="#10-兼容性承诺">1.0 兼容性承诺</a></h2>
+<p>自 1.0.0 起，以下表面破坏性变更只随主版本：</p>
+<ul>
+<li><strong>CLI</strong>：全部命令族——从 <code>init/lint/contract/lifecycle/guard/explain/stamp</code>
+到 <code>requirements</code> 家族（含 <code>traceability|verify-run|compile|bind|bundle</code>）、
+<code>wiki *</code>、<code>atlas *</code>、<code>mcp</code>。</li>
+<li><strong>机器格式</strong>：lifecycle/verify JSON 顶层键；五种 verdict 与 <code>is_passing</code>
+语义；上面的全部 schema；YAML 方言 v1.1；编译束双布局
+（<code>agent-spec-v1</code>、<code>arc-v1</code>）。</li>
+<li><strong>治理语义</strong>：需求状态机、执行阶梯、derived-never-stored 的 liveness。</li>
+</ul>
+<p>之后的路：Atlas MIR 层（0.7 弧，additive 深化）与英文版全书。架构不会重来——
+它已经把自己钉进了机械验证里。</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="附录-a-命令速查表"><a class="header" href="#附录-a-命令速查表">附录 A 命令速查表</a></h1>
+<p>基于 agent-spec 1.0.0（兼容性承诺内的全部表面）。</p>
+<h2 id="合同工作流"><a class="header" href="#合同工作流">合同工作流</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>命令</th><th>用途</th></tr>
+</thead>
+<tbody>
+<tr><td><code>init --level task --lang zh --name N</code></td><td>脚手架新合同（<code>--template rewrite-parity</code> 用于迁移/对齐任务）</td></tr>
+<tr><td><code>parse &lt;spec&gt;</code></td><td>结构确认（段落数、场景数）</td></tr>
+<tr><td><code>lint &lt;spec&gt; --min-score 0.7</code></td><td>合同质量门</td></tr>
+<tr><td><code>contract &lt;spec&gt;</code></td><td>渲染任务合同（Agent 的执行计划）</td></tr>
+<tr><td><code>lifecycle &lt;spec&gt; --code . --format json</code></td><td>主质量门：lint+结构+边界+测试（+符号）</td></tr>
+<tr><td><code>verify &lt;spec&gt; --code .</code></td><td>仅验证（跳过 lint 门）</td></tr>
+<tr><td><code>guard --spec-dir specs --code . --change-scope staged</code></td><td>全仓守卫（pre-commit/CI）</td></tr>
+<tr><td><code>explain &lt;spec&gt; --format markdown [--history]</code></td><td>合同级验收摘要（/运行历史）</td></tr>
+<tr><td><code>stamp &lt;spec&gt; --dry-run</code></td><td>Git trailer 溯源</td></tr>
+<tr><td><code>matrix &lt;spec&gt; --code .</code></td><td>Rule×场景×测试×verdict×provenance 矩阵</td></tr>
+<tr><td><code>audit --spec-dir specs</code></td><td>库健康度（只观察不阻断）</td></tr>
+<tr><td><code>promote &lt;spec&gt; --rule &lt;id&gt; --to &lt;cap&gt;</code></td><td>成熟 Rule 升能力库</td></tr>
+<tr><td><code>discover --from-codebase --code . --name N</code></td><td>从测试反推草稿合同</td></tr>
+<tr><td><code>archive --dry-run</code></td><td>完成合同归档（证据不绿则阻断）</td></tr>
+<tr><td><code>graph --spec-dir specs</code></td><td>合同依赖 DAG 与关键路径</td></tr>
+<tr><td><code>check-structure --forbid X --in glob</code></td><td>分层架构守卫</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="意图编译requirements-家族"><a class="header" href="#意图编译requirements-家族">意图编译（requirements 家族）</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>命令</th><th>用途</th></tr>
+</thead>
+<tbody>
+<tr><td><code>requirements import --from prd.md [--provenance m.json]</code></td><td>标记块/YAML → 需求 IR（proposed）</td></tr>
+<tr><td><code>requirements transition &lt;ID&gt; --to accepted [--format json]</code></td><td>显式治理转换（带摘要 JSON）</td></tr>
+<tr><td><code>requirements supersede &lt;OLD&gt; --by &lt;NEW&gt;</code></td><td>原子替换链</td></tr>
+<tr><td><code>requirements status &lt;ID&gt;</code></td><td>三轴状态（治理/执行/liveness）</td></tr>
+<tr><td><code>requirements graph / plan --gate</code></td><td>需求图校验 / 三层计划 DAG</td></tr>
+<tr><td><code>requirements work-units / draft-specs</code></td><td>工作单元 / 合同草稿</td></tr>
+<tr><td><code>requirements traceability &lt;ID&gt; --format json</code></td><td>证据链单文档投影</td></tr>
+<tr><td><code>requirements verify-run --manifest m.json</code></td><td>编译重放，逐字节比对</td></tr>
+<tr><td><code>requirements compile --out d/ --layout arc-v1</code></td><td>per-requirement 四件套编译束</td></tr>
+<tr><td><code>requirements bind</code></td><td>工作单元 × 代码符号绑定</td></tr>
+<tr><td><code>requirements bundle --unit WU-X --out b.json</code></td><td>一体化执行束</td></tr>
+<tr><td><code>requirements trace/replay/explain-failure &lt;ID&gt;</code></td><td>证据记录读取</td></tr>
+<tr><td><code>requirements questions / test-obligations / worktrees</code></td><td>澄清问题 / 测试义务 / 并行工作树</td></tr>
+<tr><td><code>requirements export --out r.yaml --check</code></td><td>YAML 投影（漂移门）</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="知识与生态"><a class="header" href="#知识与生态">知识与生态</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>命令</th><th>用途</th></tr>
+</thead>
+<tbody>
+<tr><td><code>init --workspace</code></td><td>铺设 knowledge/ 工作区（幂等）</td></tr>
+<tr><td><code>trace &lt;id&gt; --gate</code></td><td>知识 → 合同 → liveness</td></tr>
+<tr><td><code>lint-knowledge --gate [--format sarif]</code></td><td>语料治理 lint</td></tr>
+<tr><td><code>atlas build/tree/query/refs/impls/check [--frozen]</code></td><td>代码图家族</td></tr>
+<tr><td><code>wiki init/seed/status/query/inspect/lint/check</code></td><td>live wiki 家族</td></tr>
+<tr><td><code>mcp</code></td><td>只读 MCP server（11 工具）</td></tr>
+<tr><td><code>gen-integrations --check</code></td><td>集成文件漂移门</td></tr>
+</tbody>
+</table>
+</div>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="附录-b-场景-dsl-参考卡"><a class="header" href="#附录-b-场景-dsl-参考卡">附录 B 场景 DSL 参考卡</a></h1>
+<p>基于 agent-spec 1.0.0。合同段落头（每行恰好一个，不混排双语）：</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>中文</th><th>English</th></tr>
+</thead>
+<tbody>
+<tr><td><code>## 意图</code></td><td><code>## Intent</code></td></tr>
+<tr><td><code>## 约束</code></td><td><code>## Constraints</code></td></tr>
+<tr><td><code>## 已定决策</code> / <code>## 决策</code></td><td><code>## Decisions</code></td></tr>
+<tr><td><code>## 边界</code></td><td><code>## Boundaries</code></td></tr>
+<tr><td><code>## 验收标准</code> / <code>## 完成条件</code></td><td><code>## Acceptance Criteria</code> / <code>## Completion Criteria</code></td></tr>
+<tr><td><code>## 排除范围</code></td><td><code>## Out of Scope</code></td></tr>
+<tr><td><code>## 问题</code> / <code>## 待澄清</code></td><td><code>## Questions</code></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="场景骨架"><a class="header" href="#场景骨架">场景骨架</a></h2>
+<pre><code class="language-markdown">### Rule: kebab-case-id — 显示名（可改，id 不动）
+场景: 名称（critical）          # 名称后缀=critical 简写
+  标签: critical
+  测试:
+    包: my-crate
+    过滤: test_name
+    级别: integration
+  前置: 另一场景名
+  审核: human                    # 测试过 → pending_review
+  模式: optimize                 # 通过进优化候选,失败仍阻断
+  假设 前置条件:
+    | 列1 | 列2 |
+    | a   | b   |
+  当 动作
+  那么 确定性结果（"返回 201"，不写"应该返回"）
+  并且 补充断言
+  但是 反向断言
+</code></pre>
+<h2 id="边界子节"><a class="header" href="#边界子节">边界子节</a></h2>
+<pre><code class="language-markdown">## Boundaries
+
+### Allowed Changes      # 机械执法的路径 glob
+- src/auth/**
+
+### Forbidden            # lint 检查的自然语言禁令
+- 不要添加新依赖
+
+### Symbols              # 1.0:代码符号引用(Linker)
+- rust-atlas: crate::module::Item
+
+## Out of Scope
+- 显式排除项
+</code></pre>
+<h2 id="frontmatter"><a class="header" href="#frontmatter">frontmatter</a></h2>
+<pre><code class="language-yaml">spec: task            # org | project | task
+name: "名称"
+inherits: project     # 三层继承链 org→project→task
+tags: [feature]
+satisfies: [REQ-X]    # KLL satisfies 边
+depends: [task-a]     # 合同依赖(graph 用)
+estimate: 2d          # 0.5d/1d/2d/1w/4h
+capability: cap-name  # 贡献到哪个能力
+risk: A               # QA class
+---
+</code></pre>
+<h2 id="lint-ack"><a class="header" href="#lint-ack">lint-ack</a></h2>
+<pre><code class="language-markdown">&lt;!-- lint-ack: error-path — 只读查询无失败路径 --&gt;
+</code></pre>
+<p>码与理由必须用 <code>—</code> 或 <code>:</code> 分隔；Error 永不可豁免；豁免计入 audit 台账。</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="附录-c-本书的-spec自举"><a class="header" href="#附录-c-本书的-spec自举">附录 C 本书的 Spec（自举）</a></h1>
+<p>本书不是“讲“spec 驱动，它<strong>被</strong> spec 驱动。这一页是证据。</p>
+<h2 id="本书的需求"><a class="header" href="#本书的需求">本书的需求</a></h2>
+<p><code>knowledge/requirements/req-agent-spec-book.md</code> 定义了 <code>REQ-AGENT-SPEC-BOOK</code>：
+mdbook 工程 + mermaid 渲染、SUMMARY 完整性、章章有定位锚与图、前言双阅读路径
+与知识地图、自举附录、双 E2E 轨迹、中文先行。它经历了与任何功能需求相同的
+生命周期：intake 起草 → 人类确认 → <code>transition --to accepted</code> → 计划门检查
+配对合同。</p>
+<h2 id="本书的合同"><a class="header" href="#本书的合同">本书的合同</a></h2>
+<p><code>specs/task-agent-spec-book.spec.md</code> 把需求降低为七个可机械验证的场景，每个
+绑定一个真实的结构守卫测试：</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>场景</th><th>绑定测试</th></tr>
+</thead>
+<tbody>
+<tr><td>SUMMARY 完整且章节文件齐备</td><td><code>test_book_summary_lists_chapters_and_files_exist</code></td></tr>
+<tr><td>章章有定位锚与 Mermaid 图</td><td><code>test_book_chapters_carry_anchor_baseline_and_mermaid</code></td></tr>
+<tr><td>mdbook-mermaid 已配置</td><td><code>test_book_toml_configures_mermaid_preprocessor</code></td></tr>
+<tr><td>前言含阅读路径与知识地图</td><td><code>test_book_preface_has_reading_paths_and_knowledge_map</code></td></tr>
+<tr><td>自举附录收录本书契约</td><td><code>test_book_dogfood_appendix_embeds_own_contract</code></td></tr>
+<tr><td>E2E 轨迹跨章且有图</td><td><code>test_book_traces_span_chapters_with_diagrams</code></td></tr>
+<tr><td>缺失章节被机械拒绝</td><td><code>test_book_guard_fails_on_missing_chapter_fixture</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>第七个场景是异常路径：给结构校验函数一份引用了不存在文件的 SUMMARY 副本，
+断言缺失清单指名该文件——守卫自己也被验证会叫。</p>
+<h2 id="写作即工作流"><a class="header" href="#写作即工作流">写作即工作流</a></h2>
+<pre class="mermaid">sequenceDiagram
+    participant W as 写作者
+    participant K as KLL
+    participant T as 结构测试
+    participant L as lifecycle
+    W-&gt;&gt;K: req-agent-spec-book.md (proposed)
+    W-&gt;&gt;W: 写合同,lint 至 100%
+    W-&gt;&gt;T: 先写七个测试 → RED(书不存在)
+    W-&gt;&gt;W: 写书稿(骨架→章节→附录)
+    W-&gt;&gt;T: cargo test → GREEN
+    W-&gt;&gt;K: transition --to accepted + 合同已在 specs/
+    W-&gt;&gt;L: lifecycle → 7/7 pass
+    Note over W,L: explain 输出即本书的"验收报告"
+</pre>
+
+<p>有趣的推论：从今往后任何人<strong>删掉一章、忘了画图、改坏目录</strong>，CI 的 Contract
+Guard 都会在提交时拦下——这本书的结构质量不靠自觉，靠机器。这正是第 1 章说的
+审查点位移在文档工程上的应用。</p>
+<h2 id="读者可以复刻"><a class="header" href="#读者可以复刻">读者可以复刻</a></h2>
+<p>给你自己的项目文档立一份这样的合同，只需要：一条需求（写清结构承诺）、几个
+文本形状测试（SUMMARY 解析 + grep 锚点）、<code>satisfies:</code> 连线。从此文档腐烂
+是机械诊断，不是季度回顾时的叹气。</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="附录-d-端到端轨迹"><a class="header" href="#附录-d-端到端轨迹">附录 D 端到端轨迹</a></h1>
+<p>单章讲的是模块，轨迹讲的是系统。两条 E2E trace 把分散的章节串成完整的因果链。</p>
+<h3 id="轨迹一一条需求从-prd-到-honored"><a class="header" href="#轨迹一一条需求从-prd-到-honored">轨迹一：一条需求从 PRD 到 honored</a></h3>
+<p><strong>贯穿</strong>：第 10 章（intake）→ 第 11 章（治理）→ 第 12 章（计划）→ 第 7 章
+（lifecycle）→ 第 13 章（溯源）→ 第 15 章（liveness）。</p>
+<pre class="mermaid">sequenceDiagram
+    participant PRD as PRD 文档
+    participant IR as 需求 IR
+    participant Plan as 计划 DAG
+    participant Spec as 任务合同
+    participant LC as lifecycle
+    participant KLL as liveness
+    PRD-&gt;&gt;IR: requirements import(标记块→REQ-X, proposed)
+    IR-&gt;&gt;IR: 人类 transition --to accepted(行精确改写+digest)
+    IR-&gt;&gt;Plan: graph --gate → work-units(WU-REQ-X ready)
+    Plan-&gt;&gt;Spec: draft-specs → 人审 → 提升 specs/(占位选择器换真实测试)
+    Note over Plan,Spec: plan --gate 强制:accepted 必须有活跃合同
+    Spec-&gt;&gt;LC: Agent 实现 → lifecycle 重试循环 → N/N pass
+    LC-&gt;&gt;KLL: trace 记录落盘(带类型化代码目标)
+    KLL--&gt;&gt;IR: requirements status REQ-X → accepted/verified/honored
+</pre>
+
+<p>每一步的产物都可独立审计：transition 的 JSON 带文档摘要（第 11 章）；plan 的
+批次是拓扑序（第 12 章）；lifecycle 的 run log 记录每次重试（第 7 章）；
+<code>traceability</code> 一个文档投影整条链（第 13 章）；最后 <code>status</code> 的三轴回答是
+派生的，问一次算一次（第 15 章）。<strong>没有任何一步依赖“某人记得“。</strong></p>
+<p>这条轨迹在真实世界完整跑过：agent-spec 1.0 的三个集成需求
+（REQ-COMPILER-MACHINE-SURFACE 等）就是沿着它从 proposed 走到
+accepted/verified/honored 的。</p>
+<h3 id="轨迹二一次合同验证之旅含符号与边界"><a class="header" href="#轨迹二一次合同验证之旅含符号与边界">轨迹二：一次合同验证之旅（含符号与边界）</a></h3>
+<p><strong>贯穿</strong>：第 4 章（四要素）→ 第 6 章（lint）→ 第 7 章（四层管线）→ 第 8 章
+（边界与符号）→ 第 16 章（Atlas 图）→ 第 9 章（验收与盖章）。</p>
+<pre class="mermaid">flowchart TD
+    A["合同就绪(四要素+### Symbols)"] --&gt; B["lint --min-score 0.7"]
+    B --&gt;|通过| C[StructuralVerifier&lt;br/&gt;Must NOT 模式匹配]
+    C --&gt; D[BoundariesVerifier&lt;br/&gt;变更文件×允许 glob]
+    D --&gt; E{声明了 Symbols?}
+    E --&gt;|否| F[TestVerifier 执行绑定测试]
+    E --&gt;|是| G{"atlas check:图新鲜?"}
+    G --&gt;|滞后| H["atlas-stale 失败&lt;br/&gt;(绝不假报 symbol-missing)"]
+    G --&gt;|新鲜| I{"每个符号在图中?"}
+    I --&gt;|缺失| J[atlas-symbol-missing&lt;br/&gt;逐符号 step verdict]
+    I --&gt;|全中| F
+    F --&gt; K{五种 verdict 汇总}
+    K --&gt;|is_passing| L["explain 验收 → stamp 盖章&lt;br/&gt;trace 记录带图指纹"]
+    K --&gt;|fail/skip| M[Agent 读证据修码重试]
+    M --&gt; C
+</pre>
+
+<p>注意两个设计细节如何在全链路里呼应：<strong>stale 优先</strong>（第 8 章）依赖 Atlas 的
+blake3 新鲜度模型（第 16 章）；最终 trace 记录里的图指纹让“当时对着哪个代码
+状态验证的“永远可答（第 13 章）。验收时人类读到的 explain 摘要（第 9 章），
+背后是这整条机械链的汇总——这就是为什么两个“是“就可以放心批准。</p>
+<h3 id="轨迹揭示的原则"><a class="header" href="#轨迹揭示的原则">轨迹揭示的原则</a></h3>
+<p>两条轨迹的共同点：<strong>每个箭头都是一条命令，每个节点都有可校验的产物</strong>。系统的
+可信不来自某个环节的聪明，而来自链条上没有一环允许“口头承诺“。</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-09f2665d.js"></script>
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-c22b7243.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="mermaid-eefea253.min.js"></script>
+        <script src="mermaid-init-ccf746f1.js"></script>
+
+        <script>
+        window.addEventListener('load', function() {
+            window.setTimeout(window.print, 100);
+        });
+        </script>
+
+
+    </div>
+    </body>
+</html>

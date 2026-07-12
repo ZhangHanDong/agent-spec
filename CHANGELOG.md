@@ -4,6 +4,21 @@ All notable changes to `agent-spec` are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **The agent-spec 1.0 Book** (`REQ-AGENT-SPEC-BOOK`, Chinese edition):
+  a spec-driven mdbook under `book/` — preface with reading paths and a
+  knowledge map, nineteen chapters across five parts (getting started,
+  the contract, the intent compiler, knowledge & ecosystem, philosophy &
+  architecture), and four appendices including the book's own contract
+  (dogfood) and two end-to-end traces. Every chapter carries a
+  positioning anchor, the 1.0.0 baseline, and at least one Mermaid
+  diagram — all guarded by seven bound structure tests. Rendered with
+  mdbook-mermaid; built at Pages deploy time (never committed) and
+  served at `/book/`. English edition is declared follow-up work.
+
 ## [1.0.0] - 2026-07-13
 
 **The compatibility promise begins.** Every surface in the README's
