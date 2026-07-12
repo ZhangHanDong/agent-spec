@@ -708,6 +708,22 @@ enum RequirementCommands {
         #[arg(long)]
         force: bool,
     },
+    /// Emit the Execution Bundle for one work unit (contract + bindings +
+    /// quality profile + skills + gates)
+    Bundle {
+        /// Work unit id, e.g. WU-REQ-123
+        #[arg(long)]
+        unit: String,
+        #[arg(long, default_value = "knowledge")]
+        knowledge: PathBuf,
+        #[arg(long, default_value = "specs")]
+        specs: PathBuf,
+        #[arg(long, default_value = ".agent-spec/code-bindings.json")]
+        bindings: PathBuf,
+        /// Bundle target (.json)
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Replay a recorded compilation-run manifest and byte-compare outputs
     VerifyRun {
         /// Path to a compilation-provenance-v2 manifest
@@ -3649,6 +3665,30 @@ fn cmd_requirements(action: RequirementCommands) -> Result<(), Box<dyn std::erro
                 );
             }
             println!("bundles written: {} -> {}", compiled.len(), out.display());
+            Ok(())
+        }
+        RequirementCommands::Bundle {
+            unit,
+            knowledge,
+            specs,
+            bindings,
+            out,
+        } => {
+            let bundle = crate::spec_knowledge::build_execution_bundle(
+                &knowledge, &specs, &bindings, &unit,
+            )?;
+            let rendered = crate::spec_knowledge::render_execution_bundle(&bundle)?;
+            if let Some(parent) = out.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&out, &rendered)?;
+            println!(
+                "execution bundle written: {} ({} contracts, {} bindings, {} gates)",
+                out.display(),
+                bundle.contracts.len(),
+                bundle.code_bindings.len(),
+                bundle.acceptance_gates.len()
+            );
             Ok(())
         }
         RequirementCommands::VerifyRun { manifest, format } => {

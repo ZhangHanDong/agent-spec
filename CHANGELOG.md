@@ -8,6 +8,18 @@ All notable changes to `agent-spec` are documented here. Format follows
 
 ### Added
 
+- Quality Planning and Execution Bundles (`REQ-QUALITY-PLANNING`, boundary
+  4): typed provider roles (code-intelligence / diagnostic / verification /
+  transformation / agent-guidance) with normalized outcomes (pass / fail /
+  unavailable / error / authorized skip) — a required provider that is
+  unavailable never counts as passing evidence. Provider configuration is
+  executable + argv arrays with explicit cwd/timeout/output limits, never
+  shell strings. `requirements bundle --unit WU-REQ-X --out <file>.json`
+  emits the Execution Bundle: work unit, embedded contracts with digests,
+  code bindings, quality profile, required skills with provenance receipts
+  (never acceptance evidence), fast checks, and acceptance gates. Schema:
+  `docs/intent-compiler/schemas/execution-bundle-v1.schema.json`.
+
 - Intent-Code Linker, Atlas slice (`REQ-INTENT-CODE-LINKER`, boundary 3):
   Task Contracts declare code-graph references in a `### Symbols` boundary
   subsection (`- rust-atlas: <canonical::path>`); the lifecycle pipeline

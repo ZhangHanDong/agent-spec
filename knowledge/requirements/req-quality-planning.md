@@ -2,7 +2,7 @@
 kind: requirement
 id: REQ-QUALITY-PLANNING
 title: "Quality Planning and Execution Bundles"
-status: proposed
+status: accepted
 liveness: auto
 tags: [intent-compiler, quality, execution-bundle, providers]
 ---

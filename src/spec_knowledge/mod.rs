@@ -21,6 +21,7 @@ pub mod parser;
 pub mod project;
 pub mod proposal;
 pub mod provenance;
+pub mod quality;
 pub mod questions;
 pub mod requirement;
 pub mod requirement_graph;
@@ -74,6 +75,11 @@ pub use proposal::{lint_proposal, produces};
 pub use provenance::{
     ProvenanceManifest, blake3_hex, corpus_digest, verify_provenance, write_export_provenance,
     write_import_provenance,
+};
+pub use quality::{
+    AcceptanceGate, BundleContract, EXECUTION_BUNDLE_SCHEMA_ID, ExecutionBundle, ProviderRole,
+    QualityOutcome, QualityProvider, SkillReceipt, acceptance_from_outcomes,
+    baseline_quality_profile, build_execution_bundle, outcome_passes_gate, render_execution_bundle,
 };
 pub use questions::{
     ClarificationDiagnostic, ClarificationQuestion, build_clarification_questions,
