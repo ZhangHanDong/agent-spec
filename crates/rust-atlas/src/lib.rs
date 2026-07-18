@@ -1574,8 +1574,8 @@ fn extract_items(
                 let vis = &i.vis;
                 let ident = &i.ident;
                 let ty = &i.ty;
-                let signature =
-                    normalized_tokens(&quote::quote!(#vis static #ident : #ty)).replace(" :: ", "::");
+                let signature = normalized_tokens(&quote::quote!(#vis static #ident : #ty))
+                    .replace(" :: ", "::");
                 let id = ctx.push_declaration(
                     &symbol,
                     NodeKind::Static,
@@ -1835,7 +1835,8 @@ fn extract_items(
                         _ => continue,
                     };
                     let member_symbol = format!("{impl_symbol}::{member}");
-                    let mid = ctx.push_declaration(&member_symbol, kind, span, vis, signature, attrs);
+                    let mid =
+                        ctx.push_declaration(&member_symbol, kind, span, vis, signature, attrs);
                     ctx.push_contains(&impl_id, &mid);
                 }
             }
@@ -2133,7 +2134,10 @@ mod tests {
             .into_iter()
             .filter(|e| e.kind == EdgeKind::ImplsTrait && e.resolution == EdgeResolution::Resolved)
             .count();
-        assert_eq!(resolved, 2, "bare imported trait name must resolve to a node id");
+        assert_eq!(
+            resolved, 2,
+            "bare imported trait name must resolve to a node id"
+        );
         fs::remove_dir_all(code.parent().unwrap()).ok();
     }
 
@@ -2224,7 +2228,11 @@ mod tests {
             "[package]\nname = \"excluded_fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\n",
         )
         .unwrap();
-        fs::write(code.join("fixture/src/lib.rs"), "pub struct ShouldNotAppear;\n").unwrap();
+        fs::write(
+            code.join("fixture/src/lib.rs"),
+            "pub struct ShouldNotAppear;\n",
+        )
+        .unwrap();
 
         let graph = base.join("graph");
         build(&code, &graph, &BuildOptions::default()).unwrap();
@@ -2257,7 +2265,8 @@ mod tests {
     // match the target dirs and every file errors "not owned by a Cargo target").
     #[test]
     fn test_atlas_build_accepts_noncanonical_code_root() {
-        let (code, graph) = scratch_crate("atlas_noncanon", &[("src/lib.rs", "pub struct Widget;\n")]);
+        let (code, graph) =
+            scratch_crate("atlas_noncanon", &[("src/lib.rs", "pub struct Widget;\n")]);
         let noncanon = code.join("..").join(code.file_name().unwrap());
         assert!(noncanon.to_string_lossy().contains(".."));
         build(&noncanon, &graph, &BuildOptions::default()).unwrap();

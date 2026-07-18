@@ -29,6 +29,7 @@
 ## 1. 当前状态
 
 ### 1.1 已修复（Phase 0，`afca280`）— 5 项原始缺陷，均已实证
+
 | 缺陷 | 修法 | 验收证据 |
 |---|---|---|
 | 虚拟 workspace 塌成 `crate::crates::…::src` | `cargo metadata` 真布局（`ProjectLayout::discover` lib.rs:894） | grok-build 66,993 节点 0 坏 id |
@@ -38,6 +39,7 @@
 | SCIP 状态不一致 | 无 `--scip` 即 `remove_scip_edges` 清 overlay | 回归测试覆盖 |
 
 ### 1.2 待办（本 Roadmap 的输入）— 审计暴露的 5 项新问题
+
 | ID | 严重度 | 问题 | 代码触点 |
 |---|---|---|---|
 | **A** | 高 | `impls <内部Trait>` 返回空：裸名 trait（`SpecLinter`×27 等）在 syn 层无法解析 + `impls()` 只认 resolved id | `resolve_syn_edges` lib.rs:511；`impls` lib.rs:432 |
