@@ -31,6 +31,22 @@ project, not in this repository):
 | `traceability/service.py` and agent-runtime `traceability.py` | traceability queries answer requirement-to-evidence questions across requirements, tests, call edges, node states, and code evidence. | `test_requirements_replay_uses_latest_trace_record_for_requirement`; `test_requirements_explain_failure_reports_non_pass_chain`; `test_requirements_trace_graph_mermaid_contains_evidence_nodes`; `requirements replay`; `requirements explain-failure`; `requirements trace-graph`. | Covered |
 | `templates/web/backend` and `templates/android/app/src/test` | Generated app templates include runnable tests connected to requirements. | Non-goal: agent-spec validates contracts, work units, lifecycle evidence, and traceability; it does not import reference-project app templates or execute their runtime tests. | Explicit non-goal |
 
+## ARC-Native Dialect Conformance (2026-07-19 refresh)
+
+The reference project's real input format diverges from the v1.1 exchange
+dialect: a single root node (not a `requirements:` list), `name:` (not
+`title:`), folded block scalars, flow-style empty lists, `steps:
+[{keyword, content}]` scenarios, ATOMIC `description:` statements, and
+dotted hierarchical ids. The reference runtime now stores traceability in a
+SQLite database (`traceability.db`) rather than file artifacts.
+
+| Reference reality | agent-spec evidence | Status |
+| --- | --- | --- |
+| Verbatim `ticketbooking-demo/requirements.yaml` imports | `fixtures/arc-native/requirements.yaml` (byte-exact copy); `test_arc_native_real_ticketbooking_imports_cleanly`; `test_parity_fixture_reference_tree_imports_cleanly` | Covered |
+| Reference loader consumes agent-spec exports | `requirements export --dialect arc-native`; `test_arc_native_export_is_reference_loadable`; loader semantics replicated (`yaml.safe_load` + wrapper unwrap + non-empty root id) | Covered |
+| Dotted ids survive the round trip | `source-id:` frontmatter + clause comments; `test_arc_native_dotted_ids_normalize_with_source_id` | Covered |
+| Traceability database (`traceability.db`) | Non-goal: a runtime artifact of the reference agent pipeline, not an input format; consumers read it directly | Explicit non-goal |
+
 ## Non-Goals
 
 - Non-goal: execute reference-project runtime tests as part of agent-spec CI.

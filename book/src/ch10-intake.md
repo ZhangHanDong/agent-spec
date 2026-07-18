@@ -72,6 +72,16 @@ requirements:
 文件，任何不带标记的既有文档一律拒绝覆盖（没有强制开关——手写文档的所有权
 不容侵犯）。
 
+### ARC 原生形状（1.0.1+）
+
+参照编译器（ARC）的真实输入是**单根树**：顶层就是根节点字段、`name:` 而非
+`title:`、场景是 `steps: [{keyword, content}]`、ATOMIC 用 `description:` 携带
+语句、id 允许点号层级（`REQ-1.1`）。`requirements import` 自动识别这种形状并
+映射进 IR——点号 id 规范化为连字符，同时以 `source-id:` 保真行记录原始 id；
+折叠块标量（`>-`）与空 flow 列表（`[]`）在此路径下被解析。反向的
+`requirements export --dialect arc-native` 把 IR 投影为参照装载器可直接消费的
+单根树并还原点号 id——agent-spec 编译的需求从此可以直接喂给 ARC。
+
 反方向的导出（`requirements export --out requirements.yaml`）是**派生投影**：
 往返是不动点（导出→导入→再导出逐字节相同），`--check` 做漂移门，装不下的内容
 （Source Trace、tags 等）进 lossiness 清单而非静默丢弃。

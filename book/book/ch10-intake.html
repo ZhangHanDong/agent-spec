@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-ab7bcc20.js";
+            window.path_to_searchindex_js = "searchindex-45eb448e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-98d15170.js"></script>
@@ -237,6 +237,14 @@
 解析。导入产物带 <code>source: imported-yaml</code> 溯源标记；再次导入只会刷新<strong>带此标记</strong>的
 文件，任何不带标记的既有文档一律拒绝覆盖（没有强制开关——手写文档的所有权
 不容侵犯）。</p>
+<h3 id="arc-原生形状101"><a class="header" href="#arc-原生形状101">ARC 原生形状（1.0.1+）</a></h3>
+<p>参照编译器（ARC）的真实输入是<strong>单根树</strong>：顶层就是根节点字段、<code>name:</code> 而非
+<code>title:</code>、场景是 <code>steps: [{keyword, content}]</code>、ATOMIC 用 <code>description:</code> 携带
+语句、id 允许点号层级（<code>REQ-1.1</code>）。<code>requirements import</code> 自动识别这种形状并
+映射进 IR——点号 id 规范化为连字符，同时以 <code>source-id:</code> 保真行记录原始 id；
+折叠块标量（<code>&gt;-</code>）与空 flow 列表（<code>[]</code>）在此路径下被解析。反向的
+<code>requirements export --dialect arc-native</code> 把 IR 投影为参照装载器可直接消费的
+单根树并还原点号 id——agent-spec 编译的需求从此可以直接喂给 ARC。</p>
 <p>反方向的导出（<code>requirements export --out requirements.yaml</code>）是<strong>派生投影</strong>：
 往返是不动点（导出→导入→再导出逐字节相同），<code>--check</code> 做漂移门，装不下的内容
 （Source Trace、tags 等）进 lossiness 清单而非静默丢弃。</p>

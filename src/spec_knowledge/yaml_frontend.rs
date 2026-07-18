@@ -28,18 +28,256 @@ pub fn import_requirements_yaml(
     input: &str,
     source_name: &str,
 ) -> Result<Vec<GeneratedRequirementDoc>, RequirementImportError> {
-    let root = parse_subset_yaml(input)?;
-    let folders = extract_folders(&root)?;
+    let mut root = parse_subset_yaml(input)?;
+    // Mirror the reference loader: tolerate `root:` / `requirement:` wrappers.
+    for wrapper in ["root", "requirement"] {
+        if let Some(inner) = root.get(wrapper)
+            && root.keys().len() == 1
+            && matches!(inner, YamlValue::Map(_))
+        {
+            root = inner.clone();
+        }
+    }
+    let folders = if root.get("requirements").is_some() {
+        extract_folders(&root)?
+    } else if root.get("id").is_some() {
+        // ARC-native shape: a single root node with children.
+        extract_arc_folders(&root)?
+    } else {
+        return Err(err(
+            "yaml root must be a `requirements:` list (v1.1 dialect) or a single ARC-native root node with `id:`",
+        ));
+    };
     let node_owner = index_nodes(&folders)?;
+    let folder_doc_ids: std::collections::BTreeMap<String, String> = folders
+        .iter()
+        .map(|folder| (folder.id.clone(), folder.doc_id.clone()))
+        .collect();
 
     let mut docs = Vec::new();
     for folder in &folders {
         docs.push(GeneratedRequirementDoc {
-            filename: format!("req-{}.md", folder.id),
-            content: render_folder_doc(folder, &node_owner, source_name),
+            filename: format!(
+                "req-{}.md",
+                folder
+                    .doc_id
+                    .strip_prefix("REQ-")
+                    .unwrap_or(&folder.doc_id)
+                    .to_ascii_lowercase()
+            ),
+            content: render_folder_doc(folder, &node_owner, &folder_doc_ids, source_name),
         });
     }
     Ok(docs)
+}
+
+// ── ARC-native tree extraction ──────────────────────────────────────
+
+const ARC_NODE_KEYS: [&str; 7] = [
+    "id",
+    "name",
+    "type",
+    "description",
+    "dependencies",
+    "children",
+    "scenarios",
+];
+const ARC_SCENARIO_KEYS: [&str; 2] = ["name", "steps"];
+const ARC_STEP_KEYS: [&str; 2] = ["keyword", "content"];
+
+/// Normalize an ARC node id into the knowledge id space: dots become
+/// hyphens, everything uppercased. Returns the normalized id plus the
+/// original when normalization changed it.
+fn normalize_arc_id(raw: &str) -> Result<(String, Option<String>), RequirementImportError> {
+    let raw = raw.trim();
+    let normalized = raw.replace('.', "-").to_ascii_uppercase();
+    crate::spec_knowledge::validate_knowledge_id(&normalized)
+        .map_err(|message| err(&format!("ARC node id `{raw}`: {message}")))?;
+    let source = (normalized != raw).then(|| raw.to_string());
+    Ok((normalized, source))
+}
+
+fn arc_scalar(
+    value: &YamlValue,
+    key: &str,
+    context: &str,
+) -> Result<String, RequirementImportError> {
+    required_scalar(value, key, context)
+}
+
+fn extract_arc_folders(root: &YamlValue) -> Result<Vec<FolderNode>, RequirementImportError> {
+    reject_unknown_keys(root, &ARC_NODE_KEYS, "ARC root node")?;
+    let root_id = arc_scalar(root, "id", "ARC root node")?;
+    if root_id.is_empty() {
+        return Err(err("ARC root node id is missing"));
+    }
+    let mut folders = Vec::new();
+    let Some(YamlValue::List(children)) = root.get("children") else {
+        return Err(err("ARC root node must carry a `children:` block list"));
+    };
+    for child in children {
+        collect_arc_folder(child, &mut folders)?;
+    }
+    if folders.is_empty() {
+        return Err(err("ARC tree contains no FOLDER nodes"));
+    }
+    Ok(folders)
+}
+
+/// Depth-first: every FOLDER becomes one requirement document; its ATOMIC
+/// children become clauses and its FOLDER children recurse into further
+/// documents.
+fn collect_arc_folder(
+    value: &YamlValue,
+    folders: &mut Vec<FolderNode>,
+) -> Result<(), RequirementImportError> {
+    reject_unknown_keys(value, &ARC_NODE_KEYS, "ARC node")?;
+    let raw_id = arc_scalar(value, "id", "ARC node")?;
+    let node_type = arc_scalar(value, "type", &format!("ARC node `{raw_id}`"))?;
+    if node_type != "FOLDER" {
+        return Err(err(&format!(
+            "ARC node `{raw_id}`: expected FOLDER at this level, found `{node_type}`"
+        )));
+    }
+    let (doc_id, source_id) = normalize_arc_id(&raw_id)?;
+    let title = arc_scalar(value, "name", &format!("ARC FOLDER `{raw_id}`"))?;
+    let description = optional_scalar(value, "description")?;
+    let dependencies = extract_arc_dependencies(value, &raw_id)?;
+    let scenarios = extract_arc_scenarios(value, &raw_id)?;
+
+    let mut leaves = Vec::new();
+    let mut folder_children = Vec::new();
+    if let Some(YamlValue::List(children)) = value.get("children") {
+        for child in children {
+            let child_type = arc_scalar(child, "type", "ARC child node")?;
+            if child_type == "FOLDER" {
+                folder_children.push(child);
+            } else if child_type == "ATOMIC" {
+                leaves.push(extract_arc_leaf(child, &doc_id)?);
+            } else {
+                let child_id = arc_scalar(child, "id", "ARC child node")?;
+                return Err(err(&format!(
+                    "ARC node `{child_id}` has unknown type `{child_type}`; expected FOLDER or ATOMIC"
+                )));
+            }
+        }
+    }
+
+    folders.push(FolderNode {
+        id: raw_id,
+        doc_id,
+        source_id,
+        title,
+        status: "proposed".to_string(),
+        description,
+        dependencies,
+        scenarios,
+        leaves,
+    });
+    for child in folder_children {
+        collect_arc_folder(child, folders)?;
+    }
+    Ok(())
+}
+
+fn extract_arc_leaf(
+    value: &YamlValue,
+    folder_doc_id: &str,
+) -> Result<LeafNode, RequirementImportError> {
+    reject_unknown_keys(value, &ARC_NODE_KEYS, "ARC ATOMIC node")?;
+    let raw_id = arc_scalar(value, "id", "ARC ATOMIC node")?;
+    let (clause_id, source_id) = normalize_arc_id(&raw_id)?;
+    if !clause_id.starts_with(&format!("{folder_doc_id}-")) {
+        // Clause ids must extend the document id; prefix when the source
+        // tree used an unrelated id.
+        let suffix = clause_id.trim_start_matches("REQ-").to_string();
+        let prefixed = format!("{folder_doc_id}-{suffix}");
+        return build_arc_leaf(value, raw_id.clone(), prefixed, Some(raw_id));
+    }
+    build_arc_leaf(value, raw_id, clause_id, source_id)
+}
+
+fn build_arc_leaf(
+    value: &YamlValue,
+    raw_id: String,
+    clause_id: String,
+    source_id: Option<String>,
+) -> Result<LeafNode, RequirementImportError> {
+    let statement = arc_scalar(value, "description", &format!("ARC ATOMIC `{raw_id}`"))?;
+    let dependencies = extract_arc_dependencies(value, &raw_id)?;
+    let scenarios = extract_arc_scenarios(value, &raw_id)?;
+    Ok(LeafNode {
+        id: raw_id,
+        clause_id,
+        source_id,
+        statement,
+        dependencies,
+        scenarios,
+    })
+}
+
+fn extract_arc_dependencies(
+    value: &YamlValue,
+    context: &str,
+) -> Result<Vec<String>, RequirementImportError> {
+    match value.get("dependencies") {
+        None => Ok(Vec::new()),
+        Some(YamlValue::List(items)) => items
+            .iter()
+            .map(|item| match item {
+                YamlValue::Scalar(dep) => Ok(dep.trim().to_string()),
+                _ => Err(err(&format!(
+                    "ARC node `{context}`: dependencies must be a list of node ids"
+                ))),
+            })
+            .collect(),
+        Some(_) => Err(err(&format!(
+            "ARC node `{context}`: `dependencies:` must be a list"
+        ))),
+    }
+}
+
+fn extract_arc_scenarios(
+    value: &YamlValue,
+    context: &str,
+) -> Result<Vec<ScenarioNode>, RequirementImportError> {
+    match value.get("scenarios") {
+        None => Ok(Vec::new()),
+        Some(YamlValue::List(items)) => items
+            .iter()
+            .map(|item| {
+                reject_unknown_keys(
+                    item,
+                    &ARC_SCENARIO_KEYS,
+                    &format!("scenario of `{context}`"),
+                )?;
+                let name = arc_scalar(item, "name", &format!("scenario of `{context}`"))?;
+                let Some(YamlValue::List(steps)) = item.get("steps") else {
+                    return Err(err(&format!(
+                        "scenario `{name}` of `{context}`: `steps:` must be a block list"
+                    )));
+                };
+                let steps = steps
+                    .iter()
+                    .map(|step| {
+                        reject_unknown_keys(
+                            step,
+                            &ARC_STEP_KEYS,
+                            &format!("step of scenario `{name}`"),
+                        )?;
+                        let keyword = arc_scalar(step, "keyword", &format!("step of `{name}`"))?
+                            .to_ascii_uppercase();
+                        let content = arc_scalar(step, "content", &format!("step of `{name}`"))?;
+                        Ok((keyword, content))
+                    })
+                    .collect::<Result<Vec<_>, RequirementImportError>>()?;
+                Ok(ScenarioNode { name, steps })
+            })
+            .collect(),
+        Some(_) => Err(err(&format!(
+            "ARC node `{context}`: `scenarios:` must be a block list"
+        ))),
+    }
 }
 
 /// Write generated documents under `out`, refusing to overwrite any existing
@@ -218,10 +456,9 @@ fn parse_list(
                 entries.push((first_key, child));
                 i = next;
             } else {
-                entries.push((
-                    first_key,
-                    YamlValue::Scalar(parse_scalar(first_value_raw, line.number)?),
-                ));
+                let (value, next) = parse_inline_value(lines, i, first_value_raw, line.number)?;
+                entries.push((first_key, value));
+                i = next;
             }
             while i < lines.len()
                 && lines[i].indent == indent + 2
@@ -242,10 +479,9 @@ fn parse_list(
                     entries.push((key, child));
                     i = next;
                 } else {
-                    entries.push((
-                        key,
-                        YamlValue::Scalar(parse_scalar(value_raw, entry_line.number)?),
-                    ));
+                    let (value, next) = parse_inline_value(lines, i, value_raw, entry_line.number)?;
+                    entries.push((key, value));
+                    i = next;
                 }
             }
             items.push(YamlValue::Map(entries));
@@ -276,10 +512,9 @@ fn parse_map(
             entries.push((key, child));
             i = next;
         } else {
-            entries.push((
-                key,
-                YamlValue::Scalar(parse_scalar(value_raw, line.number)?),
-            ));
+            let (value, next) = parse_inline_value(lines, i, value_raw, line.number)?;
+            entries.push((key, value));
+            i = next;
         }
     }
     if entries.is_empty() {
@@ -304,6 +539,52 @@ fn expect_child_block(
         return Err(unsupported(lines[i].number, "unexpected extra indentation"));
     }
     parse_block(lines, i, child_indent)
+}
+
+/// Parse the value that follows `key:` on the same line. Handles the empty
+/// flow list `[]`, block scalars (`>`, `>-`, `|`, `|-`; ARC-native subset:
+/// folded lines join with single spaces, literal lines join with newlines,
+/// no trailing newline), and plain scalars. Returns the value and the next
+/// line index (block scalars consume following deeper-indented lines).
+fn parse_inline_value(
+    lines: &[Line<'_>],
+    i: usize,
+    value_raw: &str,
+    line_number: usize,
+) -> Result<(YamlValue, usize), RequirementImportError> {
+    if value_raw == "[]" {
+        return Ok((YamlValue::List(Vec::new()), i));
+    }
+    let block = match value_raw {
+        ">" | ">-" => Some(' '),
+        "|" | "|-" => Some('\n'),
+        _ => None,
+    };
+    if let Some(joiner) = block {
+        if i >= lines.len() {
+            return Err(unsupported(line_number, "block scalar without content"));
+        }
+        let base = lines[i].indent;
+        if base == 0 {
+            return Err(unsupported(
+                line_number,
+                "block scalar without indented content",
+            ));
+        }
+        let mut segments: Vec<String> = Vec::new();
+        let mut next = i;
+        while next < lines.len() && lines[next].indent >= base {
+            let line = &lines[next];
+            let extra = " ".repeat(line.indent - base);
+            segments.push(format!("{extra}{}", line.content));
+            next += 1;
+        }
+        if segments.is_empty() {
+            return Err(unsupported(line_number, "block scalar without content"));
+        }
+        return Ok((YamlValue::Scalar(segments.join(&joiner.to_string())), next));
+    }
+    Ok((YamlValue::Scalar(parse_scalar(value_raw, line_number)?), i))
 }
 
 fn looks_like_map_entry(content: &str) -> bool {
@@ -370,7 +651,12 @@ fn parse_scalar(raw: &str, line_number: usize) -> Result<String, RequirementImpo
 // ── Mapping to the Requirement IR ───────────────────────────────────
 
 struct FolderNode {
+    /// Raw node id in the source tree (dependency namespace).
     id: String,
+    /// Final requirement document id (`REQ-...`).
+    doc_id: String,
+    /// Original source id when normalization changed it (ARC dotted ids).
+    source_id: Option<String>,
     title: String,
     status: String,
     description: Option<String>,
@@ -380,7 +666,12 @@ struct FolderNode {
 }
 
 struct LeafNode {
+    /// Raw node id in the source tree (dependency namespace).
     id: String,
+    /// Final clause id rendered into `[...]` (extends the document id).
+    clause_id: String,
+    /// Original source id when normalization changed it.
+    source_id: Option<String>,
     statement: String,
     dependencies: Vec<String>,
     scenarios: Vec<ScenarioNode>,
@@ -388,9 +679,19 @@ struct LeafNode {
 
 struct ScenarioNode {
     name: String,
-    given: String,
-    when: String,
-    then: String,
+    /// `(KEYWORD, content)` pairs; keywords are uppercase GIVEN/WHEN/THEN/AND/BUT.
+    steps: Vec<(String, String)>,
+}
+
+fn step_keyword_display(keyword: &str) -> &'static str {
+    match keyword {
+        "GIVEN" => "Given",
+        "WHEN" => "When",
+        "THEN" => "Then",
+        "AND" => "And",
+        "BUT" => "But",
+        _ => "And",
+    }
 }
 
 const FOLDER_KEYS: [&str; 8] = [
@@ -495,6 +796,8 @@ fn extract_folder(value: &YamlValue) -> Result<FolderNode, RequirementImportErro
         .map(|child| extract_leaf(child, &id))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(FolderNode {
+        doc_id: doc_id(&id),
+        source_id: None,
         id,
         title,
         status,
@@ -555,6 +858,8 @@ fn extract_leaf(value: &YamlValue, folder_id: &str) -> Result<LeafNode, Requirem
         }
     };
     Ok(LeafNode {
+        clause_id: format!("{}-{}", doc_id(folder_id), id.to_ascii_uppercase()),
+        source_id: None,
         id,
         statement,
         dependencies,
@@ -567,11 +872,23 @@ fn extract_scenario(
     leaf_id: &str,
 ) -> Result<ScenarioNode, RequirementImportError> {
     reject_unknown_keys(value, &SCENARIO_KEYS, &format!("scenario of `{leaf_id}`"))?;
+    let context = format!("scenario of `{leaf_id}`");
     Ok(ScenarioNode {
-        name: required_scalar(value, "name", &format!("scenario of `{leaf_id}`"))?,
-        given: required_scalar(value, "given", &format!("scenario of `{leaf_id}`"))?,
-        when: required_scalar(value, "when", &format!("scenario of `{leaf_id}`"))?,
-        then: required_scalar(value, "then", &format!("scenario of `{leaf_id}`"))?,
+        name: required_scalar(value, "name", &context)?,
+        steps: vec![
+            (
+                "GIVEN".to_string(),
+                required_scalar(value, "given", &context)?,
+            ),
+            (
+                "WHEN".to_string(),
+                required_scalar(value, "when", &context)?,
+            ),
+            (
+                "THEN".to_string(),
+                required_scalar(value, "then", &context)?,
+            ),
+        ],
     })
 }
 
@@ -654,19 +971,26 @@ fn doc_id(folder_id: &str) -> String {
 fn render_folder_doc(
     folder: &FolderNode,
     node_owner: &std::collections::BTreeMap<String, String>,
+    folder_doc_ids: &std::collections::BTreeMap<String, String>,
     source_name: &str,
 ) -> String {
-    let id = doc_id(&folder.id);
+    let id = folder.doc_id.clone();
+    let dep_doc_id = |raw: &str| -> String {
+        folder_doc_ids
+            .get(raw)
+            .cloned()
+            .unwrap_or_else(|| doc_id(raw))
+    };
     let mut deps = std::collections::BTreeSet::new();
     for dep in &folder.dependencies {
         let target_folder = node_owner.get(dep).cloned();
         match target_folder {
             Some(owner) if owner == folder.id => {}
             Some(owner) => {
-                deps.insert(doc_id(&owner));
+                deps.insert(dep_doc_id(&owner));
             }
             None => {
-                deps.insert(doc_id(dep));
+                deps.insert(dep_doc_id(dep));
             }
         }
     }
@@ -676,10 +1000,10 @@ fn render_folder_doc(
             match target_folder {
                 Some(owner) if owner == folder.id => {}
                 Some(owner) => {
-                    deps.insert(doc_id(&owner));
+                    deps.insert(dep_doc_id(&owner));
                 }
                 None => {
-                    deps.insert(doc_id(dep));
+                    deps.insert(dep_doc_id(dep));
                 }
             }
         }
@@ -697,6 +1021,9 @@ fn render_folder_doc(
     out.push_str(&format!("status: {}\n", folder.status));
     out.push_str("liveness: auto\n");
     out.push_str(&format!("{YAML_PROVENANCE_KEY}\n"));
+    if let Some(source_id) = &folder.source_id {
+        out.push_str(&format!("source-id: {source_id}\n"));
+    }
     out.push_str("tags: [imported-yaml]\n");
     out.push_str("---\n\n");
     out.push_str(&format!("# {}\n\n", folder.title));
@@ -711,28 +1038,32 @@ fn render_folder_doc(
     }
     out.push_str("## Requirements\n\n");
     for leaf in &folder.leaves {
-        out.push_str(&format!(
-            "[{id}-{}] {}\n\n",
-            leaf.id.to_ascii_uppercase(),
-            leaf.statement
-        ));
+        out.push_str(&format!("[{}] {}\n\n", leaf.clause_id, leaf.statement));
+        if let Some(source_id) = &leaf.source_id {
+            out.push_str(&format!("<!-- source-id: {source_id} -->\n\n"));
+        }
     }
     // scenarios live in a dedicated section so the requirement graph
     // recognizes them and work units can become Ready
     if !folder.scenarios.is_empty() || folder.leaves.iter().any(|leaf| !leaf.scenarios.is_empty()) {
         out.push_str("## Scenarios\n\n");
-        for scenario in &folder.scenarios {
+        let render_scenario = |out: &mut String, scenario: &ScenarioNode| {
             out.push_str(&format!("Scenario: {}\n", scenario.name));
-            out.push_str(&format!("  Given {}\n", scenario.given));
-            out.push_str(&format!("  When {}\n", scenario.when));
-            out.push_str(&format!("  Then {}\n\n", scenario.then));
+            for (keyword, content) in &scenario.steps {
+                out.push_str(&format!(
+                    "  {} {}\n",
+                    step_keyword_display(keyword),
+                    content
+                ));
+            }
+            out.push('\n');
+        };
+        for scenario in &folder.scenarios {
+            render_scenario(&mut out, scenario);
         }
         for leaf in &folder.leaves {
             for scenario in &leaf.scenarios {
-                out.push_str(&format!("Scenario: {}\n", scenario.name));
-                out.push_str(&format!("  Given {}\n", scenario.given));
-                out.push_str(&format!("  When {}\n", scenario.when));
-                out.push_str(&format!("  Then {}\n\n", scenario.then));
+                render_scenario(&mut out, scenario);
             }
         }
     }
@@ -917,7 +1248,7 @@ mod tests {
             ),
             (
                 "flow-list",
-                "requirements:\n  - id: a\n    title: \"A\"\n    type: FOLDER\n    children: []\n",
+                "requirements:\n  - id: a\n    title: \"A\"\n    type: FOLDER\n    children: [x]\n",
             ),
             ("flow-map", "requirements: {id: a}\n"),
             ("multi-doc", "---\nrequirements:\n  - id: a\n---\n"),
@@ -996,5 +1327,165 @@ mod tests {
         // all-or-nothing: no sibling file may have been written either
         assert!(!dir.join(&docs[1].filename).exists());
         fs::remove_dir_all(dir).ok();
+    }
+
+    // ── ARC-native dialect ──────────────────────────────────────────
+
+    const ARC_FIXTURE: &str = "fixtures/arc-native/requirements.yaml";
+
+    fn arc_fixture_input() -> String {
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(ARC_FIXTURE)).unwrap()
+    }
+
+    #[test]
+    fn test_arc_native_real_ticketbooking_imports_cleanly() {
+        let docs = import_requirements_yaml(&arc_fixture_input(), "requirements.yaml")
+            .expect("the verbatim reference file must import without unsupported constructs");
+        assert_eq!(docs.len(), 3, "three FOLDER nodes map to three documents");
+        let first = &docs[0];
+        assert_eq!(first.filename, "req-1.md");
+        assert!(
+            first
+                .content
+                .contains("title: \"Public Homepage and User Authentication\""),
+            "title must come from the `name` field"
+        );
+        assert!(
+            first
+                .content
+                .contains("[REQ-1-1] An unauthenticated visitor"),
+            "clause statements must come from ATOMIC descriptions"
+        );
+        assert!(
+            first.content.contains("<!-- source-id: REQ-1.1 -->"),
+            "dotted ids must be preserved as source-id annotations"
+        );
+        assert!(
+            first
+                .content
+                .contains("Scenario: Successfully register a new user"),
+            "ATOMIC scenarios must hoist into the document"
+        );
+    }
+
+    #[test]
+    fn test_arc_native_block_scalars_and_empty_flow_parse() {
+        let input = "id: ROOT\nname: Root\ntype: FOLDER\ndependencies: []\nchildren:\n  - id: REQ-9\n    name: Folded\n    type: FOLDER\n    description: >-\n      first line\n      second line\n    dependencies: []\n    children:\n      - id: REQ-9.1\n        name: Leaf\n        type: ATOMIC\n        description: leaf text\n        dependencies: []\n";
+        let docs = import_requirements_yaml(input, "arc.yaml").unwrap();
+        assert!(
+            docs[0].content.contains("first line second line"),
+            "folded lines must join with single spaces: {}",
+            docs[0].content
+        );
+    }
+
+    #[test]
+    fn test_arc_native_dotted_ids_normalize_with_source_id() {
+        let docs = import_requirements_yaml(&arc_fixture_input(), "requirements.yaml").unwrap();
+        let first = &docs[0];
+        assert!(first.content.contains("[REQ-1-1]"), "dot becomes hyphen");
+        assert!(first.content.contains("<!-- source-id: REQ-1.1 -->"));
+
+        // Export restores the dotted id from the recorded source-id.
+        let dir = make_temp_dir("arc-dotted-roundtrip");
+        fs::create_dir_all(dir.join("requirements")).unwrap();
+        for doc in &docs {
+            fs::write(dir.join("requirements").join(&doc.filename), &doc.content).unwrap();
+        }
+        let outcome = crate::spec_knowledge::export_requirements_arc_native(
+            &dir,
+            "Requirements",
+            &crate::spec_knowledge::ExportOptions::default(),
+        )
+        .unwrap();
+        assert!(
+            outcome.yaml.contains("      - id: REQ-1.1\n"),
+            "export must restore the dotted id: {}",
+            outcome.yaml
+        );
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn test_arc_native_export_is_reference_loadable() {
+        let dir = make_temp_dir("arc-export-loadable");
+        fs::create_dir_all(dir.join("requirements")).unwrap();
+        fs::write(
+            dir.join("requirements/req-demo.md"),
+            "---\nkind: requirement\nid: REQ-DEMO\ntitle: \"Demo\"\nstatus: accepted\nliveness: auto\ntags: []\n---\n\n# Demo\n\n## Problem\n\nDemo problem.\n\n## Requirements\n\n[REQ-DEMO-ONE] The system MUST hold the first obligation.\n\n## Scenarios\n\nScenario: holds\n  Given a precondition\n  When the action runs\n  Then the outcome is observable\n",
+        )
+        .unwrap();
+        let outcome = crate::spec_knowledge::export_requirements_arc_native(
+            &dir,
+            "Demo Root",
+            &crate::spec_knowledge::ExportOptions::default(),
+        )
+        .unwrap();
+        // Reference-loader shape: a mapping whose root id is non-empty.
+        assert!(outcome.yaml.starts_with("id: ROOT\n"));
+        assert!(outcome.yaml.contains("name: \"Demo Root\""));
+        assert!(outcome.yaml.contains("  - id: REQ-DEMO\n"));
+        assert!(outcome.yaml.contains("        type: ATOMIC\n"));
+        assert!(outcome.yaml.contains("          - keyword: GIVEN\n"));
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn test_arc_native_round_trip_fixpoint() {
+        let dir = make_temp_dir("arc-fixpoint");
+        fs::create_dir_all(dir.join("requirements")).unwrap();
+        fs::write(
+            dir.join("requirements/req-demo.md"),
+            "---\nkind: requirement\nid: REQ-DEMO\ntitle: \"Demo\"\nstatus: accepted\nliveness: auto\ntags: []\n---\n\n# Demo\n\n## Problem\n\nDemo problem.\n\n## Requirements\n\n[REQ-DEMO-ONE] The system MUST hold the first obligation.\n\n## Scenarios\n\nScenario: holds\n  Given a precondition\n  When the action runs\n  Then the outcome is observable\n",
+        )
+        .unwrap();
+        let opts = crate::spec_knowledge::ExportOptions::default();
+        let first =
+            crate::spec_knowledge::export_requirements_arc_native(&dir, "Requirements", &opts)
+                .unwrap();
+        let docs = import_requirements_yaml(&first.yaml, "export.yaml").unwrap();
+        let second_dir = make_temp_dir("arc-fixpoint-second");
+        fs::create_dir_all(second_dir.join("requirements")).unwrap();
+        for doc in &docs {
+            fs::write(
+                second_dir.join("requirements").join(&doc.filename),
+                &doc.content,
+            )
+            .unwrap();
+        }
+        let second = crate::spec_knowledge::export_requirements_arc_native(
+            &second_dir,
+            "Requirements",
+            &opts,
+        )
+        .unwrap();
+        assert_eq!(
+            first.yaml, second.yaml,
+            "export -> import -> export must be byte-identical"
+        );
+        fs::remove_dir_all(dir).ok();
+        fs::remove_dir_all(second_dir).ok();
+    }
+
+    #[test]
+    fn test_arc_native_rejects_anchor_constructs() {
+        let input = "id: ROOT\nname: &anchor Root\ntype: FOLDER\nchildren:\n  - id: REQ-9\n    name: X\n    type: FOLDER\n    children:\n      - id: REQ-9.1\n        name: L\n        type: ATOMIC\n        description: t\n";
+        let error = import_requirements_yaml(input, "arc.yaml").unwrap_err();
+        assert!(
+            error.to_string().contains("yaml-unsupported-construct")
+                && error.to_string().contains("line 2"),
+            "anchors must be rejected with a line number: {error}"
+        );
+    }
+
+    #[test]
+    fn test_arc_native_rejects_nonempty_flow_collections() {
+        let input = "id: ROOT\nname: Root\ntype: FOLDER\nchildren:\n  - id: REQ-9\n    name: X\n    type: FOLDER\n    dependencies: [REQ-1]\n    children:\n      - id: REQ-9.1\n        name: L\n        type: ATOMIC\n        description: t\n";
+        let error = import_requirements_yaml(input, "arc.yaml").unwrap_err();
+        assert!(
+            error.to_string().contains("yaml-unsupported-construct")
+                && error.to_string().contains("line 8"),
+            "non-empty flow collections must be rejected with a line number: {error}"
+        );
     }
 }

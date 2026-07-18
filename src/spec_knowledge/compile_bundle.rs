@@ -518,13 +518,22 @@ mod tests {
 
     #[test]
     fn test_parity_fixture_reference_tree_imports_cleanly() {
+        // The verbatim reference file (ARC-native shape) is the fixture now.
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("fixtures/requirements-parity/requirements.yaml");
+            .join("fixtures/arc-native/requirements.yaml");
         let input = fs::read_to_string(&fixture).unwrap();
         let docs = crate::spec_knowledge::import_requirements_yaml(&input, "requirements.yaml")
-            .expect("the reference-shaped tree must import without unsupported constructs");
+            .expect("the verbatim reference tree must import without unsupported constructs");
+        assert_eq!(docs.len(), 3);
+        assert!(docs[0].content.contains("## Scenarios"));
+
+        // The v1.1 exchange-dialect fixture stays importable too.
+        let exchange = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("fixtures/requirements-parity/requirements.yaml");
+        let input = fs::read_to_string(&exchange).unwrap();
+        let docs = crate::spec_knowledge::import_requirements_yaml(&input, "requirements.yaml")
+            .expect("the v1.1 exchange dialect must keep importing");
         assert_eq!(docs.len(), 1);
         assert!(docs[0].content.contains("status: accepted"));
-        assert!(docs[0].content.contains("## Scenarios"));
     }
 }

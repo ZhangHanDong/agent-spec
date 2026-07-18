@@ -765,6 +765,12 @@ enum RequirementCommands {
         /// Optional compilation provenance manifest target (.json)
         #[arg(long)]
         provenance: Option<PathBuf>,
+        /// Output dialect: v1 (requirements: list) | arc-native (single-root tree)
+        #[arg(long, default_value = "v1")]
+        dialect: String,
+        /// Root node name for the arc-native dialect
+        #[arg(long, default_value = "Requirements")]
+        root_name: String,
     },
     /// Validate and print the requirement graph
     Graph {
@@ -3485,13 +3491,22 @@ fn cmd_requirements(action: RequirementCommands) -> Result<(), Box<dyn std::erro
             id,
             check,
             provenance,
+            dialect,
+            root_name,
         } => {
-            let outcome = crate::spec_knowledge::write_export(
-                &knowledge,
-                &out,
-                &crate::spec_knowledge::ExportOptions { ids: id },
-                check,
-            )?;
+            let opts = crate::spec_knowledge::ExportOptions { ids: id };
+            let outcome = match dialect.as_str() {
+                "v1" => crate::spec_knowledge::write_export(&knowledge, &out, &opts, check)?,
+                "arc-native" => crate::spec_knowledge::write_arc_native_export(
+                    &knowledge, &out, &root_name, &opts, check,
+                )?,
+                other => {
+                    return Err(format!(
+                        "unknown export dialect `{other}`; accepted dialects: v1 | arc-native"
+                    )
+                    .into());
+                }
+            };
             if let Some(manifest_path) = provenance.as_deref() {
                 let manifest = crate::spec_knowledge::write_export_provenance(
                     &knowledge,

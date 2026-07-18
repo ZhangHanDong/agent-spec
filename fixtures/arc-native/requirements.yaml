@@ -1,0 +1,244 @@
+id: ROOT
+name: Small Train Ticket Booking System
+type: FOLDER
+description: >-
+  A small web-based ticket booking system covering user authentication, train search and result display,
+  and basic booking capabilities.
+dependencies: []
+children:
+  - id: REQ-1
+    name: Public Homepage and User Authentication
+    type: FOLDER
+    description: >-
+      Defines the public homepage, shared navigation, authentication entry points, and session-related public APIs.
+      This node can guide generation of the shared header, route entry points, login/register entry styling,
+      and shared logic for session loading.
+      Optional visual reference: ![image](./reference/homepage.png)
+    dependencies: []
+    children:
+      - id: REQ-1.1
+        name: User Registration
+        type: ATOMIC
+        description: >-
+          An unauthenticated visitor can open the registration page, fill in username, email, password,
+          and confirm password, and submit the registration form.
+          The system must validate the input, create and persist a user account, establish a login session,
+          and move the UI into an authenticated state after success.
+          Invalid input or duplicate accounts must return explicit errors and must not create a new user record.
+          Optional visual reference: ![image](./reference/register.png)
+        dependencies: []
+        scenarios:
+          - name: Successfully register a new user
+            steps:
+              - keyword: GIVEN
+                content: The visitor is on a public page and is currently not logged in.
+              - keyword: WHEN
+                content: The user opens the registration page, enters a unique username, a valid email, matching passwords, and submits the form.
+              - keyword: THEN
+                content: The system creates and persists the new user, establishes a login session, and moves the UI into an authenticated state.
+          - name: Reject duplicate accounts or invalid input
+            steps:
+              - keyword: GIVEN
+                content: The visitor is on the registration page, and the username or email already exists, or required fields are incomplete, or the two passwords do not match.
+              - keyword: WHEN
+                content: The user submits the registration form.
+              - keyword: THEN
+                content: The system returns explicit validation or conflict feedback and does not create a new user record or login session.
+
+      - id: REQ-1.2
+        name: User Login
+        type: ATOMIC
+        description: >-
+          A visitor with an existing account can open the login page and sign in using a username or email plus password.
+          The system must validate credentials, load the persisted user, establish a login session,
+          and move the UI into an authenticated state after success.
+          Invalid credentials must not create a session.
+          Optional visual reference: ![image](./reference/login.png)
+        dependencies:
+          - REQ-1.1
+        scenarios:
+          - name: Log in with a valid account
+            steps:
+              - keyword: GIVEN
+                content: The visitor is on a public page and already has a valid persisted account.
+              - keyword: WHEN
+                content: The user opens the login page, enters the correct username or email and password, and submits the form.
+              - keyword: THEN
+                content: The system validates the credentials, establishes a session, and moves the UI into an authenticated state.
+          - name: Reject invalid login credentials
+            steps:
+              - keyword: GIVEN
+                content: The visitor is on the login page but enters a wrong password, wrong account, or incomplete credentials.
+              - keyword: WHEN
+                content: The user submits the login form.
+              - keyword: THEN
+                content: The system returns authentication failure feedback and does not create a logged-in session.
+
+  - id: REQ-2
+    name: Search and Result Display
+    type: FOLDER
+    description: >-
+      Defines the homepage search form, result-page list layout, public search query APIs,
+      and the shared data boundary from search criteria to the result page.
+      This node can guide generation of shared UI such as the search bar, result list skeleton,
+      pagination, or result summary areas. Visual reference: ![image](./reference/search-form.png) ![image](./reference/search-results.png)
+    dependencies: []
+    children:
+      - id: REQ-2.1
+        name: Submit Search Criteria and Display Train Results
+        type: ATOMIC
+        description: >-
+          The user can enter departure city, destination city, and departure date on the homepage to start a search.
+          The system must validate the input, execute the train query, return runtime results,
+          and display the submitted search criteria, result count, and matching train list on the result page.
+          Result data must come from the system's own runtime data rather than hardcoded sample content.
+          Optional visual reference: ![image](./reference/search-form.png) ![image](./reference/search-results.png)
+        dependencies: []
+        scenarios:
+          - name: Search with valid criteria and display results
+            steps:
+              - keyword: GIVEN
+                content: The user is on the homepage and has entered a departure city, destination city, and departure date.
+              - keyword: WHEN
+                content: The user triggers the search action.
+              - keyword: THEN
+                content: The system completes the search and opens the result page, showing the search criteria, result count, and matching train list.
+          - name: Block incomplete search input
+            steps:
+              - keyword: GIVEN
+                content: The user is on the homepage and at least one required search field is empty.
+              - keyword: WHEN
+                content: The user triggers the search action.
+              - keyword: THEN
+                content: The system shows explicit validation feedback and does not perform a valid search or navigate to the result page.
+
+      - id: REQ-2.2
+        name: Display an Empty Result State
+        type: ATOMIC
+        description: >-
+          When a valid search matches no trains, the result page must still preserve the user's original search criteria
+          and show a clear empty-result state.
+          The system must not replace the real empty-result feedback with an error, a blank page, or fabricated result rows.
+        dependencies:
+          - REQ-2.1
+        scenarios:
+          - name: A valid search returns no results
+            steps:
+              - keyword: GIVEN
+                content: The user submits a valid search, but there are no matching trains in the current database.
+              - keyword: WHEN
+                content: The result page is opened.
+              - keyword: THEN
+                content: The system preserves the original search criteria and shows a clear empty-result state instead of fabricated result data.
+
+      - id: REQ-2.3
+        name: Load the Selected Train from the Result List and Enter the Booking Page
+        type: ATOMIC
+        description: >-
+          The user can choose a specific train from the search result list and enter the booking page.
+          The system must load the full details of the selected train by its identifier
+          and use it as the current context for the downstream booking flow.
+          Optional visual reference: ![image](./reference/search-results.png) ![image](./reference/booking-page.png)
+        dependencies:
+          - REQ-2.1
+        scenarios:
+          - name: Select a specific train from the results and enter the booking page
+            steps:
+              - keyword: GIVEN
+                content: The user is viewing the search result list and at least one train is available for booking.
+              - keyword: WHEN
+                content: The user clicks the booking entry on a specific train.
+              - keyword: THEN
+                content: The system loads the full details of that train and opens the booking page, making it the current booking context.
+          - name: Block entry to a booking page for a non-existent train
+            steps:
+              - keyword: GIVEN
+                content: The user triggers a booking entry that points to a non-existent or expired train.
+              - keyword: WHEN
+                content: The system attempts to load that train's details.
+              - keyword: THEN
+                content: The system returns explicit not-bookable feedback rather than opening a booking page with missing context.
+
+  - id: REQ-3
+    name: Booking Functionality
+    type: FOLDER
+    description: >-
+      Defines the protected booking page, passenger information form, booking submission API,
+      and the confirmation result boundary after a successful booking.
+      This node can guide generation of shared UI such as the booking form skeleton, selected-train summary area,
+      and booking-success message area.
+      Optional visual reference: ![image](./reference/booking-page.png)
+    dependencies:
+      - REQ-1
+      - REQ-2
+    children:
+      - id: REQ-3.1
+        name: Load the Booking Page and Display the Selected Train Summary
+        type: ATOMIC
+        description: >-
+          After a logged-in user enters the booking page, the system must load and display the summary information
+          of the currently selected train.
+          The page must display the train identifier, departure city, destination city, date,
+          and the basic context needed for booking.
+          Optional visual reference: ![image](./reference/booking-page.png)
+        dependencies:
+          - REQ-1.2
+          - REQ-2.3
+        scenarios:
+          - name: A logged-in user opens the booking page and sees the train summary
+            steps:
+              - keyword: GIVEN
+                content: The logged-in user has already selected a specific train from the search results.
+              - keyword: WHEN
+                content: The booking page is opened.
+              - keyword: THEN
+                content: The system loads the current train context and displays the full train summary so the user can continue filling in booking information.
+
+      - id: REQ-3.2
+        name: Submit Passenger Information and Create a Booking Record
+        type: ATOMIC
+        description: >-
+          A logged-in user can fill in passenger name, ID number, and seat type on the booking page and submit the booking.
+          The system must validate the passenger information, create and persist a booking record that belongs to the current user
+          and is bound to the current train, and return a success result.
+          Invalid input must not create a booking record.
+          Optional visual reference: ![image](./reference/booking-page.png)
+        dependencies:
+          - REQ-3.1
+        scenarios:
+          - name: Submit valid booking information and create a booking record
+            steps:
+              - keyword: GIVEN
+                content: A logged-in user is viewing the booking page for a selected train.
+              - keyword: WHEN
+                content: The user enters a valid passenger name, ID number, and seat type, and submits the booking form.
+              - keyword: THEN
+                content: The system creates and persists a new booking record and returns a booking-success result to the UI.
+          - name: Reject invalid passenger information
+            steps:
+              - keyword: GIVEN
+                content: A logged-in user is viewing the booking page, but the passenger name, ID number, or seat type is invalid or missing.
+              - keyword: WHEN
+                content: The user submits the booking form.
+              - keyword: THEN
+                content: The system returns explicit validation feedback and does not create a new booking record.
+
+      - id: REQ-3.3
+        name: Display the Booking Success Result
+        type: ATOMIC
+        description: >-
+          After a booking record has been created successfully, the system must load the newly created booking record
+          and display a success page or success panel.
+          The page must display the booking number, train summary, passenger summary, and success status
+          rather than only a static success message.
+        dependencies:
+          - REQ-3.2
+        scenarios:
+          - name: Load the newly created booking record and display the success result
+            steps:
+              - keyword: GIVEN
+                content: The current user has just completed a successful booking, and the system has already created the corresponding booking record.
+              - keyword: WHEN
+                content: The booking success page or success panel is opened.
+              - keyword: THEN
+                content: The system loads and displays the key information of that booking record, including the booking number, train summary, passenger summary, and success status.

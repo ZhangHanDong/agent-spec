@@ -206,6 +206,248 @@ pub fn write_export(
     Ok(outcome)
 }
 
+// ── ARC-native export projection ────────────────────────────────────
+
+/// Render confirmed requirement documents as a single-root ARC-native tree
+/// that the reference loader consumes directly (`yaml.safe_load` + non-empty
+/// root id). Dotted source ids recorded at import time are restored; the
+/// projection is derived and obeys the same round-trip law as the v1.1
+/// dialect: export → import → export is byte-identical.
+pub fn export_requirements_arc_native(
+    knowledge_dir: &Path,
+    root_name: &str,
+    opts: &ExportOptions,
+) -> Result<ExportOutcome, RequirementImportError> {
+    let graph = crate::spec_knowledge::build_requirement_graph(knowledge_dir);
+    let mut by_id: std::collections::BTreeMap<String, &crate::spec_knowledge::RequirementNode> =
+        graph.nodes.iter().map(|n| (n.id.clone(), n)).collect();
+
+    if !opts.ids.is_empty() {
+        let wanted: std::collections::BTreeSet<String> = opts
+            .ids
+            .iter()
+            .map(|i| i.trim().to_ascii_uppercase())
+            .collect();
+        for id in &wanted {
+            if !by_id.contains_key(id) {
+                return Err(err(format!("unknown requirement id for export: {id}")));
+            }
+        }
+        by_id.retain(|id, _| wanted.contains(id));
+    }
+
+    let mut excluded = Vec::new();
+    let mut lossy = Vec::new();
+    let mut out = String::new();
+    out.push_str("id: ROOT\n");
+    out.push_str(&format!("name: \"{}\"\n", expressible(root_name, "ROOT")?));
+    out.push_str("type: FOLDER\n");
+    out.push_str("dependencies: []\n");
+    out.push_str("children:\n");
+    let mut wrote_any = false;
+
+    for (id, node) in &by_id {
+        match node.status {
+            Some(crate::spec_knowledge::DecisionStatus::Proposed)
+            | Some(crate::spec_knowledge::DecisionStatus::Accepted) => {}
+            Some(crate::spec_knowledge::DecisionStatus::Superseded) => {
+                excluded.push(format!("{id} (superseded)"));
+                continue;
+            }
+            Some(crate::spec_knowledge::DecisionStatus::Deprecated) => {
+                excluded.push(format!("{id} (deprecated)"));
+                continue;
+            }
+            Some(crate::spec_knowledge::DecisionStatus::Rejected) => {
+                excluded.push(format!("{id} (rejected)"));
+                continue;
+            }
+            None => {
+                excluded.push(format!("{id} (missing status)"));
+                continue;
+            }
+        }
+
+        // Source-id fidelity: scan the raw document once for the frontmatter
+        // `source-id:` line and per-clause `<!-- source-id: ... -->` comments.
+        let raw = std::fs::read_to_string(&node.source_path)
+            .map_err(|e| err(format!("cannot read {}: {e}", node.source_path.display())))?;
+        let doc_source_id = frontmatter_lines(&raw)
+            .into_iter()
+            .find_map(|line| line.strip_prefix("source-id: ").map(str::to_string));
+        let clause_source_ids = clause_source_id_map(&raw);
+
+        let folder_id = doc_source_id.clone().unwrap_or_else(|| id.to_string());
+        out.push_str(&format!("  - id: {folder_id}\n"));
+        out.push_str(&format!(
+            "    name: \"{}\"\n",
+            expressible(&node.title, id)?
+        ));
+        out.push_str("    type: FOLDER\n");
+        let description = expressible(&reflow(&node.problem), id)?;
+        if !description.is_empty() {
+            out.push_str(&format!("    description: \"{description}\"\n"));
+        }
+
+        let mut deps: Vec<String> = node.dependencies.clone();
+        deps.sort();
+        deps.dedup();
+        if deps.is_empty() {
+            out.push_str("    dependencies: []\n");
+        } else {
+            out.push_str("    dependencies:\n");
+            for dep in deps {
+                out.push_str(&format!("      - {dep}\n"));
+            }
+        }
+
+        if node.clauses.is_empty() {
+            return Err(err(format!("{id}: document has no clauses to export")));
+        }
+        out.push_str("    children:\n");
+        for clause in &node.clauses {
+            let clause_id = clause
+                .id
+                .as_deref()
+                .ok_or_else(|| err(format!("{id}: a clause without an id cannot be exported")))?;
+            let atomic_id = clause_source_ids
+                .get(clause_id)
+                .cloned()
+                .unwrap_or_else(|| clause_id.to_string());
+            let suffix = clause_id
+                .strip_prefix(&format!("{id}-"))
+                .unwrap_or(clause_id)
+                .to_ascii_lowercase();
+            out.push_str(&format!("      - id: {atomic_id}\n"));
+            out.push_str(&format!("        name: \"{}\"\n", humanize(&suffix)));
+            out.push_str("        type: ATOMIC\n");
+            out.push_str(&format!(
+                "        description: \"{}\"\n",
+                expressible(&clause.text, clause_id)?
+            ));
+            out.push_str("        dependencies: []\n");
+        }
+
+        if !node.scenarios.is_empty() {
+            out.push_str("    scenarios:\n");
+            for scenario in &node.scenarios {
+                out.push_str(&format!(
+                    "      - name: \"{}\"\n",
+                    expressible(&scenario.name, id)?
+                ));
+                out.push_str("        steps:\n");
+                for step in &scenario.steps {
+                    out.push_str(&format!(
+                        "          - keyword: {}\n",
+                        step.keyword.to_ascii_uppercase()
+                    ));
+                    out.push_str(&format!(
+                        "            content: \"{}\"\n",
+                        expressible(&step.content, id)?
+                    ));
+                }
+            }
+        }
+        wrote_any = true;
+
+        if !node.tags.is_empty() {
+            lossy.push(format!("{id}: tags are not carried by the ARC-native tree"));
+        }
+        if !node.source_trace.is_empty() {
+            lossy.push(format!(
+                "{id}: Source Trace is not carried by the ARC-native tree"
+            ));
+        }
+        if !node.open_questions.is_empty() {
+            lossy.push(format!(
+                "{id}: Open Questions are not carried by the ARC-native tree"
+            ));
+        }
+        if node.status == Some(crate::spec_knowledge::DecisionStatus::Accepted) {
+            lossy.push(format!(
+                "{id}: governance status is not carried by the ARC-native tree (re-import yields proposed)"
+            ));
+        }
+    }
+
+    if !wrote_any {
+        return Err(err("no exportable requirement documents".to_string()));
+    }
+    Ok(ExportOutcome {
+        yaml: out,
+        excluded,
+        lossy,
+    })
+}
+
+/// Lines strictly between the first and second `---` frontmatter fences.
+fn frontmatter_lines(raw: &str) -> Vec<&str> {
+    let mut lines = raw.lines();
+    if lines.next().map(str::trim) != Some("---") {
+        return Vec::new();
+    }
+    lines
+        .map(str::trim)
+        .take_while(|line| *line != "---")
+        .collect()
+}
+
+/// Map clause ids to their recorded `<!-- source-id: ... -->` comments.
+fn clause_source_id_map(raw: &str) -> std::collections::BTreeMap<String, String> {
+    let mut map = std::collections::BTreeMap::new();
+    let mut last_clause: Option<String> = None;
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix('[') {
+            if let Some(end) = rest.find(']') {
+                last_clause = Some(rest[..end].to_string());
+            }
+        } else if let Some(comment) = trimmed
+            .strip_prefix("<!-- source-id: ")
+            .and_then(|rest| rest.strip_suffix(" -->"))
+            && let Some(clause) = last_clause.take()
+        {
+            map.insert(clause, comment.trim().to_string());
+        }
+    }
+    map
+}
+
+/// Export the ARC-native projection to `path`, honoring the same `.yaml`
+/// target and `--check` drift semantics as the v1.1 exporter.
+pub fn write_arc_native_export(
+    knowledge_dir: &Path,
+    path: &Path,
+    root_name: &str,
+    opts: &ExportOptions,
+    check: bool,
+) -> Result<ExportOutcome, RequirementImportError> {
+    let extension = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase);
+    if !matches!(extension.as_deref(), Some("yaml") | Some("yml")) {
+        return Err(err(format!(
+            "export target must end in .yaml or .yml: {}",
+            path.display()
+        )));
+    }
+    let outcome = export_requirements_arc_native(knowledge_dir, root_name, opts)?;
+    if check {
+        let actual = std::fs::read_to_string(path).unwrap_or_default();
+        if actual != outcome.yaml {
+            return Err(err(format!(
+                "exported projection drifted: {}",
+                path.display()
+            )));
+        }
+        return Ok(outcome);
+    }
+    std::fs::write(path, &outcome.yaml)
+        .map_err(|e| err(format!("cannot write {}: {e}", path.display())))?;
+    Ok(outcome)
+}
+
 fn err(message: String) -> RequirementImportError {
     RequirementImportError { message }
 }

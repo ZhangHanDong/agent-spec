@@ -19,6 +19,30 @@ All notable changes to `agent-spec` are documented here. Format follows
   mdbook-mermaid; built at Pages deploy time (never committed) and
   served at `/book/`. English edition is declared follow-up work.
 
+## [Unreleased]
+
+### Added
+
+- ARC-native requirements dialect (`REQ-ARC-NATIVE-DIALECT`): agent-spec
+  compiled requirements are now directly consumable as the reference
+  compiler's input `requirements.yaml`, and reference-native trees import
+  for governance. `requirements import` auto-detects the single-root
+  ARC-native shape (with `root:`/`requirement:` wrapper tolerance) and maps
+  `name`→title, ATOMIC `description`→clause statement, `steps` scenarios,
+  and dotted ids (normalized with `source-id:` fidelity annotations); the
+  subset parser gains folded/literal block scalars and empty flow lists.
+  `requirements export --dialect arc-native [--root-name N]` projects the
+  IR as a reference-loadable single-root tree, restoring dotted ids; the
+  round-trip law holds (export → import → export byte-identical, verified
+  even on dotted-id corpora). The verbatim reference ticketbooking file is
+  a fixture and the parity input-conformance test now binds it.
+
+### Fixed
+
+- Requirement clause extraction skips HTML comment paragraphs (e.g.
+  `<!-- source-id: ... -->` annotations) instead of treating them as
+  id-less clauses.
+
 ## [1.0.0] - 2026-07-13
 
 **The compatibility promise begins.** Every surface in the README's

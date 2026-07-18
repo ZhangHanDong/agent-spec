@@ -91,6 +91,11 @@ pub fn extract_requirements(doc: &KnowledgeDoc) -> Vec<RequirementClause> {
         if line.is_empty() {
             continue;
         }
+        // HTML comments (e.g. `<!-- source-id: ... -->`) are annotations,
+        // never normative clauses.
+        if line.starts_with("<!--") {
+            continue;
+        }
         let (id, text) = split_id_prefix(line);
         let keyword = NormativeKeyword::detect(&text);
         clauses.push(RequirementClause { id, keyword, text });
