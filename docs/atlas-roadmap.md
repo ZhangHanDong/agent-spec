@@ -1,9 +1,13 @@
 # rust-atlas Roadmap：从"精确的 Rust 语法图"到"多语言 + 语义解析的符号图"
 
-> 状态基线：commit `afca280 fix(atlas): make Rust symbol graph semantically stable`
-> 之后。本文综合了对 `crates/rust-atlas/src/lib.rs` 的源码审查、在真实 workspace
-> （grok-build 66,993 节点 / agent-spec 自举 2,300 节点）上的实测审计，以及对
-> tree-sitter / rust-analyzer 两条演进路线的取舍分析。
+> 状态基线：**Phase 0（`afca280`）与 Phase 1（`bb47849`，合入 PR #5）均已完成**；
+> 本文剩余部分（Phase 2–4）是前瞻规划。本文综合了对 `crates/rust-atlas/src/lib.rs`
+> 的源码审查、在真实 workspace（最新 grok-build 124d85b：68,638 节点 / agent-spec
+> 自举 ~2,300 节点）上的实测审计，以及对 tree-sitter / rust-analyzer 两条演进路线的
+> 取舍分析。
+>
+> 注：下文各处 `lib.rs:NNN` 行号锚定 Phase 1 完成前的快照，仅作定位线索；Phase 1
+> 大改后行号已漂移，以符号名为准。
 >
 > 落地方式：本文件是**设计文档**。每个 Phase 的可交付项应切成 `specs/` 下的
 > `.spec.md` 合约（沿用 `task-atlas-*.spec.md` 约定）再交付实现。
@@ -38,15 +42,19 @@
 | 悬空边伪装成真边 | `EdgeResolution` + `resolve_syn_edges` 事后解析 | 98.1% resolved / 其余诚实标注 |
 | SCIP 状态不一致 | 无 `--scip` 即 `remove_scip_edges` 清 overlay | 回归测试覆盖 |
 
-### 1.2 待办（本 Roadmap 的输入）— 审计暴露的 5 项新问题
+### 1.2 Phase 1 已修复（`bb47849`）— 审计暴露的 5 项新问题，均已实证
 
-| ID | 严重度 | 问题 | 代码触点 |
-|---|---|---|---|
-| **A** | 高 | `impls <内部Trait>` 返回空：裸名 trait（`SpecLinter`×27 等）在 syn 层无法解析 + `impls()` 只认 resolved id | `resolve_syn_edges` lib.rs:511；`impls` lib.rs:432 |
-| **B** | 中 | 布局过度收集：被 `exclude` 的 fixture crate + `build_script_build` 污染图 | `nested_workspace_manifests` lib.rs:702；`ProjectLayout::discover` lib.rs:894 |
-| **C** | 中 | 完整性缺口：`static`/`union`/`TraitAlias`/关联 `const`·`type` 不入图 | `extract_items` lib.rs:1387 |
-| **D** | 低 | struct/enum 签名嵌入整个字段体（最长 1122 字符） | `extract_items`（struct/enum 臂） |
-| **E** | 低 | 死字段 `Capability.scip_index`（注释撒谎，从不 set/read）；`refs` 无 scip 恒空未文档化；`line_start` 含 doc 行 | lib.rs:122；`refs` lib.rs:395 |
+| ID | 问题 | 结果 |
+|---|---|---|
+| **A** | `impls <内部Trait>` 返回空：裸名 trait 在 syn 层无法解析 + `impls()` 只认 resolved id | 裸名唯一后缀解析 + impls 兜底；`impls SpecLinter` 0→27；impls-trait resolved 3/51→41/51 |
+| **B** | 布局过度收集：被 `exclude` 的 fixture crate + `build_script_build` 污染图 | 尊重 `exclude` + 跳过 custom-build + walk 层过滤；污染 33→0 |
+| **C** | 完整性缺口：`static`/`union`/`TraitAlias`/关联 `const`·`type` 不入图 | 补齐 item 类型 + 新 `NodeKind`；最新 grok-build 图含 static 339、type-alias 549 |
+| **D** | struct/enum 签名嵌入整个字段体（最长 1122 字符） | 声明头签名；struct 签名最长 1122→47 |
+| **E** | 死字段 `Capability.scip_index`；`refs` 无 scip 恒空未文档化 | 删死字段 + refs 文档化 |
+| **F** | `--code .`（CLI 默认值）崩溃：cargo metadata 绝对路径 vs 相对遍历路径 | `build`/`check` 入口 canonicalize；默认命令恢复可用 |
+
+> 遗留（Phase 1 未完全覆盖，见 §9）：非 `exclude` 的 stray 文件仍被兜到 host crate
+> 命名空间；`crate::Tool` 式 re-export 路径不解析（留给 Phase 2 SCIP）。
 
 ---
 
@@ -70,12 +78,13 @@
 
 ---
 
-## 3. Phase 1 — 巩固 syn 基线层（无新依赖，纯正确性 / 可用性）
+## 3. Phase 1 — 巩固 syn 基线层（无新依赖，纯正确性 / 可用性）✅ 已完成（`bb47849`）
 
 **目标**：把审计的 A（廉价部分）、B、C、D、E 清掉，让**离线 Rust 图**本身达到"可信、
-完整、可导航"。全部不引入新依赖、不需要可编译项目。
+完整、可导航"。全部不引入新依赖、不需要可编译项目。**下列子节记录各项的做法与
+验收，均已实现并配回归测试（18→23 测试）。**
 
-### 1.1 [A-cheap] 裸名唯一后缀解析 + `impls()` 兜底 — **最高 ROI**
+### P1-A 裸名唯一后缀解析 + `impls()` 兜底 — **最高 ROI**
 - `resolve_syn_edges`（lib.rs:511）：当 `target_text` 无 `::` 且精确匹配失败时，
   尝试**唯一后缀匹配**——若全图恰有一个 `node.symbol` 以 `::{target_text}` 结尾，
   解析过去、标 `Resolved`；多于一个则保持 `Unresolved`（不猜）。
@@ -87,7 +96,7 @@
 - **风险**：后缀匹配对重名 trait 会退回 Unresolved（可接受，宁缺毋误）。真正跨 crate
   的精确解析留给 Phase 2 的 SCIP。
 
-### 1.2 [B] 尊重 workspace 边界，过滤噪声 target
+### P1-B 尊重 workspace 边界，过滤噪声 target
 - `ProjectLayout::discover`（lib.rs:894）/`nested_workspace_manifests`（lib.rs:702）：
   - 尊重根 `Cargo.toml` 的 `exclude`（不要经嵌套 workspace 把被排除的 fixture 捞回）。
   - 跳过 `custom-build` / `build_script_build` target（`target.kind` 含 `custom-build`）。
@@ -95,7 +104,7 @@
 - **验收**：agent-spec 自举图不再出现 `atlas_basic` / `requirements_noteapp` /
   `build_script_build` 命名空间；孤儿节点归零。
 
-### 1.3 [C] 补齐 item 类型
+### P1-C 补齐 item 类型
 - `extract_items`（lib.rs:1387）新增匹配臂：`Item::Static`、`Item::Union`、
   `Item::TraitAlias`；在 trait/impl 体内补 `TraitItem::Const`/`Type`、
   `ImplItem::Const`/`Type`（当前只提 `Fn`）。
@@ -103,11 +112,11 @@
   `SCHEMA_VERSION` 递增。
 - **验收**：源码里的 `static`/关联项在图中可查；`NodeKind` 覆盖率测试。
 
-### 1.4 [D] 声明头签名
+### P1-D 声明头签名
 - struct/enum 签名只渲染到 `{` 之前（`pub struct SpecMeta`），字段/变体不进签名。
 - **验收**：struct 签名长度中位/最长大幅下降；shard 体积下降。
 
-### 1.5 [E] 清理与文档化
+### P1-E 清理与文档化
 - 删除死字段 `Capability.scip_index`（lib.rs:122）——**Phase 2 会以"复用上次 index"
   的形式正式引入并真正 wire 上**，届时再加回带真实语义的版本。
 - `refs`（lib.rs:395）：无 scip 时在输出里返回一条 `note`/warning 说明"无语义层，
@@ -124,14 +133,14 @@
 **目标**：把 `Provenance::Scip` 层从"仅 occurrence→References"升级为"完整语义解析"，
 让 `impls`/`refs`/`calls` 对**内部与跨 crate** 都答对，并让宏生成的符号可见。
 
-### 2.1 SCIP 生成流水线
+### P2-1 SCIP 生成流水线
 - 新增 `atlas scip-gen`（或 build 内置）：检测 `rust-analyzer`，对 code_root 跑
   `rust-analyzer scip .` 产 `index.scip`（protobuf）或 JSON；缓存到 graph_dir、
   按内容哈希增量。
 - 优雅降级：无 `rust-analyzer` / 项目不可编译 → 明确 warning + 退回纯 syn，**不报错**。
 - 文档化前置：需可编译项目、匹配的 toolchain、proc-macro server。
 
-### 2.2 扩展 `overlay_scip` 消费"关系"而非仅 occurrence
+### P2-2 扩展 `overlay_scip` 消费"关系"而非仅 occurrence
 - 当前 `overlay_scip` 只读 `symbol_roles`（def/ref）产 `References`。**扩展**为：
   - 读 SCIP 的 **implementation relationships**，把 syn 层的 `ImplsTrait`/`ImplFor`
     边的 `to` 从"近似 target_text"**重写为 resolved node id**（`resolution=Resolved`,
@@ -145,7 +154,7 @@
   `#[derive(Serialize)]`→`impl Serialize`），overlay 后这些 impl 变可见——这是
   syn/tree-sitter 永远给不了的完整性。
 
-### 2.3 SCIP 跨增量刷新存活（正式实现被删的 `scip_index`）
+### P2-3 SCIP 跨增量刷新存活（正式实现被删的 `scip_index`）
 - 把上次使用的 SCIP index 路径 + 指纹记进 `Capability`（真正 set/read）。
 - `refresh`（lib.rs:609）/增量 `build`：若有记录的 index 且仍新鲜，**自动 re-overlay**
   而非 `remove_scip_edges` 清掉。使 `Provenance::Scip` 在编辑后稳定存活。
@@ -160,19 +169,19 @@
 
 **目标**：把基线层从"Rust-only（syn）"扩成"多语言"，覆盖混合仓库。
 
-### 3.1 后端抽象
+### P3-1 后端抽象
 - 抽 `trait LanguageBackend { fn extract(&self, unit, source) -> (Vec<Node>, Vec<Edge>); }`。
   syn 成为 `RustSynBackend`（保留 Phase 1/2 全部精度）。
 - `extract_shard`（lib.rs:1319）按文件语言分派到对应 backend。
 
-### 3.2 tree-sitter 后端
+### P3-2 tree-sitter 后端
 - 为 Go / JS / TS / Python 各挂 `tree-sitter-*` grammar + `tags.scm` 查询
   （定义 + 近似引用），产 `Node`/`Edge`。用**声明式 `.scm` 查询**替代硬编码 match——
   也顺带让 Rust 侧未来"加一类符号 = 改查询"（呼应 finding C 的可扩展性）。
 - 容错优势：tree-sitter 对残缺文件仍产部分树，消灭"整文件 unparsed"。
 - 语言检测按扩展名；`walk_rs_files`（lib.rs:1073）泛化为 `walk_source_files`。
 
-### 3.3 多语言语义层
+### P3-3 多语言语义层
 - SCIP 本就是跨语言标准：Go=`scip-go`、TS=`scip-typescript`、Python=`scip-python`、
   Rust=`rust-analyzer`。同一个 `overlay_scip` 吃所有语言的 SCIP → 各语言都能有精确层。
 
@@ -188,8 +197,13 @@
   死代码。长期，重。
 - **daemon / LSP 模式**：把 build 变常驻服务，这时 tree-sitter 的**子文件增量解析**
   才真正兑现（当前 CLI 批处理已在文件粒度拿到大部分增量收益）。
-- **性能**：`extract_shard` 用 rayon 并行；缓存 `cargo metadata`（当前每次 build 都
-  shell 出，grok-build 93s）；SCIP 增量。
+- **性能——增量已有、但有固定地板**。build 已按文件 blake3 哈希增量：只有内容变了
+  的 `.rs` 才重新 syn 解析。实测最新 grok-build（68,638 节点）：首建 ~90s，**0 改动
+  重跑仍 ~45s**——这 45s 是地板，来自每次都跑的三个 O(全图) 遍：哈希全部 2261 文件 +
+  `resolve_syn_edges`（读全部 shard 建全局符号表、重解析所有边）+ `validate_graph`
+  （读全部 shard 查唯一性/边端点）。优化方向：(1) `extract_shard` 用 rayon 并行；
+  (2) 缓存 `cargo metadata`（当前每次 build shell 出）；(3) 把 resolve/validate 从
+  "全图重算"缩到"只碰变化的符号及其引用方"（增量解析）；(4) SCIP 增量。
 - **查询人体工学**：`impls`/`refs` 增加 `--provenance`/`--resolved-only` 过滤；
   `AmbiguousSymbol`（lib.rs:287）给出候选列表而非仅报错。
 
@@ -223,3 +237,22 @@
 | SCIP 增量存活 | 2.3 | `refresh`:609、`build`:176 |
 | 多语言 | 3 | 新 `LanguageBackend`、`extract_shard`:1319、`walk_*`:1073 |
 | 子文件增量 / 调用图 | 4 | daemon 模式、`Provenance::Mir` |
+
+---
+
+## 9. 已知遗留与边界（Phase 1 后仍在，如实记录）
+
+在最新 grok-build（124d85b，68,638 节点，98.2% 边解析）上实测暴露：
+
+- **re-export 路径不解析**。`impl Tool for X` 里 `Tool` 经 `use` 从 crate 根引入、
+  写成 `crate::Tool`，而真正的 trait 节点在 `xai_tool_runtime::tool::Tool`（模块内）。
+  带 `::` 故不走裸名后缀、又不精确匹配 → 未解析（实测 `xai_tool_runtime::Tool`×59）。
+  纯 syn 看不穿 re-export，**这正是 Phase 2 SCIP 的领域**。未解析的 ~1.5% 主要就是
+  这类 + 外部 std trait（`Default`×211、`From`×142 等，合理未解析）。
+- **stray 非成员文件仍被兜到 host crate**。P1-B 修好了显式 `exclude` 的 fixture，但
+  仓库根下**未被 exclude 的**非成员 `.rs`（如某些 fixture）仍经 `source_unit` 的
+  `package_dir` 回退挂到 root crate 命名空间。根治需"只索引 target 模块树可达的文件、
+  其余跳过"的策略，属 P1-B 的后续。
+- **增量有 ~45s 地板**（见 §6 Phase 4 性能）：0 改动重跑仍要跑全图 resolve+validate。
+- **CI 卫生**：Phase 1 手写代码曾漏 `cargo fmt`，挂了 Rust Checks / guard 的 Format
+  步。收尾必须 `cargo fmt --check` + `cargo clippy` 一起跑，别只跑 clippy。
