@@ -416,9 +416,19 @@ enum AtlasCommands {
         graph: PathBuf,
         #[arg(long)]
         full: bool,
-        /// Optional SCIP index (rust-analyzer, JSON form) for resolved references
+        /// Optional SCIP index (rust-analyzer protobuf or JSON) for resolved references
         #[arg(long)]
         scip: Option<PathBuf>,
+    },
+    /// Generate a SCIP index via rust-analyzer (opt-in semantic layer)
+    ScipGen {
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+        /// rust-analyzer binary to invoke
+        #[arg(long, default_value = "rust-analyzer")]
+        ra: String,
     },
     /// Deterministic module outline
     Tree {
@@ -3278,6 +3288,13 @@ fn cmd_atlas(action: AtlasCommands) -> Result<(), Box<dyn std::error::Error>> {
                 },
             )?;
             print_value(&report, "json")
+        }
+        AtlasCommands::ScipGen { code, graph, ra } => {
+            let out = rust_atlas::generate_scip(&code, &graph.join("index.scip"), &ra)?;
+            print_value(
+                &serde_json::json!({ "index": out.display().to_string() }),
+                "json",
+            )
         }
         AtlasCommands::Tree {
             code,
@@ -10985,7 +11002,12 @@ Scenario: pass
         )
         .unwrap();
         assert_eq!(result["node"]["kind"], "struct");
-        assert_eq!(result["node"]["id"], "atlas_basic::store::MemStore");
+        assert_eq!(result["node"]["symbol"], "atlas_basic::store::MemStore");
+        assert!(
+            result["node"]["id"]
+                .as_str()
+                .is_some_and(|id| id.starts_with("atlas_basic::store::MemStore#"))
+        );
         assert!(
             result["node"]["file"]
                 .as_str()
