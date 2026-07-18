@@ -17,7 +17,7 @@ use std::process::Command;
 use quote::ToTokens;
 use serde::{Deserialize, Serialize};
 
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AtlasError {
@@ -118,6 +118,13 @@ pub struct Shard {
 pub struct Capability {
     pub scip: bool,
     pub scip_tool: Option<String>,
+    /// Absolute path of the SCIP index last overlaid, so an incremental
+    /// `refresh` can re-overlay instead of purging the semantic layer.
+    #[serde(default)]
+    pub scip_index: Option<String>,
+    /// blake3 of that index file at overlay time (staleness signal).
+    #[serde(default)]
+    pub scip_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -238,6 +245,13 @@ pub fn build(
         let tool = overlay_scip(&shards_dir, index_path, &files)?;
         capability.scip = true;
         capability.scip_tool = tool;
+        // Record the index (absolute) + its fingerprint so `refresh` can
+        // re-overlay after edits instead of silently dropping the semantic layer.
+        let abs = std::fs::canonicalize(index_path).unwrap_or_else(|_| index_path.clone());
+        capability.scip_index = Some(abs.to_string_lossy().into_owned());
+        capability.scip_fingerprint = std::fs::read(index_path)
+            .ok()
+            .map(|bytes| blake3::hash(&bytes).to_hex().to_string());
     } else {
         remove_scip_edges(&shards_dir, &files)?;
     }
@@ -669,7 +683,22 @@ fn refresh(
     if opts.frozen {
         return Ok(stale);
     }
-    build(code_root, graph_dir, &BuildOptions::default())?;
+    // Keep the SCIP layer alive across incremental refreshes: re-overlay the
+    // index recorded in the prior build if it still exists. A vanished index
+    // falls back to syn (scip edges purged, capability cleared).
+    let scip_index = read_meta(graph_dir)
+        .ok()
+        .and_then(|m| m.capability.scip_index)
+        .map(PathBuf::from)
+        .filter(|p| p.exists());
+    build(
+        code_root,
+        graph_dir,
+        &BuildOptions {
+            full: false,
+            scip_index,
+        },
+    )?;
     Ok(Vec::new())
 }
 
@@ -1867,22 +1896,24 @@ fn extract_items(
 
 // ── SCIP overlay ────────────────────────────────────────────────────
 
+// ── JSON form (hand-authored fixtures; kept for backward compatibility) ──
+
 #[derive(Deserialize)]
-struct ScipIndex {
+struct ScipJsonIndex {
     #[serde(default)]
-    metadata: Option<ScipMetadata>,
+    metadata: Option<ScipJsonMetadata>,
     #[serde(default)]
-    documents: Vec<ScipDocument>,
+    documents: Vec<ScipJsonDocument>,
 }
 
 #[derive(Deserialize)]
-struct ScipMetadata {
+struct ScipJsonMetadata {
     #[serde(default)]
-    tool_info: Option<ScipToolInfo>,
+    tool_info: Option<ScipJsonToolInfo>,
 }
 
 #[derive(Deserialize)]
-struct ScipToolInfo {
+struct ScipJsonToolInfo {
     #[serde(default)]
     name: String,
     #[serde(default)]
@@ -1890,30 +1921,206 @@ struct ScipToolInfo {
 }
 
 #[derive(Deserialize)]
-struct ScipDocument {
+struct ScipJsonDocument {
     relative_path: String,
     #[serde(default)]
-    occurrences: Vec<ScipOccurrence>,
+    occurrences: Vec<ScipJsonOccurrence>,
 }
 
 #[derive(Deserialize)]
-struct ScipOccurrence {
+struct ScipJsonOccurrence {
     symbol: String,
     #[serde(default)]
     symbol_roles: u32,
     range: Vec<u32>,
 }
 
-/// Overlay resolved `references` edges from a SCIP JSON index onto the shards.
+// ── Neutral model (both JSON and protobuf decode into this) ──
+
+/// How a SCIP target symbol projects onto an atlas edge.
+///
+/// `Trait` and `DataType` both yield `UsesType` for ordinary references, but
+/// are kept distinct so `impl` headers can tell the implemented trait from the
+/// implementing type (`ImplsTrait` vs `ImplFor`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ScipKind {
+    Call,
+    Trait,
+    DataType,
+    Other,
+}
+
+struct ScipModel {
+    tool: Option<String>,
+    documents: Vec<ScipDoc>,
+    /// SCIP symbol string → classified kind (from `SymbolInformation.kind`).
+    /// Empty for JSON indexes, which carry occurrences only.
+    kinds: BTreeMap<String, ScipKind>,
+}
+
+struct ScipDoc {
+    relative_path: String,
+    occurrences: Vec<ScipOcc>,
+}
+
+struct ScipOcc {
+    symbol: String,
+    is_definition: bool,
+    /// 0-based start line (`range[0]`).
+    line: usize,
+}
+
+impl ScipOcc {
+    fn edge_kind(&self, kinds: &BTreeMap<String, ScipKind>) -> EdgeKind {
+        match kinds.get(&self.symbol) {
+            Some(ScipKind::Call) => EdgeKind::Calls,
+            Some(ScipKind::Trait) | Some(ScipKind::DataType) => EdgeKind::UsesType,
+            _ => EdgeKind::References,
+        }
+    }
+}
+
+/// Dispatch on content: a UTF-8 payload whose first non-space byte is `{` is the
+/// hand-authored JSON form; anything else is decoded as protobuf (the only shape
+/// `rust-analyzer scip` emits).
+fn load_scip(index_path: &Path) -> Result<ScipModel, AtlasError> {
+    let bytes = std::fs::read(index_path)
+        .map_err(|e| AtlasError::Scip(format!("cannot read {}: {e}", index_path.display())))?;
+    let looks_json = bytes.iter().find(|b| !b.is_ascii_whitespace()).copied() == Some(b'{');
+    if looks_json {
+        let text = String::from_utf8(bytes)
+            .map_err(|e| AtlasError::Scip(format!("index is not valid UTF-8 JSON: {e}")))?;
+        load_scip_json(&text)
+    } else {
+        load_scip_protobuf(&bytes)
+    }
+}
+
+fn load_scip_json(text: &str) -> Result<ScipModel, AtlasError> {
+    let index: ScipJsonIndex =
+        serde_json::from_str(text).map_err(|e| AtlasError::Scip(e.to_string()))?;
+    let documents = index
+        .documents
+        .into_iter()
+        .map(|doc| ScipDoc {
+            relative_path: doc.relative_path,
+            occurrences: doc
+                .occurrences
+                .into_iter()
+                .filter_map(|occ| {
+                    occ.range.first().map(|line| ScipOcc {
+                        symbol: occ.symbol,
+                        is_definition: occ.symbol_roles & 1 == 1,
+                        line: *line as usize,
+                    })
+                })
+                .collect(),
+        })
+        .collect();
+    let tool = index
+        .metadata
+        .and_then(|m| m.tool_info)
+        .map(|t| format!("{} {}", t.name, t.version));
+    Ok(ScipModel {
+        tool,
+        documents,
+        kinds: BTreeMap::new(),
+    })
+}
+
+fn load_scip_protobuf(bytes: &[u8]) -> Result<ScipModel, AtlasError> {
+    use protobuf::Message;
+    let index = scip::types::Index::parse_from_bytes(bytes)
+        .map_err(|e| AtlasError::Scip(format!("cannot decode protobuf index: {e}")))?;
+
+    let mut kinds = BTreeMap::new();
+    let mut record_kind = |sym: &str, raw: scip::types::symbol_information::Kind| {
+        kinds.insert(sym.to_string(), classify_scip_kind(raw));
+    };
+    for sym in &index.external_symbols {
+        record_kind(&sym.symbol, sym.kind.enum_value_or_default());
+    }
+    for doc in &index.documents {
+        for sym in &doc.symbols {
+            record_kind(&sym.symbol, sym.kind.enum_value_or_default());
+        }
+    }
+
+    let documents = index
+        .documents
+        .iter()
+        .map(|doc| ScipDoc {
+            relative_path: doc.relative_path.clone(),
+            occurrences: doc
+                .occurrences
+                .iter()
+                .filter_map(|occ| {
+                    occ.range.first().map(|line| ScipOcc {
+                        symbol: occ.symbol.clone(),
+                        is_definition: occ.symbol_roles & 1 == 1,
+                        line: *line as usize,
+                    })
+                })
+                .collect(),
+        })
+        .collect();
+
+    let tool = index
+        .metadata
+        .as_ref()
+        .and_then(|m| m.tool_info.as_ref())
+        .map(|t| format!("{} {}", t.name, t.version));
+
+    Ok(ScipModel {
+        tool,
+        documents,
+        kinds,
+    })
+}
+
+fn classify_scip_kind(kind: scip::types::symbol_information::Kind) -> ScipKind {
+    use scip::types::symbol_information::Kind as K;
+    match kind {
+        K::Method | K::TraitMethod | K::StaticMethod | K::Function | K::Macro => ScipKind::Call,
+        K::Trait => ScipKind::Trait,
+        K::Struct
+        | K::Enum
+        | K::Union
+        | K::TypeAlias
+        | K::Class
+        | K::Interface
+        | K::TypeParameter => ScipKind::DataType,
+        _ => ScipKind::Other,
+    }
+}
+
+/// Overlay semantic edges from a SCIP index (protobuf or JSON) onto the shards.
+///
+/// Adds `Provenance::Scip` edges only; the syn baseline is never mutated, so
+/// `remove_scip_edges` reverts cleanly. Reference occurrences become
+/// `Calls`/`UsesType`/`References` by target-symbol kind, and `impl` headers
+/// resolve `ImplsTrait`/`ImplFor` to the canonical trait/type node (or
+/// `External` when the target is defined outside this workspace).
 fn overlay_scip(
     shards_dir: &Path,
     index_path: &Path,
     files: &BTreeMap<String, String>,
 ) -> Result<Option<String>, AtlasError> {
-    let text = std::fs::read_to_string(index_path)
-        .map_err(|e| AtlasError::Scip(format!("cannot read {}: {e}", index_path.display())))?;
-    let index: ScipIndex =
-        serde_json::from_str(&text).map_err(|e| AtlasError::Scip(e.to_string()))?;
+    fn push_edge(
+        shards: &mut BTreeMap<String, Shard>,
+        changed: &mut BTreeSet<String>,
+        rel: &str,
+        edge: Edge,
+    ) {
+        if let Some(shard) = shards.get_mut(rel)
+            && !shard.edges.contains(&edge)
+        {
+            shard.edges.push(edge);
+            changed.insert(rel.to_string());
+        }
+    }
+
+    let model = load_scip(index_path)?;
 
     let mut shards: BTreeMap<String, Shard> = BTreeMap::new();
     for rel in files.keys() {
@@ -1943,39 +2150,39 @@ fn overlay_scip(
             .map(|n| n.id.clone())
     };
 
-    // pass 1: definitions
+    // pass 1: definition occurrences → canonical atlas node id
     let mut defs: BTreeMap<String, String> = BTreeMap::new();
-    for doc in &index.documents {
+    for doc in &model.documents {
         let Some(shard) = shards.get(&doc.relative_path) else {
             continue;
         };
         for occ in &doc.occurrences {
-            if occ.symbol_roles & 1 == 1
-                && let Some(line) = occ.range.first()
-                && let Some(node_id) = containing_node(shard, *line as usize + 1)
+            if occ.is_definition
+                && let Some(node_id) = containing_node(shard, occ.line + 1)
             {
                 defs.insert(occ.symbol.clone(), node_id);
             }
         }
     }
-    // pass 2: references
-    for doc in &index.documents {
+
+    // pass 2: reference occurrences → Calls / UsesType / References (resolved only)
+    for doc in &model.documents {
         let rel = doc.relative_path.clone();
         for occ in &doc.occurrences {
-            if occ.symbol_roles & 1 == 1 {
+            if occ.is_definition {
                 continue;
             }
             let Some(target) = defs.get(&occ.symbol) else {
                 continue;
             };
-            let Some(shard) = shards.get(&rel) else {
-                continue;
-            };
-            let Some(line) = occ.range.first() else {
-                continue;
-            };
-            let Some(from) = containing_node(shard, *line as usize + 1) else {
-                continue;
+            let from = {
+                let Some(shard) = shards.get(&rel) else {
+                    continue;
+                };
+                match containing_node(shard, occ.line + 1) {
+                    Some(from) => from,
+                    None => continue,
+                }
             };
             if from == *target {
                 continue;
@@ -1985,17 +2192,63 @@ fn overlay_scip(
                 to: target.clone(),
                 target_text: Some(occ.symbol.clone()),
                 resolution: EdgeResolution::Resolved,
-                kind: EdgeKind::References,
+                kind: occ.edge_kind(&model.kinds),
                 provenance: Provenance::Scip,
             };
-            if let Some(shard) = shards.get_mut(&rel)
-                && !shard.edges.contains(&edge)
-            {
-                shard.edges.push(edge);
-                changed.insert(rel.clone());
-            }
+            push_edge(&mut shards, &mut changed, &rel, edge);
         }
     }
+
+    // pass 3: impl headers → resolved ImplsTrait / ImplFor.
+    //
+    // rust-analyzer 1.92 leaves SCIP `relationships` empty, so recover the
+    // implemented trait and implementing type from the reference occurrences on
+    // the impl node's own declaration line (`impl Trait for Type`): the
+    // trait-kinded target yields ImplsTrait, the data-type target yields ImplFor.
+    // Targets in the graph resolve to a node id; targets defined elsewhere are
+    // marked External (honest, and skipped by `validate_graph`'s endpoint check).
+    let impl_sites: Vec<(String, String, usize)> = shards
+        .iter()
+        .flat_map(|(rel, shard)| {
+            shard
+                .nodes
+                .iter()
+                .filter(|n| n.kind == NodeKind::Impl)
+                .map(move |n| (rel.clone(), n.id.clone(), n.line_start))
+        })
+        .collect();
+    for (rel, impl_id, line_start) in impl_sites {
+        let Some(doc) = model.documents.iter().find(|d| d.relative_path == rel) else {
+            continue;
+        };
+        for occ in &doc.occurrences {
+            if occ.is_definition || occ.line + 1 != line_start {
+                continue;
+            }
+            let kind = match model.kinds.get(&occ.symbol) {
+                Some(ScipKind::Trait) => EdgeKind::ImplsTrait,
+                Some(ScipKind::DataType) => EdgeKind::ImplFor,
+                _ => continue,
+            };
+            let (to, resolution) = match defs.get(&occ.symbol) {
+                Some(node_id) => (node_id.clone(), EdgeResolution::Resolved),
+                None => (occ.symbol.clone(), EdgeResolution::External),
+            };
+            if to == impl_id {
+                continue;
+            }
+            let edge = Edge {
+                from: impl_id.clone(),
+                to,
+                target_text: Some(occ.symbol.clone()),
+                resolution,
+                kind,
+                provenance: Provenance::Scip,
+            };
+            push_edge(&mut shards, &mut changed, &rel, edge);
+        }
+    }
+
     for rel in changed {
         if let Some(shard) = shards.get_mut(&rel) {
             shard.edges.sort();
@@ -2003,10 +2256,56 @@ fn overlay_scip(
             write_shard(shards_dir, shard)?;
         }
     }
-    Ok(index
-        .metadata
-        .and_then(|m| m.tool_info)
-        .map(|t| format!("{} {}", t.name, t.version)))
+    Ok(model.tool)
+}
+
+/// Generate a SCIP index by invoking `rust-analyzer scip`, writing it to
+/// `out_path`. Returns the output path on success.
+///
+/// Never panics: a missing binary, a non-zero exit, or a missing output all map
+/// to an actionable `AtlasError::Scip`. This is opt-in tooling — the syn baseline
+/// never depends on it.
+pub fn generate_scip(
+    code_root: &Path,
+    out_path: &Path,
+    ra_cmd: &str,
+) -> Result<PathBuf, AtlasError> {
+    let code_root = std::fs::canonicalize(code_root).map_err(io_err)?;
+    // rust-analyzer writes `index.scip` into its cwd; run it inside the code
+    // root, then relocate the artifact to `out_path`.
+    let output = std::process::Command::new(ra_cmd)
+        .arg("scip")
+        .arg(".")
+        .current_dir(&code_root)
+        .output()
+        .map_err(|e| {
+            AtlasError::Scip(format!(
+                "cannot run rust-analyzer (`{ra_cmd} scip .`): {e}. \
+                 Install it (`rustup component add rust-analyzer`) or pass a valid --ra <path>."
+            ))
+        })?;
+    if !output.status.success() {
+        return Err(AtlasError::Scip(format!(
+            "rust-analyzer scip failed ({}): {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    let produced = code_root.join("index.scip");
+    if !produced.exists() {
+        return Err(AtlasError::Scip(
+            "rust-analyzer scip exited 0 but produced no index.scip".to_string(),
+        ));
+    }
+    if let Some(parent) = out_path.parent() {
+        std::fs::create_dir_all(parent).map_err(io_err)?;
+    }
+    // `rename` fails across filesystems; fall back to copy + remove.
+    if std::fs::rename(&produced, out_path).is_err() {
+        std::fs::copy(&produced, out_path).map_err(io_err)?;
+        let _ = std::fs::remove_file(&produced);
+    }
+    Ok(out_path.to_path_buf())
 }
 
 fn remove_scip_edges(
@@ -2038,6 +2337,11 @@ mod tests {
 
     fn scip_fixture() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/atlas/scip/index.json")
+    }
+
+    /// Real `rust-analyzer scip` output (protobuf) for the atlas-basic fixture.
+    fn scip_protobuf_fixture() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/atlas/scip/index.scip")
     }
 
     fn temp_dir(name: &str) -> PathBuf {
@@ -2820,6 +3124,335 @@ impl std::fmt::Display for Local {
             all_edges(&shards)
                 .iter()
                 .all(|edge| edge.provenance != Provenance::Scip)
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    // ── Phase 2: SCIP semantic overlay ──────────────────────────────
+
+    /// Serialize a minimal protobuf SCIP index to `path`. Occurrences are
+    /// `(symbol, roles, line0)`; symbols are `(symbol, kind)`.
+    fn write_synthetic_scip(
+        path: &Path,
+        rel: &str,
+        occ: &[(&str, u32, u32)],
+        syms: &[(&str, scip::types::symbol_information::Kind)],
+    ) {
+        use protobuf::Message;
+        let mut doc = scip::types::Document::new();
+        doc.relative_path = rel.to_string();
+        for (sym, roles, line0) in occ {
+            let mut o = scip::types::Occurrence::new();
+            o.symbol = (*sym).to_string();
+            o.symbol_roles = *roles as i32;
+            o.range = vec![*line0 as i32, 0, 5];
+            doc.occurrences.push(o);
+        }
+        for (sym, kind) in syms {
+            let mut si = scip::types::SymbolInformation::new();
+            si.symbol = (*sym).to_string();
+            si.kind = (*kind).into();
+            doc.symbols.push(si);
+        }
+        let mut index = scip::types::Index::new();
+        index.documents.push(doc);
+        fs::write(path, index.write_to_bytes().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn test_overlay_reads_protobuf_index() {
+        let (code, graph) = copy_fixture("atlas-scip-pb");
+        let report = build(
+            &code,
+            &graph,
+            &BuildOptions {
+                full: false,
+                scip_index: Some(scip_protobuf_fixture()),
+            },
+        )
+        .unwrap();
+        assert!(report.capability.scip);
+        let (meta, shards) = load_graph(&graph).unwrap();
+        assert!(meta.capability.scip);
+        assert!(
+            all_edges(&shards)
+                .iter()
+                .any(|e| e.provenance == Provenance::Scip
+                    && e.resolution == EdgeResolution::Resolved),
+            "expected a resolved scip edge from the protobuf index"
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_overlay_still_reads_json_index() {
+        let (code, graph) = copy_fixture("atlas-scip-json");
+        let report = build(
+            &code,
+            &graph,
+            &BuildOptions {
+                full: false,
+                scip_index: Some(scip_fixture()),
+            },
+        )
+        .unwrap();
+        assert!(report.capability.scip);
+        let (_, shards) = load_graph(&graph).unwrap();
+        // JSON carries occurrences only → References edges, as before the upgrade.
+        assert!(
+            all_edges(&shards)
+                .iter()
+                .any(|e| e.provenance == Provenance::Scip && e.kind == EdgeKind::References),
+            "json overlay should still produce reference edges"
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_scip_emits_calls_for_method_target() {
+        let (code, graph) = copy_fixture("atlas-scip-calls");
+        build(
+            &code,
+            &graph,
+            &BuildOptions {
+                full: false,
+                scip_index: Some(scip_protobuf_fixture()),
+            },
+        )
+        .unwrap();
+        let (_, shards) = load_graph(&graph).unwrap();
+        // `service::run` invokes `MemStore::get()` (an impl Method) → Calls.
+        assert!(
+            all_edges(&shards)
+                .iter()
+                .any(|e| e.kind == EdgeKind::Calls && e.provenance == Provenance::Scip),
+            "expected a scip Calls edge for the method invocation"
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_scip_emits_usestype_for_type_target() {
+        let (code, graph) = copy_fixture("atlas-scip-uses");
+        build(
+            &code,
+            &graph,
+            &BuildOptions {
+                full: false,
+                scip_index: Some(scip_protobuf_fixture()),
+            },
+        )
+        .unwrap();
+        let (_, shards) = load_graph(&graph).unwrap();
+        let mem = node(&shards, "atlas_basic::store::MemStore").unwrap();
+        assert!(
+            all_edges(&shards)
+                .iter()
+                .any(|e| e.kind == EdgeKind::UsesType
+                    && e.provenance == Provenance::Scip
+                    && e.to == mem.id),
+            "expected a scip UsesType edge to MemStore"
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_scip_resolves_impls_trait_edge() {
+        let (code, graph) = copy_fixture("atlas-scip-impls");
+        build(
+            &code,
+            &graph,
+            &BuildOptions {
+                full: false,
+                scip_index: Some(scip_protobuf_fixture()),
+            },
+        )
+        .unwrap();
+        let (_, shards) = load_graph(&graph).unwrap();
+        let store = node(&shards, "atlas_basic::store::Store").unwrap();
+        let impl_node = shards
+            .iter()
+            .flat_map(|s| s.nodes.iter())
+            .find(|n| n.kind == NodeKind::Impl)
+            .unwrap();
+        assert!(
+            all_edges(&shards)
+                .iter()
+                .any(|e| e.kind == EdgeKind::ImplsTrait
+                    && e.provenance == Provenance::Scip
+                    && e.resolution == EdgeResolution::Resolved
+                    && e.from == impl_node.id
+                    && e.to == store.id),
+            "expected a resolved scip ImplsTrait edge impl→Store"
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_scip_external_trait_marked_external() {
+        use scip::types::symbol_information::Kind;
+        let (code, graph) = scratch_crate(
+            "atlas_scip_ext",
+            &[(
+                "src/lib.rs",
+                "pub struct Widget;\nimpl external::Show for Widget {\n    fn show(&self) {}\n}\n",
+            )],
+        );
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let (_, shards) = load_graph(&graph).unwrap();
+        let impl_line = shards
+            .iter()
+            .flat_map(|s| s.nodes.iter())
+            .find(|n| n.kind == NodeKind::Impl)
+            .unwrap()
+            .line_start;
+        // impl header is on source line 2 (1-based) → 0-based occurrence line.
+        let occ_line = (impl_line - 1) as u32;
+        let index_path = graph.join("synthetic.scip");
+        write_synthetic_scip(
+            &index_path,
+            "src/lib.rs",
+            &[
+                ("test Widget#", 1, 0),
+                ("ext Show#", 0, occ_line),
+                ("test Widget#", 0, occ_line),
+            ],
+            &[("ext Show#", Kind::Trait), ("test Widget#", Kind::Struct)],
+        );
+        build(
+            &code,
+            &graph,
+            &BuildOptions {
+                full: false,
+                scip_index: Some(index_path),
+            },
+        )
+        .unwrap();
+        let (_, shards) = load_graph(&graph).unwrap();
+        let edges = all_edges(&shards);
+        assert!(
+            edges.iter().any(|e| e.kind == EdgeKind::ImplsTrait
+                && e.provenance == Provenance::Scip
+                && e.resolution == EdgeResolution::External
+                && e.target_text.as_deref() == Some("ext Show#")),
+            "external trait should yield an External ImplsTrait edge: {edges:?}"
+        );
+        let widget = node(&shards, "atlas_scip_ext::Widget").unwrap();
+        assert!(
+            edges.iter().any(|e| e.kind == EdgeKind::ImplFor
+                && e.provenance == Provenance::Scip
+                && e.resolution == EdgeResolution::Resolved
+                && e.to == widget.id),
+            "local type should yield a Resolved ImplFor edge"
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_scip_gen_missing_binary_warns() {
+        let (code, graph) = copy_fixture("atlas-scip-gen-missing");
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let err = generate_scip(
+            &code,
+            &graph.join("index.scip"),
+            "/nonexistent/rust-analyzer-xyz",
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("rust-analyzer"),
+            "error should mention rust-analyzer: {err}"
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_build_without_scip_stays_syn_only() {
+        let (code, graph) = copy_fixture("atlas-scip-syn-only");
+        let report = build(&code, &graph, &BuildOptions::default()).unwrap();
+        assert!(!report.capability.scip);
+        let (_, shards) = load_graph(&graph).unwrap();
+        assert!(
+            all_edges(&shards)
+                .iter()
+                .all(|e| e.provenance == Provenance::Syn)
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_scip_survives_incremental_refresh() {
+        let (code, graph) = copy_fixture("atlas-scip-refresh");
+        build(
+            &code,
+            &graph,
+            &BuildOptions {
+                full: false,
+                scip_index: Some(scip_protobuf_fixture()),
+            },
+        )
+        .unwrap();
+        let (meta, _) = load_graph(&graph).unwrap();
+        assert!(meta.capability.scip);
+        assert!(meta.capability.scip_index.is_some());
+
+        // Edit a source file (append only → no line shift for the indexed impl).
+        let svc = code.join("src/service.rs");
+        let mut src = fs::read_to_string(&svc).unwrap();
+        src.push_str("\n// touch\n");
+        fs::write(&svc, src).unwrap();
+
+        // A non-frozen query triggers the incremental refresh path.
+        impls(&code, &graph, "Store", &QueryOptions { frozen: false }).unwrap();
+
+        let (meta, shards) = load_graph(&graph).unwrap();
+        assert!(
+            meta.capability.scip,
+            "scip capability should survive refresh"
+        );
+        assert!(
+            all_edges(&shards)
+                .iter()
+                .any(|e| e.provenance == Provenance::Scip),
+            "scip edges should survive an incremental refresh"
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_scip_missing_index_falls_back_to_syn() {
+        let (code, graph) = copy_fixture("atlas-scip-vanish");
+        // Overlay from a deletable copy of the index.
+        let idx = graph.parent().unwrap().join("index.scip");
+        fs::copy(scip_protobuf_fixture(), &idx).unwrap();
+        build(
+            &code,
+            &graph,
+            &BuildOptions {
+                full: false,
+                scip_index: Some(idx.clone()),
+            },
+        )
+        .unwrap();
+        assert!(load_graph(&graph).unwrap().0.capability.scip);
+
+        // The recorded index disappears.
+        fs::remove_file(&idx).unwrap();
+        let svc = code.join("src/service.rs");
+        let mut src = fs::read_to_string(&svc).unwrap();
+        src.push_str("\n// touch\n");
+        fs::write(&svc, src).unwrap();
+        impls(&code, &graph, "Store", &QueryOptions { frozen: false }).unwrap();
+
+        let (meta, shards) = load_graph(&graph).unwrap();
+        assert!(
+            !meta.capability.scip,
+            "capability should clear when the index vanishes"
+        );
+        assert!(
+            all_edges(&shards)
+                .iter()
+                .all(|e| e.provenance != Provenance::Scip),
+            "scip edges should be purged when the index vanishes"
         );
         fs::remove_dir_all(code.parent().unwrap()).ok();
     }

@@ -128,10 +128,42 @@
 
 ---
 
-## 4. Phase 2 — 语义 overlay：rust-analyzer 经 SCIP 真正接上（修复 finding A 的根）
+## 4. Phase 2 — 语义 overlay：rust-analyzer 经 SCIP 真正接上（修复 finding A 的根）✅ 已完成
 
 **目标**：把 `Provenance::Scip` 层从"仅 occurrence→References"升级为"完整语义解析"，
 让 `impls`/`refs`/`calls` 对**内部与跨 crate** 都答对，并让宏生成的符号可见。
+
+> **实现状态**：合约 `specs/task-atlas-scip-semantic.spec.md`（lint 100%）+ 实现
+> （`overlay_scip` 重写、`generate_scip`、`atlas scip-gen` CLI、`Capability` 持久化）
+> 外加 10 个回归测试全绿（rust-atlas 23→33）。真实 `rust-analyzer scip` 产出的
+> protobuf index 端到端跑通。
+>
+> **两处纸上规划被实测纠正**（真跑一次才暴露，spike 的价值）：
+> 1. **relationships 是空的**。P2-2 原计划"读 SCIP `relationships` 的
+>    `is_implementation` 重写 ImplsTrait"——实测 rust-analyzer 1.92 **完全不填
+>    `relationships`**（`external_symbols` 也为空）。改用**符号描述符**
+>    `impl#[Type][Trait]` + impl 声明行上的 ref-occurrence（kind=Trait→ImplsTrait，
+>    kind=Struct/Enum/Union→ImplFor）。kind 取自 `SymbolInformation`，覆盖完整。
+> 2. **不能就地改写 syn 边**。P2-2 原计划"把 syn 边的 `to` 重写为 resolved id"会破坏
+>    "无 `--scip` 即 `remove_scip_edges` 干净还原"的可逆性不变量（§0 原则 3/4）。改为
+>    **增量新增 `provenance=Scip` 边**，syn 基线一字不动。
+>
+> **实测数字（agent-spec 自举，2,303 contains 基线）**：
+>
+> | 边类型 | syn only | +SCIP | 说明 |
+> |---|---|---|---|
+> | `calls` | 0 | **2,431** | lib.rs:54 那个"从不生成"的枚举被填满 |
+> | `uses-type` | 0 | **2,277** | lib.rs:55 同上 |
+> | `references` | 0 | **10,693** | 真实跨文件引用 |
+> | `impls-trait` resolved | 41 (syn) | +41 (scip) | 见下 |
+>
+> **诚实边界**：在 agent-spec 上 SCIP 的 41 条 resolved `impls-trait` 与 syn 的 41 条
+> **完全重叠**——是 corroborative 而非 additive。原因:agent-spec 剩下的 5 unresolved /
+> 4 external impl 目标是**纯第三方 trait**（serde/clap 等），rust-analyzer 不把它们的
+> 定义放进本仓库的 index（`external_symbols=0`），SCIP 也够不着——需要那些 crate 各自的
+> SCIP。finding A 的 **additive** 修复只在"目标 trait 在被索引集合内（workspace 内 /
+> re-export 隐藏）"时兑现，已由 2-crate spike 精确验证。真正大赢是 `calls`/`uses-type`
+> 从 0→数千（syn 永远给不了）。
 
 ### P2-1 SCIP 生成流水线
 - 新增 `atlas scip-gen`（或 build 内置）：检测 `rust-analyzer`，对 code_root 跑
@@ -149,10 +181,10 @@
 
 ### P2-2 扩展 `overlay_scip` 消费"关系"而非仅 occurrence
 - 当前 `overlay_scip` 只读 `symbol_roles`（def/ref）产 `References`。**扩展**为：
-  - 读 SCIP 的 **implementation relationships**，把 syn 层的 `ImplsTrait`/`ImplFor`
-    边的 `to` 从"近似 target_text"**重写为 resolved node id**（`resolution=Resolved`,
-    `provenance` 升级标记）。这才真正修复 **finding A**（Phase 1 的后缀匹配是廉价近似，
-    此处是精确解）。
+  - ~~读 SCIP 的 **implementation relationships** 重写 syn 边的 `to`~~ →
+    **[实测纠正]** rust-analyzer 1.92 不填 `relationships`，改用符号描述符
+    `impl#[Type][Trait]` + impl 行 ref-occurrence；且**增量加 `provenance=Scip` 边**而非
+    就地改写（保可逆性）。这精确修复 **finding A** 中"目标 trait 在被索引集合内"的部分。
   - 产 `Calls` 边（方法/函数调用）——填上 lib.rs:54 那个从不生成的枚举。
   - 产 `UsesType` 边（字段/签名/局部的类型引用）——填上 lib.rs:55。
   - 复用已有的 `containing_node`（按 range 找最内层节点）做 SCIP symbol → atlas
@@ -167,8 +199,10 @@
   而非 `remove_scip_edges` 清掉。使 `Provenance::Scip` 在编辑后稳定存活。
 - 这解决了 Phase 0 遗留的"自动 refresh 会 purge scip"设计缺口。
 
-**Phase 2 交付物**：`specs/task-atlas-scip-semantic.spec.md` + 实现 + 实测数字
-（agent-spec：impls-trait resolved 比例、`refs`/`calls` 边数从 0→N、宏生成 impl 计数）。
+**Phase 2 交付物**（✅ 已交付）：`specs/task-atlas-scip-semantic.spec.md` + 实现 +
+实测数字（见上表）。生成流水线：`atlas scip-gen --code . --ra <rust-analyzer>` 产
+`index.scip`，再 `atlas build --scip <index.scip>` overlay。全量 grok-build（68k 节点，
+finding A 的 `xai_tool_runtime::Tool` re-export 真身）属 opt-in 重活，用同一命令按需测量。
 
 ---
 
