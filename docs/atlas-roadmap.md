@@ -164,6 +164,13 @@
 > SCIP。finding A 的 **additive** 修复只在"目标 trait 在被索引集合内（workspace 内 /
 > re-export 隐藏）"时兑现，已由 2-crate spike 精确验证。真正大赢是 `calls`/`uses-type`
 > 从 0→数千（syn 永远给不了）。
+>
+> **grok-build 全量实测（finding A 真身，~68,404 节点，`rust-analyzer scip` ~数分钟）**：
+> `calls` 0→**120,353**、`uses-type` 0→**83,883**、`references` 0→**415,088**。
+> impl 解析上：syn 留下 **124** 条 `Tool` 系未解析 impl 边，SCIP 解析 **491** 条——
+> 其中就包含原始 bug 报告里的 `xai_tool_runtime::tool::Tool#`(syn 因 re-export 标
+> Unresolved，SCIP 链到 canonical 定义节点)。这是"目标 trait 在 workspace 内 /
+> re-export 隐藏"这一 additive 分支在真实仓库上的兑现。
 
 ### P2-1 SCIP 生成流水线
 - 新增 `atlas scip-gen`（或 build 内置）：检测 `rust-analyzer`，对 code_root 跑
