@@ -17,7 +17,7 @@ use std::process::Command;
 use quote::ToTokens;
 use serde::{Deserialize, Serialize};
 
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AtlasError {
@@ -44,11 +44,14 @@ pub enum NodeKind {
     Module,
     Struct,
     Enum,
+    Union,
     Trait,
+    TraitAlias,
     Fn,
     Impl,
     TypeAlias,
     Const,
+    Static,
     Macro,
 }
 
@@ -115,11 +118,6 @@ pub struct Shard {
 pub struct Capability {
     pub scip: bool,
     pub scip_tool: Option<String>,
-    /// Path to the SCIP index last overlaid, so incremental/refresh builds can
-    /// re-overlay without the caller re-passing `--scip`. `None` when no index
-    /// has been applied.
-    #[serde(default)]
-    pub scip_index: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -178,6 +176,10 @@ pub fn build(
     graph_dir: &Path,
     opts: &BuildOptions,
 ) -> Result<BuildReport, AtlasError> {
+    // `cargo metadata` reports absolute, canonical paths; canonicalize the root
+    // so the file walk and layout share one path space (otherwise `--code .`
+    // yields relative walk paths that never match the absolute target dirs).
+    let code_root = &std::fs::canonicalize(code_root).map_err(io_err)?;
     let layout = ProjectLayout::discover(code_root)?;
     let shards_dir = graph_dir.join("shards");
     std::fs::create_dir_all(&shards_dir).map_err(io_err)?;
@@ -260,6 +262,9 @@ pub fn build(
 
 /// Report stale shard source files (content hash mismatch, deleted, or new).
 pub fn check(code_root: &Path, graph_dir: &Path) -> Result<Vec<String>, AtlasError> {
+    // Match `build`'s path space so staleness keys line up for any `code_root`
+    // form (relative, `.`, or with symlinks).
+    let code_root = &std::fs::canonicalize(code_root).map_err(io_err)?;
     let meta = read_meta(graph_dir)?;
     let mut stale = BTreeSet::new();
     let mut seen = BTreeSet::new();
@@ -392,6 +397,11 @@ pub fn tree(
 }
 
 /// Incoming reference/call edges for a symbol.
+///
+/// `References`/`Calls` edges are produced only by the semantic (SCIP) overlay;
+/// the syn baseline emits none. Without a `--scip` index this therefore returns
+/// an empty edge set for every symbol — that is "no semantic layer", not "no
+/// references". See `overlay_scip`.
 pub fn refs(
     code_root: &Path,
     graph_dir: &Path,
@@ -443,12 +453,20 @@ pub fn impls(
         .filter(|node| node.symbol == name || node.symbol.ends_with(&format!("::{name}")))
         .map(|node| node.id.as_str())
         .collect();
+    // Also match edges whose target is still unresolved: the trait/type name
+    // survives in `target_text` (or `to`) even when the syn layer could not map
+    // it to a node id. Without this, `impls <Trait>` returns nothing for any
+    // trait referenced by an imported bare name.
+    let text_matches = |value: &str| value == name || value.ends_with(&format!("::{name}"));
     let edges: BTreeSet<Edge> = shards
         .iter()
         .flat_map(|s| s.edges.iter())
         .filter(|e| {
             matches!(e.kind, EdgeKind::ImplsTrait | EdgeKind::ImplFor)
-                && (matching_ids.contains(e.to.as_str()) || matching_ids.contains(e.from.as_str()))
+                && (matching_ids.contains(e.to.as_str())
+                    || matching_ids.contains(e.from.as_str())
+                    || e.target_text.as_deref().is_some_and(text_matches)
+                    || text_matches(&e.to))
         })
         .cloned()
         .collect();
@@ -514,6 +532,11 @@ fn resolve_syn_edges(
 ) -> Result<(), AtlasError> {
     let mut shards = BTreeMap::new();
     let mut symbols: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    // Bare-name index: last path segment -> set of fully-qualified symbols that
+    // end in `::<segment>`. Lets us resolve `use`-imported bare names (e.g. a
+    // trait referenced as `SpecLinter` whose symbol is
+    // `crate::spec_lint::SpecLinter`) when there is exactly one candidate.
+    let mut by_last: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for rel in files.keys() {
         let shard = read_shard(shards_dir, rel)?;
         for node in &shard.nodes {
@@ -521,6 +544,12 @@ fn resolve_syn_edges(
                 .entry(node.symbol.clone())
                 .or_default()
                 .push(node.id.clone());
+            if let Some(last) = node.symbol.rsplit("::").next() {
+                by_last
+                    .entry(last.to_string())
+                    .or_default()
+                    .insert(node.symbol.clone());
+            }
         }
         shards.insert(rel.clone(), shard);
     }
@@ -528,6 +557,22 @@ fn resolve_syn_edges(
         ids.sort();
         ids.dedup();
     }
+    // Resolve a bare (no `::`) target to a unique node id via the last-segment
+    // index. Returns None on zero or multiple candidates (never guesses).
+    let resolve_bare = |target: &str| -> Option<String> {
+        if target.contains("::") {
+            return None;
+        }
+        let candidates = by_last.get(target)?;
+        if candidates.len() != 1 {
+            return None;
+        }
+        let symbol = candidates.iter().next()?;
+        match symbols.get(symbol).map(Vec::as_slice) {
+            Some([id]) => Some(id.clone()),
+            _ => None,
+        }
+    };
 
     for (rel, shard) in &mut shards {
         let before = shard.edges.clone();
@@ -542,17 +587,23 @@ fn resolve_syn_edges(
                     edge.to = id.clone();
                     edge.resolution = EdgeResolution::Resolved;
                 }
-                _ => {
-                    edge.to = target_text.clone();
-                    edge.resolution = if target_text.starts_with("std::")
-                        || target_text.starts_with("core::")
-                        || target_text.starts_with("alloc::")
-                    {
-                        EdgeResolution::External
-                    } else {
-                        EdgeResolution::Unresolved
-                    };
-                }
+                _ => match resolve_bare(&target_text) {
+                    Some(id) => {
+                        edge.to = id;
+                        edge.resolution = EdgeResolution::Resolved;
+                    }
+                    None => {
+                        edge.to = target_text.clone();
+                        edge.resolution = if target_text.starts_with("std::")
+                            || target_text.starts_with("core::")
+                            || target_text.starts_with("alloc::")
+                        {
+                            EdgeResolution::External
+                        } else {
+                            EdgeResolution::Unresolved
+                        };
+                    }
+                },
             }
         }
         shard.edges.sort();
@@ -699,8 +750,34 @@ fn cargo_metadata(manifest: &Path) -> Result<CargoMetadata, AtlasError> {
         .map_err(|error| AtlasError::Cargo(format!("invalid cargo metadata: {error}")))
 }
 
+/// Directories excluded by the root workspace's `[workspace] exclude = [...]`.
+/// Hand-parsed (no toml dep) to mirror the crude `[package]` reader; tolerant of
+/// single- and multi-line arrays.
+fn workspace_excludes(code_root: &Path) -> Vec<PathBuf> {
+    let Ok(text) = std::fs::read_to_string(code_root.join("Cargo.toml")) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    // Find `exclude` key, then the `[ ... ]` span that follows it.
+    if let Some(key) = text.find("exclude")
+        && let Some(open_rel) = text[key..].find('[')
+    {
+        let start = key + open_rel + 1;
+        if let Some(close_rel) = text[start..].find(']') {
+            for piece in text[start..start + close_rel].split(',') {
+                let entry = piece.trim().trim_matches(['"', '\'']).trim();
+                if !entry.is_empty() {
+                    out.push(code_root.join(entry));
+                }
+            }
+        }
+    }
+    out
+}
+
 fn nested_workspace_manifests(code_root: &Path) -> Vec<PathBuf> {
     let root_manifest = code_root.join("Cargo.toml");
+    let excludes = workspace_excludes(code_root);
     let mut manifests: Vec<PathBuf> = ignore::WalkBuilder::new(code_root)
         .hidden(true)
         .git_ignore(true)
@@ -713,6 +790,12 @@ fn nested_workspace_manifests(code_root: &Path) -> Vec<PathBuf> {
                 && !path
                     .components()
                     .any(|component| component.as_os_str() == "target")
+                // Respect the root workspace's `exclude`: a nested workspace that
+                // the root deliberately detaches (e.g. test fixtures) must not be
+                // pulled back into the graph.
+                && !excludes
+                    .iter()
+                    .any(|dir| path.starts_with(dir))
                 && std::fs::read_to_string(path)
                     .is_ok_and(|text| text.lines().any(|line| line.trim() == "[workspace]"))
         })
@@ -934,6 +1017,12 @@ impl ProjectLayout {
                     .unwrap_or(&metadata.workspace_root)
                     .to_path_buf();
                 for target in &package.targets {
+                    // Build scripts (`build.rs`) compile to a `custom-build`
+                    // target named `build-script-build`; it is not a navigable
+                    // crate namespace, so keep it out of the graph.
+                    if target.kind.iter().any(|kind| kind == "custom-build") {
+                        continue;
+                    }
                     let crate_name = rust_name(&target.name);
                     packages.insert(crate_name.clone());
                     let priority = if target
@@ -1071,6 +1160,10 @@ impl ProjectLayout {
 }
 
 fn walk_rs_files(code_root: &Path) -> Vec<PathBuf> {
+    // Skip files under workspace-excluded directories so build and check agree
+    // on the same file set and excluded crates never enter the graph (not even
+    // refiled under the host crate via the package-dir fallback).
+    let excludes = workspace_excludes(code_root);
     let mut files: Vec<PathBuf> = ignore::WalkBuilder::new(code_root)
         .hidden(true)
         .git_ignore(true)
@@ -1081,6 +1174,7 @@ fn walk_rs_files(code_root: &Path) -> Vec<PathBuf> {
             path.is_file()
                 && path.extension().and_then(|e| e.to_str()) == Some("rs")
                 && !path.components().any(|c| c.as_os_str() == "target")
+                && !excludes.iter().any(|dir| path.starts_with(dir))
         })
         .collect();
     files.sort();
@@ -1196,6 +1290,34 @@ fn normalized_tokens(value: &impl ToTokens) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// Declaration-head signature (`pub struct Foo<T> where T: Bound`) without the
+/// field/variant body, so struct/enum/union signatures stay compact instead of
+/// embedding the whole type.
+fn head_signature(
+    vis: &syn::Visibility,
+    keyword: &str,
+    ident: &syn::Ident,
+    generics: &syn::Generics,
+) -> String {
+    let (_, ty_generics, where_clause) = generics.split_for_impl();
+    let mut parts: Vec<String> = Vec::new();
+    let vis_s = normalized_tokens(vis);
+    if !vis_s.is_empty() {
+        parts.push(vis_s);
+    }
+    parts.push(keyword.to_string());
+    parts.push(ident.to_string());
+    let gen_s = normalized_tokens(&ty_generics);
+    if !gen_s.is_empty() {
+        parts.push(gen_s.replace(" :: ", "::"));
+    }
+    let where_s = normalized_tokens(&where_clause);
+    if !where_s.is_empty() {
+        parts.push(where_s.replace(" :: ", "::"));
+    }
+    parts.join(" ")
 }
 
 fn doc_first_line(attrs: &[syn::Attribute]) -> Option<String> {
@@ -1398,10 +1520,13 @@ fn extract_items(
         .filter_map(|item| match item {
             Item::Struct(i) => Some(i.ident.to_string()),
             Item::Enum(i) => Some(i.ident.to_string()),
+            Item::Union(i) => Some(i.ident.to_string()),
             Item::Trait(i) => Some(i.ident.to_string()),
+            Item::TraitAlias(i) => Some(i.ident.to_string()),
             Item::Fn(i) => Some(i.sig.ident.to_string()),
             Item::Type(i) => Some(i.ident.to_string()),
             Item::Const(i) => Some(i.ident.to_string()),
+            Item::Static(i) => Some(i.ident.to_string()),
             _ => None,
         })
         .collect();
@@ -1410,28 +1535,72 @@ fn extract_items(
         match item {
             Item::Struct(i) => {
                 let symbol = format!("{module_symbol}::{}", i.ident);
-                let mut declaration = i.clone();
-                declaration.attrs.clear();
                 let id = ctx.push_declaration(
                     &symbol,
                     NodeKind::Struct,
                     i.span(),
                     vis_string(&i.vis),
-                    normalized_tokens(&declaration),
+                    head_signature(&i.vis, "struct", &i.ident, &i.generics),
                     &i.attrs,
                 );
                 ctx.push_contains(container_id, &id);
             }
             Item::Enum(i) => {
                 let symbol = format!("{module_symbol}::{}", i.ident);
-                let mut declaration = i.clone();
-                declaration.attrs.clear();
                 let id = ctx.push_declaration(
                     &symbol,
                     NodeKind::Enum,
                     i.span(),
                     vis_string(&i.vis),
-                    normalized_tokens(&declaration),
+                    head_signature(&i.vis, "enum", &i.ident, &i.generics),
+                    &i.attrs,
+                );
+                ctx.push_contains(container_id, &id);
+            }
+            Item::Union(i) => {
+                let symbol = format!("{module_symbol}::{}", i.ident);
+                let id = ctx.push_declaration(
+                    &symbol,
+                    NodeKind::Union,
+                    i.span(),
+                    vis_string(&i.vis),
+                    head_signature(&i.vis, "union", &i.ident, &i.generics),
+                    &i.attrs,
+                );
+                ctx.push_contains(container_id, &id);
+            }
+            Item::Static(i) => {
+                let symbol = format!("{module_symbol}::{}", i.ident);
+                let vis = &i.vis;
+                let ident = &i.ident;
+                let ty = &i.ty;
+                let signature =
+                    normalized_tokens(&quote::quote!(#vis static #ident : #ty)).replace(" :: ", "::");
+                let id = ctx.push_declaration(
+                    &symbol,
+                    NodeKind::Static,
+                    i.span(),
+                    vis_string(&i.vis),
+                    signature,
+                    &i.attrs,
+                );
+                ctx.push_contains(container_id, &id);
+            }
+            Item::TraitAlias(i) => {
+                let symbol = format!("{module_symbol}::{}", i.ident);
+                let vis = &i.vis;
+                let ident = &i.ident;
+                let generics = &i.generics;
+                let bounds = &i.bounds;
+                let signature =
+                    normalized_tokens(&quote::quote!(#vis trait #ident #generics = #bounds))
+                        .replace(" :: ", "::");
+                let id = ctx.push_declaration(
+                    &symbol,
+                    NodeKind::TraitAlias,
+                    i.span(),
+                    vis_string(&i.vis),
+                    signature,
                     &i.attrs,
                 );
                 ctx.push_contains(container_id, &id);
@@ -1451,18 +1620,48 @@ fn extract_items(
                 );
                 ctx.push_contains(container_id, &id);
                 for ti in &i.items {
-                    if let syn::TraitItem::Fn(f) = ti {
-                        let method_symbol = format!("{symbol}::{}", f.sig.ident);
-                        let fid = ctx.push_declaration(
-                            &method_symbol,
+                    let (member, kind, span, signature, attrs) = match ti {
+                        syn::TraitItem::Fn(f) => (
+                            f.sig.ident.to_string(),
                             NodeKind::Fn,
                             f.span(),
-                            "pub".to_string(),
-                            normalized_tokens(&f.sig),
+                            normalized_tokens(&f.sig).replace(" :: ", "::"),
                             &f.attrs,
-                        );
-                        ctx.push_contains(&id, &fid);
-                    }
+                        ),
+                        syn::TraitItem::Const(c) => {
+                            let ident = &c.ident;
+                            let ty = &c.ty;
+                            (
+                                c.ident.to_string(),
+                                NodeKind::Const,
+                                c.span(),
+                                normalized_tokens(&quote::quote!(const #ident : #ty))
+                                    .replace(" :: ", "::"),
+                                &c.attrs,
+                            )
+                        }
+                        syn::TraitItem::Type(t) => {
+                            let ident = &t.ident;
+                            (
+                                t.ident.to_string(),
+                                NodeKind::TypeAlias,
+                                t.span(),
+                                normalized_tokens(&quote::quote!(type #ident)),
+                                &t.attrs,
+                            )
+                        }
+                        _ => continue,
+                    };
+                    let member_symbol = format!("{symbol}::{member}");
+                    let mid = ctx.push_declaration(
+                        &member_symbol,
+                        kind,
+                        span,
+                        "pub".to_string(),
+                        signature,
+                        attrs,
+                    );
+                    ctx.push_contains(&id, &mid);
                 }
             }
             Item::Fn(i) => {
@@ -1592,21 +1791,52 @@ fn extract_items(
                     provenance: Provenance::Syn,
                 });
                 for ii in &i.items {
-                    if let syn::ImplItem::Fn(f) = ii {
-                        let method_symbol = format!("{impl_symbol}::{}", f.sig.ident);
-                        let vis = &f.vis;
-                        let sig = &f.sig;
-                        let signature = normalized_tokens(&quote::quote!(#vis #sig));
-                        let fid = ctx.push_declaration(
-                            &method_symbol,
-                            NodeKind::Fn,
-                            f.span(),
-                            vis_string(&f.vis),
-                            signature,
-                            &f.attrs,
-                        );
-                        ctx.push_contains(&impl_id, &fid);
-                    }
+                    let (member, kind, span, vis, signature, attrs) = match ii {
+                        syn::ImplItem::Fn(f) => {
+                            let vis = &f.vis;
+                            let sig = &f.sig;
+                            (
+                                f.sig.ident.to_string(),
+                                NodeKind::Fn,
+                                f.span(),
+                                vis_string(&f.vis),
+                                normalized_tokens(&quote::quote!(#vis #sig)).replace(" :: ", "::"),
+                                &f.attrs,
+                            )
+                        }
+                        syn::ImplItem::Const(c) => {
+                            let vis = &c.vis;
+                            let ident = &c.ident;
+                            let ty = &c.ty;
+                            (
+                                c.ident.to_string(),
+                                NodeKind::Const,
+                                c.span(),
+                                vis_string(&c.vis),
+                                normalized_tokens(&quote::quote!(#vis const #ident : #ty))
+                                    .replace(" :: ", "::"),
+                                &c.attrs,
+                            )
+                        }
+                        syn::ImplItem::Type(t) => {
+                            let vis = &t.vis;
+                            let ident = &t.ident;
+                            let aliased = &t.ty;
+                            (
+                                t.ident.to_string(),
+                                NodeKind::TypeAlias,
+                                t.span(),
+                                vis_string(&t.vis),
+                                normalized_tokens(&quote::quote!(#vis type #ident = #aliased))
+                                    .replace(" :: ", "::"),
+                                &t.attrs,
+                            )
+                        }
+                        _ => continue,
+                    };
+                    let member_symbol = format!("{impl_symbol}::{member}");
+                    let mid = ctx.push_declaration(&member_symbol, kind, span, vis, signature, attrs);
+                    ctx.push_contains(&impl_id, &mid);
                 }
             }
             Item::Mod(i) => {
@@ -1837,6 +2067,209 @@ mod tests {
 
     fn all_edges(shards: &[Shard]) -> Vec<Edge> {
         shards.iter().flat_map(|s| s.edges.clone()).collect()
+    }
+
+    /// Write a standalone crate (detached `[workspace]`) with the given source
+    /// files, returning `(code_dir, graph_dir)`.
+    fn scratch_crate(name: &str, files: &[(&str, &str)]) -> (PathBuf, PathBuf) {
+        let base = temp_dir(name);
+        let code = base.join("code");
+        fs::create_dir_all(code.join("src")).unwrap();
+        fs::write(
+            code.join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\n"
+            ),
+        )
+        .unwrap();
+        for (rel, contents) in files {
+            let path = code.join(rel);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
+            fs::write(path, contents).unwrap();
+        }
+        (code, base.join("graph"))
+    }
+
+    fn kinds_by_symbol(shards: &[Shard]) -> BTreeMap<String, NodeKind> {
+        shards
+            .iter()
+            .flat_map(|s| s.nodes.iter())
+            .map(|n| (n.symbol.clone(), n.kind))
+            .collect()
+    }
+
+    // Finding A: a trait implemented through its `use`-imported bare name (in a
+    // different module) must resolve, so `impls <Trait>` returns its impls.
+    #[test]
+    fn test_atlas_resolves_bare_imported_trait_impls() {
+        let (code, graph) = scratch_crate(
+            "atlas_bare_trait",
+            &[
+                ("src/lib.rs", "pub mod traits;\npub mod imps;\n"),
+                ("src/traits.rs", "pub trait Linter { fn lint(&self); }\n"),
+                (
+                    "src/imps.rs",
+                    "use crate::traits::Linter;\n\
+                     pub struct A;\npub struct B;\n\
+                     impl Linter for A { fn lint(&self) {} }\n\
+                     impl Linter for B { fn lint(&self) {} }\n",
+                ),
+            ],
+        );
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+
+        let report = impls(&code, &graph, "Linter", &QueryOptions::default()).unwrap();
+        let impls_trait = report
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::ImplsTrait)
+            .count();
+        assert_eq!(impls_trait, 2, "both impls must surface: {report:?}");
+
+        let (_, shards) = load_graph(&graph).unwrap();
+        let resolved = all_edges(&shards)
+            .into_iter()
+            .filter(|e| e.kind == EdgeKind::ImplsTrait && e.resolution == EdgeResolution::Resolved)
+            .count();
+        assert_eq!(resolved, 2, "bare imported trait name must resolve to a node id");
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    // Finding C: static, union, and associated const/type must be nodes.
+    #[test]
+    fn test_atlas_extracts_static_union_and_associated_items() {
+        let (code, graph) = scratch_crate(
+            "atlas_kinds",
+            &[(
+                "src/lib.rs",
+                "pub static GREETING: &str = \"hi\";\n\
+                 pub union U { a: u32, b: u32 }\n\
+                 pub trait T { type Out; const N: usize; fn f(&self); }\n\
+                 pub struct S;\n\
+                 impl T for S { type Out = i32; const N: usize = 3; fn f(&self) {} }\n",
+            )],
+        );
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let (_, shards) = load_graph(&graph).unwrap();
+        let kinds = kinds_by_symbol(&shards);
+        assert_eq!(kinds.get("atlas_kinds::GREETING"), Some(&NodeKind::Static));
+        assert_eq!(kinds.get("atlas_kinds::U"), Some(&NodeKind::Union));
+        assert_eq!(kinds.get("atlas_kinds::T::Out"), Some(&NodeKind::TypeAlias));
+        assert_eq!(kinds.get("atlas_kinds::T::N"), Some(&NodeKind::Const));
+        let impl_assoc_type = shards.iter().flat_map(|s| &s.nodes).any(|n| {
+            n.kind == NodeKind::TypeAlias
+                && n.symbol.contains("::impl ")
+                && n.symbol.ends_with("::Out")
+        });
+        let impl_assoc_const = shards.iter().flat_map(|s| &s.nodes).any(|n| {
+            n.kind == NodeKind::Const && n.symbol.contains("::impl ") && n.symbol.ends_with("::N")
+        });
+        assert!(impl_assoc_type, "impl associated type must be a node");
+        assert!(impl_assoc_const, "impl associated const must be a node");
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    // Finding D: struct/enum signatures are the declaration head, no body.
+    #[test]
+    fn test_atlas_struct_signature_is_declaration_head() {
+        let (code, graph) = scratch_crate(
+            "atlas_sig",
+            &[(
+                "src/lib.rs",
+                "pub struct Big { pub a: u32, pub b: u32, pub c: String, pub d: Vec<u8> }\n\
+                 pub enum E { A, B(u32), C { x: u8 } }\n",
+            )],
+        );
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let (_, shards) = load_graph(&graph).unwrap();
+        let big = shards
+            .iter()
+            .flat_map(|s| &s.nodes)
+            .find(|n| n.symbol == "atlas_sig::Big")
+            .unwrap();
+        assert_eq!(big.signature, "pub struct Big");
+        assert!(
+            !big.signature.contains("a :") && !big.signature.contains('{'),
+            "fields must not be in the signature: {}",
+            big.signature
+        );
+        let e = shards
+            .iter()
+            .flat_map(|s| &s.nodes)
+            .find(|n| n.symbol == "atlas_sig::E")
+            .unwrap();
+        assert_eq!(e.signature, "pub enum E");
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    // Finding B: crates the root workspace `exclude`s must not enter the graph,
+    // not even refiled under the host crate's namespace.
+    #[test]
+    fn test_atlas_respects_workspace_exclude() {
+        let base = temp_dir("atlas_exclude");
+        let code = base.join("code");
+        fs::create_dir_all(code.join("src")).unwrap();
+        fs::create_dir_all(code.join("fixture/src")).unwrap();
+        fs::write(
+            code.join("Cargo.toml"),
+            "[package]\nname = \"host\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+             [workspace]\nexclude = [\"fixture\"]\n",
+        )
+        .unwrap();
+        fs::write(code.join("src/lib.rs"), "pub struct Host;\n").unwrap();
+        fs::write(
+            code.join("fixture/Cargo.toml"),
+            "[package]\nname = \"excluded_fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\n",
+        )
+        .unwrap();
+        fs::write(code.join("fixture/src/lib.rs"), "pub struct ShouldNotAppear;\n").unwrap();
+
+        let graph = base.join("graph");
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let (meta, shards) = load_graph(&graph).unwrap();
+        assert!(
+            !meta.packages.contains(&"excluded_fixture".to_string()),
+            "excluded crate must not be a package: {:?}",
+            meta.packages
+        );
+        assert!(
+            !shards
+                .iter()
+                .flat_map(|s| &s.nodes)
+                .any(|n| n.symbol.contains("ShouldNotAppear")),
+            "excluded crate symbols must not appear anywhere"
+        );
+        assert!(
+            shards
+                .iter()
+                .flat_map(|s| &s.nodes)
+                .any(|n| n.symbol == "host::Host"),
+            "host crate must still be indexed"
+        );
+        fs::remove_dir_all(base).ok();
+    }
+
+    // Finding F: a non-canonical `code_root` (relative, `.`, or containing `..`)
+    // must work — `cargo metadata` yields absolute canonical paths, so the root
+    // is canonicalized before the file walk (otherwise the walk paths never
+    // match the target dirs and every file errors "not owned by a Cargo target").
+    #[test]
+    fn test_atlas_build_accepts_noncanonical_code_root() {
+        let (code, graph) = scratch_crate("atlas_noncanon", &[("src/lib.rs", "pub struct Widget;\n")]);
+        let noncanon = code.join("..").join(code.file_name().unwrap());
+        assert!(noncanon.to_string_lossy().contains(".."));
+        build(&noncanon, &graph, &BuildOptions::default()).unwrap();
+        let (_, shards) = load_graph(&graph).unwrap();
+        assert!(
+            shards
+                .iter()
+                .flat_map(|s| &s.nodes)
+                .any(|n| n.symbol == "atlas_noncanon::Widget"),
+            "non-canonical code_root must still index the crate"
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
     }
 
     #[test]
