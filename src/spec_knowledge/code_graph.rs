@@ -365,7 +365,9 @@ mod tests {
         assert_eq!(entry.provider, "rust-atlas");
         assert_eq!(entry.graph_fingerprint.len(), 64);
         let ids: Vec<&str> = entry.targets.iter().map(|t| t.node_id.as_str()).collect();
-        assert_eq!(ids, ["bind_demo::SlotStore", "bind_demo::reserve"]);
+        assert_eq!(ids.len(), 2);
+        assert!(ids[0].starts_with("bind_demo::SlotStore#"));
+        assert!(ids[1].starts_with("bind_demo::reserve#"));
         assert!(entry.targets.iter().all(|t| t.provenance == "syn"));
         assert!(entry.targets.iter().all(|t| t.file == "src/lib.rs"));
         fs::remove_dir_all(dir).ok();
@@ -461,7 +463,7 @@ mod tests {
         assert_eq!(record.code_target_facts.len(), 2);
         let fact = &record.code_target_facts[0];
         assert_eq!(fact.provider, "rust-atlas");
-        assert_eq!(fact.node_id, "bind_demo::SlotStore");
+        assert!(fact.node_id.starts_with("bind_demo::SlotStore#"));
         assert_eq!(fact.kind, "struct");
         assert_eq!(fact.file, "src/lib.rs");
         assert_eq!(fact.provenance, "syn");

@@ -10985,7 +10985,12 @@ Scenario: pass
         )
         .unwrap();
         assert_eq!(result["node"]["kind"], "struct");
-        assert_eq!(result["node"]["id"], "atlas_basic::store::MemStore");
+        assert_eq!(result["node"]["symbol"], "atlas_basic::store::MemStore");
+        assert!(
+            result["node"]["id"]
+                .as_str()
+                .is_some_and(|id| id.starts_with("atlas_basic::store::MemStore#"))
+        );
         assert!(
             result["node"]["file"]
                 .as_str()

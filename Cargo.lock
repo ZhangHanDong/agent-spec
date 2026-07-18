@@ -411,6 +411,7 @@ dependencies = [
  "blake3",
  "ignore",
  "proc-macro2",
+ "quote",
  "serde",
  "serde_json",
  "syn",

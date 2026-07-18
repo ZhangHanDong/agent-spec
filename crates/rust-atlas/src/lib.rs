@@ -12,10 +12,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
+use quote::ToTokens;
 use serde::{Deserialize, Serialize};
 
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AtlasError {
@@ -23,10 +25,16 @@ pub enum AtlasError {
     MissingGraph { graph_dir: String },
     #[error("atlas-unknown-symbol: `{symbol}` is not in the graph")]
     UnknownSymbol { symbol: String },
+    #[error("atlas-ambiguous-symbol: `{symbol}` has {declarations} declarations; query by node id")]
+    AmbiguousSymbol { symbol: String, declarations: usize },
     #[error("atlas-io: {0}")]
     Io(String),
     #[error("atlas-scip: {0}")]
     Scip(String),
+    #[error("atlas-cargo: {0}")]
+    Cargo(String),
+    #[error("atlas-invariant: {0}")]
+    Invariant(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,21 +71,33 @@ pub enum Provenance {
     Mir,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EdgeResolution {
+    Resolved,
+    Unresolved,
+    External,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Node {
     pub id: String,
+    pub symbol: String,
     pub kind: NodeKind,
     pub file: String,
     pub line_start: usize,
     pub line_end: usize,
     pub visibility: String,
     pub signature: String,
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Edge {
     pub from: String,
     pub to: String,
+    pub target_text: Option<String>,
+    pub resolution: EdgeResolution,
     pub kind: EdgeKind,
     pub provenance: Provenance,
 }
@@ -95,12 +115,19 @@ pub struct Shard {
 pub struct Capability {
     pub scip: bool,
     pub scip_tool: Option<String>,
+    /// Path to the SCIP index last overlaid, so incremental/refresh builds can
+    /// re-overlay without the caller re-passing `--scip`. `None` when no index
+    /// has been applied.
+    #[serde(default)]
+    pub scip_index: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Meta {
     pub schema_version: u32,
     pub package: String,
+    pub packages: Vec<String>,
+    pub roots: Vec<String>,
     pub capability: Capability,
     pub files: BTreeMap<String, String>,
 }
@@ -151,7 +178,7 @@ pub fn build(
     graph_dir: &Path,
     opts: &BuildOptions,
 ) -> Result<BuildReport, AtlasError> {
-    let package = package_name(code_root);
+    let layout = ProjectLayout::discover(code_root)?;
     let shards_dir = graph_dir.join("shards");
     std::fs::create_dir_all(&shards_dir).map_err(io_err)?;
 
@@ -168,10 +195,19 @@ pub fn build(
         let rel = rel_path(code_root, &path);
         let bytes = std::fs::read(&path).map_err(io_err)?;
         let hash = blake3::hash(&bytes).to_hex().to_string();
-        let dirty = opts.full || old_files.get(&rel) != Some(&hash);
+        let unit = layout.source_unit(&path).ok_or_else(|| {
+            AtlasError::Cargo(format!("{} is not owned by a Cargo target", path.display()))
+        })?;
+        let layout_changed = old_files.get(&rel) == Some(&hash)
+            && match read_shard(&shards_dir, &rel) {
+                Ok(shard) if shard.unparsed.is_some() => false,
+                Ok(shard) => !shard.nodes.iter().any(|node| node.id == unit.node_id),
+                Err(_) => true,
+            };
+        let dirty = opts.full || old_files.get(&rel) != Some(&hash) || layout_changed;
         if dirty {
             let source = String::from_utf8_lossy(&bytes);
-            let shard = extract_shard(&package, &rel, &hash, &source);
+            let shard = extract_shard(&unit, &rel, &hash, &source);
             if shard.unparsed.is_some() {
                 unparsed.push(rel.clone());
             }
@@ -193,16 +229,23 @@ pub fn build(
         }
     }
 
+    resolve_syn_edges(&shards_dir, &files)?;
+
     let mut capability = Capability::default();
     if let Some(index_path) = &opts.scip_index {
         let tool = overlay_scip(&shards_dir, index_path, &files)?;
         capability.scip = true;
         capability.scip_tool = tool;
+    } else {
+        remove_scip_edges(&shards_dir, &files)?;
     }
+    validate_graph(&shards_dir, &files)?;
 
     let meta = Meta {
         schema_version: SCHEMA_VERSION,
-        package,
+        package: layout.graph_root.clone(),
+        packages: layout.packages.clone(),
+        roots: layout.roots.clone(),
         capability: capability.clone(),
         files,
     };
@@ -249,21 +292,32 @@ pub fn query(
 ) -> Result<QueryResult, AtlasError> {
     let stale = refresh(code_root, graph_dir, opts)?;
     let (_, shards) = load_graph(graph_dir)?;
-    let node = shards
+    let matches: Vec<&Node> = shards
         .iter()
         .flat_map(|s| s.nodes.iter())
-        .find(|n| n.id == symbol)
-        .cloned()
-        .ok_or_else(|| AtlasError::UnknownSymbol {
-            symbol: symbol.to_string(),
-        })?;
+        .filter(|node| node.id == symbol || node.symbol == symbol)
+        .collect();
+    let node = match matches.as_slice() {
+        [] => {
+            return Err(AtlasError::UnknownSymbol {
+                symbol: symbol.to_string(),
+            });
+        }
+        [node] => (*node).clone(),
+        many => {
+            return Err(AtlasError::AmbiguousSymbol {
+                symbol: symbol.to_string(),
+                declarations: many.len(),
+            });
+        }
+    };
     let mut edges_out = BTreeSet::new();
     let mut edges_in = BTreeSet::new();
     for edge in shards.iter().flat_map(|s| s.edges.iter()) {
-        if edge.from == symbol {
+        if edge.from == node.id {
             edges_out.insert(edge.clone());
         }
-        if edge.to == symbol {
+        if edge.to == node.id {
             edges_in.insert(edge.clone());
         }
     }
@@ -324,7 +378,16 @@ pub fn tree(
         }
     }
     let mut visited = BTreeSet::new();
-    let tree = render(&meta.package, &kinds, &children, &mut visited);
+    let roots: Vec<serde_json::Value> = meta
+        .roots
+        .iter()
+        .map(|root| render(root, &kinds, &children, &mut visited))
+        .collect();
+    let tree = if roots.len() == 1 {
+        roots.into_iter().next().unwrap_or(serde_json::Value::Null)
+    } else {
+        serde_json::json!({ "id": meta.package, "kind": "workspace", "children": roots })
+    };
     Ok(TreeOutline { tree, stale })
 }
 
@@ -340,7 +403,7 @@ pub fn refs(
     if !shards
         .iter()
         .flat_map(|s| s.nodes.iter())
-        .any(|n| n.id == symbol)
+        .any(|node| node.id == symbol || node.symbol == symbol)
     {
         return Err(AtlasError::UnknownSymbol {
             symbol: symbol.to_string(),
@@ -349,7 +412,13 @@ pub fn refs(
     let edges: BTreeSet<Edge> = shards
         .iter()
         .flat_map(|s| s.edges.iter())
-        .filter(|e| e.to == symbol && matches!(e.kind, EdgeKind::References | EdgeKind::Calls))
+        .filter(|e| {
+            matches!(e.kind, EdgeKind::References | EdgeKind::Calls)
+                && shards
+                    .iter()
+                    .flat_map(|shard| &shard.nodes)
+                    .any(|node| node.id == e.to && (node.id == symbol || node.symbol == symbol))
+        })
         .cloned()
         .collect();
     Ok(EdgeReport {
@@ -368,13 +437,18 @@ pub fn impls(
 ) -> Result<EdgeReport, AtlasError> {
     let stale = refresh(code_root, graph_dir, opts)?;
     let (_, shards) = load_graph(graph_dir)?;
-    let matches_name = |id: &str| id == name || id.ends_with(&format!("::{name}"));
+    let matching_ids: BTreeSet<&str> = shards
+        .iter()
+        .flat_map(|shard| &shard.nodes)
+        .filter(|node| node.symbol == name || node.symbol.ends_with(&format!("::{name}")))
+        .map(|node| node.id.as_str())
+        .collect();
     let edges: BTreeSet<Edge> = shards
         .iter()
         .flat_map(|s| s.edges.iter())
         .filter(|e| {
             matches!(e.kind, EdgeKind::ImplsTrait | EdgeKind::ImplFor)
-                && (matches_name(&e.to) || matches_name(&e.from))
+                && (matching_ids.contains(e.to.as_str()) || matching_ids.contains(e.from.as_str()))
         })
         .cloned()
         .collect();
@@ -417,7 +491,11 @@ fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), AtlasError> {
 }
 
 fn shard_file_name(rel: &str) -> String {
-    format!("{}.json", rel.replace(['/', '\\'], "__"))
+    let escaped = rel
+        .replace('%', "%25")
+        .replace('/', "%2F")
+        .replace('\\', "%5C");
+    format!("{escaped}.json")
 }
 
 fn write_shard(shards_dir: &Path, shard: &Shard) -> Result<(), AtlasError> {
@@ -428,6 +506,104 @@ fn read_shard(shards_dir: &Path, rel: &str) -> Result<Shard, AtlasError> {
     let path = shards_dir.join(shard_file_name(rel));
     let text = std::fs::read_to_string(&path).map_err(io_err)?;
     serde_json::from_str(&text).map_err(|e| AtlasError::Io(e.to_string()))
+}
+
+fn resolve_syn_edges(
+    shards_dir: &Path,
+    files: &BTreeMap<String, String>,
+) -> Result<(), AtlasError> {
+    let mut shards = BTreeMap::new();
+    let mut symbols: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for rel in files.keys() {
+        let shard = read_shard(shards_dir, rel)?;
+        for node in &shard.nodes {
+            symbols
+                .entry(node.symbol.clone())
+                .or_default()
+                .push(node.id.clone());
+        }
+        shards.insert(rel.clone(), shard);
+    }
+    for ids in symbols.values_mut() {
+        ids.sort();
+        ids.dedup();
+    }
+
+    for (rel, shard) in &mut shards {
+        let before = shard.edges.clone();
+        for edge in &mut shard.edges {
+            if edge.provenance != Provenance::Syn || edge.kind == EdgeKind::Contains {
+                continue;
+            }
+            let target_text = edge.target_text.clone().unwrap_or_else(|| edge.to.clone());
+            edge.target_text = Some(target_text.clone());
+            match symbols.get(&target_text).map(Vec::as_slice) {
+                Some([id]) => {
+                    edge.to = id.clone();
+                    edge.resolution = EdgeResolution::Resolved;
+                }
+                _ => {
+                    edge.to = target_text.clone();
+                    edge.resolution = if target_text.starts_with("std::")
+                        || target_text.starts_with("core::")
+                        || target_text.starts_with("alloc::")
+                    {
+                        EdgeResolution::External
+                    } else {
+                        EdgeResolution::Unresolved
+                    };
+                }
+            }
+        }
+        shard.edges.sort();
+        shard.edges.dedup();
+        if shard.edges != before {
+            write_shard(shards_dir, shard)?;
+        }
+        let _ = rel;
+    }
+    Ok(())
+}
+
+fn validate_graph(shards_dir: &Path, files: &BTreeMap<String, String>) -> Result<(), AtlasError> {
+    let mut node_ids = BTreeSet::new();
+    let mut shards = Vec::new();
+    for rel in files.keys() {
+        let shard = read_shard(shards_dir, rel)?;
+        let mut shard_ids = BTreeSet::new();
+        for node in &shard.nodes {
+            if !shard_ids.insert(node.id.as_str()) {
+                return Err(AtlasError::Invariant(format!(
+                    "duplicate node id `{}` in {}",
+                    node.id, shard.file
+                )));
+            }
+            if !node_ids.insert(node.id.clone()) {
+                return Err(AtlasError::Invariant(format!(
+                    "duplicate node id `{}` across graph",
+                    node.id
+                )));
+            }
+        }
+        shards.push(shard);
+    }
+    for shard in &shards {
+        for edge in &shard.edges {
+            if !node_ids.contains(&edge.from) {
+                return Err(AtlasError::Invariant(format!(
+                    "edge source `{}` does not exist ({})",
+                    edge.from, shard.file
+                )));
+            }
+            if edge.resolution == EdgeResolution::Resolved && !node_ids.contains(&edge.to) {
+                return Err(AtlasError::Invariant(format!(
+                    "resolved edge target `{}` does not exist ({})",
+                    edge.to, shard.file
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn refresh(
@@ -446,28 +622,452 @@ fn refresh(
     Ok(Vec::new())
 }
 
-fn package_name(code_root: &Path) -> String {
-    let manifest = code_root.join("Cargo.toml");
-    if let Ok(text) = std::fs::read_to_string(manifest) {
-        let mut in_package = false;
-        for line in text.lines() {
-            let line = line.trim();
-            if line.starts_with('[') {
-                in_package = line == "[package]";
-                continue;
+#[derive(Debug, Deserialize)]
+struct CargoMetadata {
+    workspace_root: PathBuf,
+    packages: Vec<CargoPackage>,
+    workspace_members: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CargoPackage {
+    id: String,
+    manifest_path: PathBuf,
+    targets: Vec<CargoTarget>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CargoTarget {
+    name: String,
+    kind: Vec<String>,
+    src_path: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+struct TargetLayout {
+    crate_name: String,
+    package_dir: PathBuf,
+    src_path: PathBuf,
+    module_dir: PathBuf,
+    priority: u8,
+}
+
+#[derive(Debug)]
+struct ProjectLayout {
+    graph_root: String,
+    packages: Vec<String>,
+    roots: Vec<String>,
+    targets: Vec<TargetLayout>,
+    units: BTreeMap<PathBuf, SourceUnit>,
+    code_root: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+struct SourceUnit {
+    package: String,
+    modules: Vec<String>,
+    root_path: PathBuf,
+    node_id: String,
+    parent_id: Option<String>,
+    crate_id: String,
+}
+
+fn rust_name(name: &str) -> String {
+    name.replace('-', "_")
+}
+
+fn cargo_metadata(manifest: &Path) -> Result<CargoMetadata, AtlasError> {
+    let current_dir = manifest.parent().unwrap_or_else(|| Path::new("."));
+    let output = Command::new("cargo")
+        .args([
+            "metadata",
+            "--format-version",
+            "1",
+            "--no-deps",
+            "--manifest-path",
+        ])
+        .arg(manifest)
+        .current_dir(current_dir)
+        .output()
+        .map_err(|error| AtlasError::Cargo(format!("cannot run cargo metadata: {error}")))?;
+    if !output.status.success() {
+        return Err(AtlasError::Cargo(
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ));
+    }
+    serde_json::from_slice(&output.stdout)
+        .map_err(|error| AtlasError::Cargo(format!("invalid cargo metadata: {error}")))
+}
+
+fn nested_workspace_manifests(code_root: &Path) -> Vec<PathBuf> {
+    let root_manifest = code_root.join("Cargo.toml");
+    let mut manifests: Vec<PathBuf> = ignore::WalkBuilder::new(code_root)
+        .hidden(true)
+        .git_ignore(true)
+        .build()
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.into_path())
+        .filter(|path| {
+            path != &root_manifest
+                && path.file_name().and_then(|name| name.to_str()) == Some("Cargo.toml")
+                && !path
+                    .components()
+                    .any(|component| component.as_os_str() == "target")
+                && std::fs::read_to_string(path)
+                    .is_ok_and(|text| text.lines().any(|line| line.trim() == "[workspace]"))
+        })
+        .collect();
+    manifests.sort();
+    manifests
+}
+
+fn path_attribute(attrs: &[syn::Attribute]) -> Option<String> {
+    attrs.iter().find_map(|attr| {
+        if !attr.path().is_ident("path") {
+            return None;
+        }
+        let syn::Meta::NameValue(value) = &attr.meta else {
+            return None;
+        };
+        let syn::Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Str(path),
+            ..
+        }) = &value.value
+        else {
+            return None;
+        };
+        Some(path.value())
+    })
+}
+
+fn discover_module_file(
+    path: &Path,
+    root_path: &Path,
+    package: &str,
+    modules: &[String],
+    units: &mut BTreeMap<PathBuf, SourceUnit>,
+    visited: &mut BTreeSet<(PathBuf, PathBuf)>,
+) {
+    let visit_key = (root_path.to_path_buf(), path.to_path_buf());
+    if !visited.insert(visit_key) {
+        return;
+    }
+    units
+        .entry(path.to_path_buf())
+        .or_insert_with(|| SourceUnit {
+            package: package.to_string(),
+            modules: modules.to_vec(),
+            root_path: root_path.to_path_buf(),
+            node_id: String::new(),
+            parent_id: None,
+            crate_id: String::new(),
+        });
+    let Ok(source) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let Ok(parsed) = syn::parse_file(&source) else {
+        return;
+    };
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let module_dir = match path.file_stem().and_then(|stem| stem.to_str()) {
+        Some("lib" | "main" | "mod") | None => parent.to_path_buf(),
+        Some(stem) => parent.join(stem),
+    };
+    discover_module_items(
+        &parsed.items,
+        (&module_dir, parent),
+        root_path,
+        package,
+        modules,
+        units,
+        visited,
+    );
+}
+
+fn discover_module_items(
+    items: &[syn::Item],
+    dirs: (&Path, &Path),
+    root_path: &Path,
+    package: &str,
+    modules: &[String],
+    units: &mut BTreeMap<PathBuf, SourceUnit>,
+    visited: &mut BTreeSet<(PathBuf, PathBuf)>,
+) {
+    let (module_dir, path_attr_dir) = dirs;
+    for item in items {
+        let syn::Item::Mod(module) = item else {
+            continue;
+        };
+        let mut child_modules = modules.to_vec();
+        child_modules.push(module.ident.to_string());
+        if let Some((_, nested)) = &module.content {
+            discover_module_items(
+                nested,
+                (
+                    &module_dir.join(module.ident.to_string()),
+                    &module_dir.join(module.ident.to_string()),
+                ),
+                root_path,
+                package,
+                &child_modules,
+                units,
+                visited,
+            );
+            continue;
+        }
+        let child_path = if let Some(path) = path_attribute(&module.attrs) {
+            path_attr_dir.join(path)
+        } else {
+            let direct = module_dir.join(format!("{}.rs", module.ident));
+            if direct.is_file() {
+                direct
+            } else {
+                module_dir.join(module.ident.to_string()).join("mod.rs")
             }
-            if in_package
-                && let Some(rest) = line.strip_prefix("name")
-                && let Some(value) = rest.trim_start().strip_prefix('=')
-            {
-                return value.trim().trim_matches('"').replace('-', "_");
-            }
+        };
+        if child_path.is_file() {
+            discover_module_file(
+                &child_path,
+                root_path,
+                package,
+                &child_modules,
+                units,
+                visited,
+            );
         }
     }
-    code_root
-        .file_name()
-        .map(|n| n.to_string_lossy().replace('-', "_"))
-        .unwrap_or_else(|| "crate".to_string())
+}
+
+fn structural_node_id(code_root: &Path, path: &Path, unit: &SourceUnit) -> String {
+    let symbol = if unit.modules.is_empty() {
+        unit.package.clone()
+    } else {
+        format!("{}::{}", unit.package, unit.modules.join("::"))
+    };
+    let root = rel_path(code_root, &unit.root_path);
+    let file = rel_path(code_root, path);
+    let digest = blake3::hash(format!("{root}\0{file}\0{symbol}").as_bytes())
+        .to_hex()
+        .to_string();
+    format!("{symbol}#module-{}", &digest[..12])
+}
+
+fn source_units(code_root: &Path, targets: &[TargetLayout]) -> BTreeMap<PathBuf, SourceUnit> {
+    let mut units = BTreeMap::new();
+    let mut visited = BTreeSet::new();
+    for target in targets {
+        discover_module_file(
+            &target.src_path,
+            &target.src_path,
+            &target.crate_name,
+            &[],
+            &mut units,
+            &mut visited,
+        );
+    }
+    for (path, unit) in &mut units {
+        unit.node_id = structural_node_id(code_root, path, unit);
+    }
+    let ids: BTreeMap<(PathBuf, Vec<String>), String> = units
+        .values()
+        .map(|unit| {
+            (
+                (unit.root_path.clone(), unit.modules.clone()),
+                unit.node_id.clone(),
+            )
+        })
+        .collect();
+    for unit in units.values_mut() {
+        unit.crate_id = ids
+            .get(&(unit.root_path.clone(), Vec::new()))
+            .cloned()
+            .unwrap_or_else(|| unit.node_id.clone());
+        if !unit.modules.is_empty() {
+            let mut parents = unit.modules.clone();
+            parents.pop();
+            unit.parent_id = ids.get(&(unit.root_path.clone(), parents)).cloned();
+        }
+    }
+    units
+}
+
+impl ProjectLayout {
+    fn discover(code_root: &Path) -> Result<Self, AtlasError> {
+        let manifest = code_root.join("Cargo.toml");
+        let root_metadata = cargo_metadata(&manifest)?;
+        let root_workspace = root_metadata.workspace_root.clone();
+        let mut metadata_sets = vec![root_metadata];
+        let mut known_manifests: BTreeSet<PathBuf> = metadata_sets[0]
+            .packages
+            .iter()
+            .map(|package| package.manifest_path.clone())
+            .collect();
+        for nested_manifest in nested_workspace_manifests(code_root) {
+            if known_manifests.contains(&nested_manifest) {
+                continue;
+            }
+            let metadata = cargo_metadata(&nested_manifest)?;
+            known_manifests.extend(
+                metadata
+                    .packages
+                    .iter()
+                    .map(|package| package.manifest_path.clone()),
+            );
+            metadata_sets.push(metadata);
+        }
+        let mut targets = Vec::new();
+        let mut packages = BTreeSet::new();
+        for metadata in &metadata_sets {
+            let members: BTreeSet<&str> = metadata
+                .workspace_members
+                .iter()
+                .map(String::as_str)
+                .collect();
+            for package in metadata
+                .packages
+                .iter()
+                .filter(|package| members.contains(package.id.as_str()))
+            {
+                let package_dir = package
+                    .manifest_path
+                    .parent()
+                    .unwrap_or(&metadata.workspace_root)
+                    .to_path_buf();
+                for target in &package.targets {
+                    let crate_name = rust_name(&target.name);
+                    packages.insert(crate_name.clone());
+                    let priority = if target
+                        .kind
+                        .iter()
+                        .any(|kind| kind == "lib" || kind == "proc-macro")
+                    {
+                        0
+                    } else if target.kind.iter().any(|kind| kind == "bin") {
+                        1
+                    } else {
+                        2
+                    };
+                    targets.push(TargetLayout {
+                        crate_name,
+                        package_dir: package_dir.clone(),
+                        module_dir: target
+                            .src_path
+                            .parent()
+                            .unwrap_or(&package_dir)
+                            .to_path_buf(),
+                        src_path: target.src_path.clone(),
+                        priority,
+                    });
+                }
+            }
+        }
+        targets.sort_by(|left, right| {
+            left.priority
+                .cmp(&right.priority)
+                .then_with(|| {
+                    right
+                        .module_dir
+                        .components()
+                        .count()
+                        .cmp(&left.module_dir.components().count())
+                })
+                .then_with(|| left.crate_name.cmp(&right.crate_name))
+        });
+        let packages: Vec<String> = packages.into_iter().collect();
+        if targets.is_empty() {
+            return Err(AtlasError::Cargo(format!(
+                "{} has no Rust targets",
+                manifest.display()
+            )));
+        }
+        let graph_root = if packages.len() == 1 {
+            packages[0].clone()
+        } else {
+            root_workspace
+                .file_name()
+                .map(|name| rust_name(&name.to_string_lossy()))
+                .unwrap_or_else(|| "workspace".to_string())
+        };
+        let units = source_units(code_root, &targets);
+        let roots: Vec<String> = units
+            .values()
+            .filter(|unit| unit.modules.is_empty())
+            .map(|unit| unit.node_id.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        Ok(Self {
+            graph_root,
+            packages,
+            roots,
+            targets,
+            units,
+            code_root: code_root.to_path_buf(),
+        })
+    }
+
+    fn source_unit(&self, path: &Path) -> Option<SourceUnit> {
+        if let Some(unit) = self.units.get(path) {
+            return Some(unit.clone());
+        }
+        if let Some(target) = self.targets.iter().find(|target| target.src_path == path) {
+            let mut unit = SourceUnit {
+                package: target.crate_name.clone(),
+                modules: Vec::new(),
+                root_path: target.src_path.clone(),
+                node_id: String::new(),
+                parent_id: None,
+                crate_id: String::new(),
+            };
+            unit.node_id = structural_node_id(&self.code_root, path, &unit);
+            unit.crate_id = unit.node_id.clone();
+            return Some(unit);
+        }
+        let target = self
+            .targets
+            .iter()
+            .filter(|target| path.starts_with(&target.module_dir))
+            .min_by_key(|target| {
+                (
+                    std::cmp::Reverse(target.module_dir.components().count()),
+                    target.priority,
+                )
+            })
+            .or_else(|| {
+                self.targets
+                    .iter()
+                    .filter(|target| path.starts_with(&target.package_dir))
+                    .min_by_key(|target| {
+                        (
+                            std::cmp::Reverse(target.package_dir.components().count()),
+                            target.priority,
+                        )
+                    })
+            })?;
+        let relative = path
+            .strip_prefix(&target.module_dir)
+            .or_else(|_| path.strip_prefix(&target.package_dir))
+            .ok()?;
+        let mut unit = SourceUnit {
+            package: target.crate_name.clone(),
+            modules: module_segments(relative),
+            root_path: target.src_path.clone(),
+            node_id: String::new(),
+            parent_id: None,
+            crate_id: String::new(),
+        };
+        unit.node_id = structural_node_id(&self.code_root, path, &unit);
+        let root_unit = SourceUnit {
+            package: target.crate_name.clone(),
+            modules: Vec::new(),
+            root_path: target.src_path.clone(),
+            node_id: String::new(),
+            parent_id: None,
+            crate_id: String::new(),
+        };
+        unit.crate_id = structural_node_id(&self.code_root, &target.src_path, &root_unit);
+        Some(unit)
+    }
 }
 
 fn walk_rs_files(code_root: &Path) -> Vec<PathBuf> {
@@ -494,10 +1094,10 @@ fn rel_path(code_root: &Path, path: &Path) -> String {
         .replace('\\', "/")
 }
 
-fn module_segments(rel: &str) -> Vec<String> {
-    let trimmed = rel.strip_prefix("src/").unwrap_or(rel);
-    let no_ext = trimmed.strip_suffix(".rs").unwrap_or(trimmed);
-    let mut segs: Vec<String> = no_ext.split('/').map(str::to_string).collect();
+fn module_segments(relative: &Path) -> Vec<String> {
+    let portable = relative.to_string_lossy().replace('\\', "/");
+    let no_ext = portable.strip_suffix(".rs").unwrap_or(&portable);
+    let mut segs: Vec<String> = no_ext.split('/').map(rust_name).collect();
     if matches!(
         segs.last().map(String::as_str),
         Some("lib") | Some("main") | Some("mod")
@@ -509,11 +1109,13 @@ fn module_segments(rel: &str) -> Vec<String> {
 
 struct ExtractCtx<'a> {
     package: &'a str,
+    crate_id: &'a str,
     rel: &'a str,
     source_lines: Vec<&'a str>,
     nodes: Vec<Node>,
     edges: Vec<Edge>,
-    impl_counter: usize,
+    declaration_counts: BTreeMap<String, usize>,
+    cfg_context: Vec<String>,
 }
 
 impl ExtractCtx<'_> {
@@ -521,23 +1123,57 @@ impl ExtractCtx<'_> {
         (span.start().line, span.end().line)
     }
 
-    fn signature_at(&self, line_start: usize) -> String {
-        self.source_lines
-            .get(line_start.saturating_sub(1))
-            .map(|l| l.trim().trim_end_matches('{').trim().to_string())
-            .unwrap_or_default()
-    }
-
-    fn push_node(&mut self, id: &str, kind: NodeKind, span: proc_macro2::Span, vis: String) {
+    fn push_declaration(
+        &mut self,
+        symbol: &str,
+        kind: NodeKind,
+        span: proc_macro2::Span,
+        vis: String,
+        signature: String,
+        attrs: &[syn::Attribute],
+    ) -> String {
         let (line_start, line_end) = self.line_of(span);
+        let base_id = declaration_id(self.rel, symbol, &signature, attrs, &self.cfg_context);
+        let count = self.declaration_counts.entry(base_id.clone()).or_default();
+        *count += 1;
+        let id = if *count == 1 {
+            base_id
+        } else {
+            format!("{base_id}~{count}")
+        };
         self.nodes.push(Node {
-            id: id.to_string(),
+            id: id.clone(),
+            symbol: symbol.to_string(),
             kind,
             file: self.rel.to_string(),
             line_start,
             line_end,
             visibility: vis,
-            signature: self.signature_at(line_start),
+            signature,
+            doc: doc_first_line(attrs),
+        });
+        id
+    }
+
+    fn push_structural_node(
+        &mut self,
+        id: &str,
+        symbol: &str,
+        kind: NodeKind,
+        line_end: usize,
+        visibility: String,
+        signature: String,
+    ) {
+        self.nodes.push(Node {
+            id: id.to_string(),
+            symbol: symbol.to_string(),
+            kind,
+            file: self.rel.to_string(),
+            line_start: 1,
+            line_end,
+            visibility,
+            signature,
+            doc: None,
         });
     }
 
@@ -545,10 +1181,72 @@ impl ExtractCtx<'_> {
         self.edges.push(Edge {
             from: from.to_string(),
             to: to.to_string(),
+            target_text: None,
+            resolution: EdgeResolution::Resolved,
             kind: EdgeKind::Contains,
             provenance: Provenance::Syn,
         });
     }
+}
+
+fn normalized_tokens(value: &impl ToTokens) -> String {
+    value
+        .to_token_stream()
+        .to_string()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn doc_first_line(attrs: &[syn::Attribute]) -> Option<String> {
+    attrs.iter().find_map(|attr| {
+        if !attr.path().is_ident("doc") {
+            return None;
+        }
+        let syn::Meta::NameValue(value) = &attr.meta else {
+            return None;
+        };
+        let syn::Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Str(text),
+            ..
+        }) = &value.value
+        else {
+            return None;
+        };
+        text.value()
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .map(str::to_string)
+    })
+}
+
+fn cfg_identity(attrs: &[syn::Attribute]) -> Vec<String> {
+    attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("cfg") || attr.path().is_ident("cfg_attr"))
+        .map(normalized_tokens)
+        .collect()
+}
+
+fn declaration_id(
+    rel: &str,
+    symbol: &str,
+    signature: &str,
+    attrs: &[syn::Attribute],
+    cfg_context: &[String],
+) -> String {
+    let cfg = attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("cfg") || attr.path().is_ident("cfg_attr"))
+        .map(normalized_tokens)
+        .chain(cfg_context.iter().cloned())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let digest = blake3::hash(format!("{rel}\0{symbol}\0{signature}\0{cfg}").as_bytes())
+        .to_hex()
+        .to_string();
+    format!("{symbol}#{}", &digest[..12])
 }
 
 fn vis_string(vis: &syn::Visibility) -> String {
@@ -568,22 +1266,19 @@ fn vis_string(vis: &syn::Visibility) -> String {
 }
 
 fn path_text(path: &syn::Path) -> String {
+    normalized_tokens(path).replace(" :: ", "::")
+}
+
+fn path_base_text(path: &syn::Path) -> String {
     path.segments
         .iter()
-        .map(|s| s.ident.to_string())
+        .map(|segment| segment.ident.to_string())
         .collect::<Vec<_>>()
         .join("::")
 }
 
 fn type_text(ty: &syn::Type) -> String {
-    match ty {
-        syn::Type::Path(p) => path_text(&p.path),
-        other => quote_tokens(other),
-    }
-}
-
-fn quote_tokens<T: syn::spanned::Spanned + std::fmt::Debug>(t: &T) -> String {
-    format!("{t:?}").chars().take(48).collect()
+    normalized_tokens(ty).replace(" :: ", "::")
 }
 
 /// Resolve a possibly-bare path against the local module's item names.
@@ -596,13 +1291,32 @@ fn resolve_path(
     if let Some(rest) = raw.strip_prefix("crate::") {
         return format!("{package}::{rest}");
     }
-    if !raw.contains("::") && local_names.contains(raw) {
+    if let Some(rest) = raw.strip_prefix("self::") {
+        return format!("{module_id}::{rest}");
+    }
+    if let Some(mut rest) = raw.strip_prefix("super::") {
+        let mut parent = module_id.to_string();
+        while let Some(next) = rest.strip_prefix("super::") {
+            parent = parent
+                .rsplit_once("::")
+                .map(|(parent, _)| parent.to_string())
+                .unwrap_or_else(|| package.to_string());
+            rest = next;
+        }
+        parent = parent
+            .rsplit_once("::")
+            .map(|(parent, _)| parent.to_string())
+            .unwrap_or_else(|| package.to_string());
+        return format!("{parent}::{rest}");
+    }
+    let first = raw.split("::").next().unwrap_or(raw);
+    if local_names.contains(first) {
         return format!("{module_id}::{raw}");
     }
     raw.to_string()
 }
 
-fn extract_shard(package: &str, rel: &str, hash: &str, source: &str) -> Shard {
+fn extract_shard(unit: &SourceUnit, rel: &str, hash: &str, source: &str) -> Shard {
     let parsed = match syn::parse_file(source) {
         Ok(file) => file,
         Err(error) => {
@@ -617,42 +1331,46 @@ fn extract_shard(package: &str, rel: &str, hash: &str, source: &str) -> Shard {
     };
 
     let mut ctx = ExtractCtx {
-        package,
+        package: &unit.package,
+        crate_id: &unit.crate_id,
         rel,
         source_lines: source.lines().collect(),
         nodes: Vec::new(),
         edges: Vec::new(),
-        impl_counter: 0,
+        declaration_counts: BTreeMap::new(),
+        cfg_context: Vec::new(),
     };
 
-    // crate + module chain (deduped at load time across shards)
-    let segs = module_segments(rel);
-    ctx.nodes.push(Node {
-        id: package.to_string(),
-        kind: NodeKind::Crate,
-        file: rel.to_string(),
-        line_start: 1,
-        line_end: 1,
-        visibility: "pub".to_string(),
-        signature: format!("crate {package}"),
-    });
-    let mut module_id = package.to_string();
-    for seg in &segs {
-        let child = format!("{module_id}::{seg}");
-        ctx.nodes.push(Node {
-            id: child.clone(),
-            kind: NodeKind::Module,
-            file: rel.to_string(),
-            line_start: 1,
-            line_end: ctx.source_lines.len().max(1),
-            visibility: "pub".to_string(),
-            signature: format!("mod {seg}"),
-        });
-        ctx.push_contains(&module_id, &child);
-        module_id = child;
-    }
+    let package = &unit.package;
+    let segs = &unit.modules;
+    let module_id = if segs.is_empty() {
+        ctx.push_structural_node(
+            &unit.node_id,
+            package,
+            NodeKind::Crate,
+            ctx.source_lines.len().max(1),
+            "pub".to_string(),
+            format!("crate {package}"),
+        );
+        package.to_string()
+    } else {
+        let module_id = format!("{package}::{}", segs.join("::"));
+        let name = segs.last().map(String::as_str).unwrap_or(package);
+        ctx.push_structural_node(
+            &unit.node_id,
+            &module_id,
+            NodeKind::Module,
+            ctx.source_lines.len().max(1),
+            "pub".to_string(),
+            format!("mod {name}"),
+        );
+        if let Some(parent_id) = &unit.parent_id {
+            ctx.push_contains(parent_id, &unit.node_id);
+        }
+        module_id
+    };
 
-    extract_items(&mut ctx, &parsed.items, &module_id);
+    extract_items(&mut ctx, &parsed.items, &module_id, &unit.node_id);
 
     let mut edges: Vec<Edge> = std::mem::take(&mut ctx.edges);
     edges.sort();
@@ -666,7 +1384,12 @@ fn extract_shard(package: &str, rel: &str, hash: &str, source: &str) -> Shard {
     }
 }
 
-fn extract_items(ctx: &mut ExtractCtx<'_>, items: &[syn::Item], module_id: &str) {
+fn extract_items(
+    ctx: &mut ExtractCtx<'_>,
+    items: &[syn::Item],
+    module_symbol: &str,
+    container_id: &str,
+) {
     use syn::Item;
     use syn::spanned::Spanned;
 
@@ -686,95 +1409,224 @@ fn extract_items(ctx: &mut ExtractCtx<'_>, items: &[syn::Item], module_id: &str)
     for item in items {
         match item {
             Item::Struct(i) => {
-                let id = format!("{module_id}::{}", i.ident);
-                ctx.push_node(&id, NodeKind::Struct, i.span(), vis_string(&i.vis));
-                ctx.push_contains(module_id, &id);
+                let symbol = format!("{module_symbol}::{}", i.ident);
+                let mut declaration = i.clone();
+                declaration.attrs.clear();
+                let id = ctx.push_declaration(
+                    &symbol,
+                    NodeKind::Struct,
+                    i.span(),
+                    vis_string(&i.vis),
+                    normalized_tokens(&declaration),
+                    &i.attrs,
+                );
+                ctx.push_contains(container_id, &id);
             }
             Item::Enum(i) => {
-                let id = format!("{module_id}::{}", i.ident);
-                ctx.push_node(&id, NodeKind::Enum, i.span(), vis_string(&i.vis));
-                ctx.push_contains(module_id, &id);
+                let symbol = format!("{module_symbol}::{}", i.ident);
+                let mut declaration = i.clone();
+                declaration.attrs.clear();
+                let id = ctx.push_declaration(
+                    &symbol,
+                    NodeKind::Enum,
+                    i.span(),
+                    vis_string(&i.vis),
+                    normalized_tokens(&declaration),
+                    &i.attrs,
+                );
+                ctx.push_contains(container_id, &id);
             }
             Item::Trait(i) => {
-                let id = format!("{module_id}::{}", i.ident);
-                ctx.push_node(&id, NodeKind::Trait, i.span(), vis_string(&i.vis));
-                ctx.push_contains(module_id, &id);
+                let symbol = format!("{module_symbol}::{}", i.ident);
+                let mut declaration = i.clone();
+                declaration.attrs.clear();
+                declaration.items.clear();
+                let id = ctx.push_declaration(
+                    &symbol,
+                    NodeKind::Trait,
+                    i.span(),
+                    vis_string(&i.vis),
+                    normalized_tokens(&declaration),
+                    &i.attrs,
+                );
+                ctx.push_contains(container_id, &id);
                 for ti in &i.items {
                     if let syn::TraitItem::Fn(f) = ti {
-                        let fid = format!("{id}::{}", f.sig.ident);
-                        ctx.push_node(&fid, NodeKind::Fn, f.span(), "pub".to_string());
+                        let method_symbol = format!("{symbol}::{}", f.sig.ident);
+                        let fid = ctx.push_declaration(
+                            &method_symbol,
+                            NodeKind::Fn,
+                            f.span(),
+                            "pub".to_string(),
+                            normalized_tokens(&f.sig),
+                            &f.attrs,
+                        );
                         ctx.push_contains(&id, &fid);
                     }
                 }
             }
             Item::Fn(i) => {
-                let id = format!("{module_id}::{}", i.sig.ident);
-                ctx.push_node(&id, NodeKind::Fn, i.span(), vis_string(&i.vis));
-                ctx.push_contains(module_id, &id);
+                let symbol = format!("{module_symbol}::{}", i.sig.ident);
+                let vis = &i.vis;
+                let sig = &i.sig;
+                let signature = normalized_tokens(&quote::quote!(#vis #sig));
+                let id = ctx.push_declaration(
+                    &symbol,
+                    NodeKind::Fn,
+                    i.span(),
+                    vis_string(&i.vis),
+                    signature,
+                    &i.attrs,
+                );
+                ctx.push_contains(container_id, &id);
             }
             Item::Type(i) => {
-                let id = format!("{module_id}::{}", i.ident);
-                ctx.push_node(&id, NodeKind::TypeAlias, i.span(), vis_string(&i.vis));
-                ctx.push_contains(module_id, &id);
+                let symbol = format!("{module_symbol}::{}", i.ident);
+                let mut declaration = i.clone();
+                declaration.attrs.clear();
+                let id = ctx.push_declaration(
+                    &symbol,
+                    NodeKind::TypeAlias,
+                    i.span(),
+                    vis_string(&i.vis),
+                    normalized_tokens(&declaration),
+                    &i.attrs,
+                );
+                ctx.push_contains(container_id, &id);
             }
             Item::Const(i) => {
-                let id = format!("{module_id}::{}", i.ident);
-                ctx.push_node(&id, NodeKind::Const, i.span(), vis_string(&i.vis));
-                ctx.push_contains(module_id, &id);
+                let symbol = format!("{module_symbol}::{}", i.ident);
+                let mut declaration = i.clone();
+                declaration.attrs.clear();
+                let id = ctx.push_declaration(
+                    &symbol,
+                    NodeKind::Const,
+                    i.span(),
+                    vis_string(&i.vis),
+                    normalized_tokens(&declaration),
+                    &i.attrs,
+                );
+                ctx.push_contains(container_id, &id);
             }
             Item::Macro(i) => {
                 if let Some(ident) = &i.ident {
                     // macro_rules! export at crate root by convention
-                    let id = format!("{}::{ident}", ctx.package);
-                    ctx.push_node(&id, NodeKind::Macro, i.span(), "pub".to_string());
-                    ctx.push_contains(ctx.package, &id);
+                    let symbol = format!("{}::{ident}", ctx.package);
+                    let signature = format!("macro_rules! {ident}");
+                    let id = ctx.push_declaration(
+                        &symbol,
+                        NodeKind::Macro,
+                        i.span(),
+                        "pub".to_string(),
+                        signature,
+                        &i.attrs,
+                    );
+                    ctx.push_contains(ctx.crate_id, &id);
                 }
             }
             Item::Impl(i) => {
-                ctx.impl_counter += 1;
-                let self_ty =
-                    resolve_path(&type_text(&i.self_ty), module_id, ctx.package, &local_names);
-                let (impl_id, trait_id) = match &i.trait_ {
+                let self_ty = resolve_path(
+                    &type_text(&i.self_ty),
+                    module_symbol,
+                    ctx.package,
+                    &local_names,
+                );
+                let self_target = match i.self_ty.as_ref() {
+                    syn::Type::Path(path) => resolve_path(
+                        &path_base_text(&path.path),
+                        module_symbol,
+                        ctx.package,
+                        &local_names,
+                    ),
+                    _ => self_ty.clone(),
+                };
+                let (impl_symbol, trait_id) = match &i.trait_ {
                     Some((_, path, _)) => {
-                        let trait_id =
-                            resolve_path(&path_text(path), module_id, ctx.package, &local_names);
+                        let trait_id = resolve_path(
+                            &path_base_text(path),
+                            module_symbol,
+                            ctx.package,
+                            &local_names,
+                        );
+                        let trait_display = resolve_path(
+                            &path_text(path),
+                            module_symbol,
+                            ctx.package,
+                            &local_names,
+                        );
                         (
-                            format!("{module_id}::impl {trait_id} for {self_ty}"),
+                            format!("{module_symbol}::impl {trait_display} for {self_ty}"),
                             Some(trait_id),
                         )
                     }
-                    None => (format!("{module_id}::impl {self_ty}"), None),
+                    None => (format!("{module_symbol}::impl {self_ty}"), None),
                 };
-                ctx.push_node(&impl_id, NodeKind::Impl, i.span(), "private".to_string());
-                ctx.push_contains(module_id, &impl_id);
+                let mut declaration = i.clone();
+                declaration.attrs.clear();
+                declaration.items.clear();
+                let impl_id = ctx.push_declaration(
+                    &impl_symbol,
+                    NodeKind::Impl,
+                    i.span(),
+                    "private".to_string(),
+                    normalized_tokens(&declaration),
+                    &i.attrs,
+                );
+                ctx.push_contains(container_id, &impl_id);
                 if let Some(trait_id) = trait_id {
                     ctx.edges.push(Edge {
                         from: impl_id.clone(),
-                        to: trait_id,
+                        to: trait_id.clone(),
+                        target_text: Some(trait_id),
+                        resolution: EdgeResolution::Unresolved,
                         kind: EdgeKind::ImplsTrait,
                         provenance: Provenance::Syn,
                     });
                 }
                 ctx.edges.push(Edge {
                     from: impl_id.clone(),
-                    to: self_ty,
+                    to: self_target.clone(),
+                    target_text: Some(self_target),
+                    resolution: EdgeResolution::Unresolved,
                     kind: EdgeKind::ImplFor,
                     provenance: Provenance::Syn,
                 });
                 for ii in &i.items {
                     if let syn::ImplItem::Fn(f) = ii {
-                        let fid = format!("{impl_id}::{}", f.sig.ident);
-                        ctx.push_node(&fid, NodeKind::Fn, f.span(), vis_string(&f.vis));
+                        let method_symbol = format!("{impl_symbol}::{}", f.sig.ident);
+                        let vis = &f.vis;
+                        let sig = &f.sig;
+                        let signature = normalized_tokens(&quote::quote!(#vis #sig));
+                        let fid = ctx.push_declaration(
+                            &method_symbol,
+                            NodeKind::Fn,
+                            f.span(),
+                            vis_string(&f.vis),
+                            signature,
+                            &f.attrs,
+                        );
                         ctx.push_contains(&impl_id, &fid);
                     }
                 }
             }
             Item::Mod(i) => {
                 if let Some((_, nested)) = &i.content {
-                    let child = format!("{module_id}::{}", i.ident);
-                    ctx.push_node(&child, NodeKind::Module, i.span(), vis_string(&i.vis));
-                    ctx.push_contains(module_id, &child);
-                    extract_items(ctx, nested, &child);
+                    let child = format!("{module_symbol}::{}", i.ident);
+                    let vis = &i.vis;
+                    let ident = &i.ident;
+                    let child_id = ctx.push_declaration(
+                        &child,
+                        NodeKind::Module,
+                        i.span(),
+                        vis_string(&i.vis),
+                        normalized_tokens(&quote::quote!(#vis mod #ident)),
+                        &i.attrs,
+                    );
+                    ctx.push_contains(container_id, &child_id);
+                    let context_len = ctx.cfg_context.len();
+                    ctx.cfg_context.extend(cfg_identity(&i.attrs));
+                    extract_items(ctx, nested, &child, &child_id);
+                    ctx.cfg_context.truncate(context_len);
                 }
             }
             _ => {}
@@ -836,9 +1688,14 @@ fn overlay_scip(
     for rel in files.keys() {
         shards.insert(rel.clone(), read_shard(shards_dir, rel)?);
     }
-    // recompute scip edges from scratch
-    for shard in shards.values_mut() {
+    // Recompute SCIP edges from scratch, including shards that only lose edges.
+    let mut changed: BTreeSet<String> = BTreeSet::new();
+    for (rel, shard) in &mut shards {
+        let old_len = shard.edges.len();
         shard.edges.retain(|e| e.provenance != Provenance::Scip);
+        if shard.edges.len() != old_len {
+            changed.insert(rel.clone());
+        }
     }
 
     let containing_node = |shard: &Shard, line: usize| -> Option<String> {
@@ -871,7 +1728,6 @@ fn overlay_scip(
         }
     }
     // pass 2: references
-    let mut changed: BTreeSet<String> = BTreeSet::new();
     for doc in &index.documents {
         let rel = doc.relative_path.clone();
         for occ in &doc.occurrences {
@@ -896,6 +1752,8 @@ fn overlay_scip(
             let edge = Edge {
                 from,
                 to: target.clone(),
+                target_text: Some(occ.symbol.clone()),
+                resolution: EdgeResolution::Resolved,
                 kind: EdgeKind::References,
                 provenance: Provenance::Scip,
             };
@@ -918,6 +1776,23 @@ fn overlay_scip(
         .metadata
         .and_then(|m| m.tool_info)
         .map(|t| format!("{} {}", t.name, t.version)))
+}
+
+fn remove_scip_edges(
+    shards_dir: &Path,
+    files: &BTreeMap<String, String>,
+) -> Result<(), AtlasError> {
+    for rel in files.keys() {
+        let mut shard = read_shard(shards_dir, rel)?;
+        let old_len = shard.edges.len();
+        shard
+            .edges
+            .retain(|edge| edge.provenance != Provenance::Scip);
+        if shard.edges.len() != old_len {
+            write_shard(shards_dir, &shard)?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -957,11 +1832,231 @@ mod tests {
         shards
             .iter()
             .flat_map(|s| s.nodes.iter())
-            .find(|n| n.id == id)
+            .find(|node| node.id == id || node.symbol == id)
     }
 
     fn all_edges(shards: &[Shard]) -> Vec<Edge> {
         shards.iter().flat_map(|s| s.edges.clone()).collect()
+    }
+
+    #[test]
+    fn test_atlas_uses_cargo_workspace_targets_for_symbol_paths() {
+        let base = temp_dir("atlas-cargo-workspace");
+        let code = base.join("code");
+        let graph = base.join("graph");
+        fs::create_dir_all(code.join("crates/a-b/src")).unwrap();
+        fs::create_dir_all(code.join("crates/a-b/src/nested")).unwrap();
+        fs::create_dir_all(code.join("crates/a-b/fuzz/fuzz_targets")).unwrap();
+        fs::create_dir_all(code.join("crates/a-b/fuzz/fuzz_targets/shared")).unwrap();
+        fs::create_dir_all(code.join("tools/helper/src")).unwrap();
+        fs::write(
+            code.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/a-b\", \"tools/helper\"]\nresolver = \"2\"\n",
+        )
+        .unwrap();
+        fs::write(
+            code.join("crates/a-b/Cargo.toml"),
+            "[package]\nname = \"a-b\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .unwrap();
+        fs::write(
+            code.join("crates/a-b/src/lib.rs"),
+            "mod find_protoc;\n#[path = \"nested/actual.rs\"]\npub mod public_api;\npub fn root() {}\n",
+        )
+        .unwrap();
+        fs::write(
+            code.join("crates/a-b/src/nested/actual.rs"),
+            "pub fn api() {}\n",
+        )
+        .unwrap();
+        fs::write(
+            code.join("crates/a-b/src/find_protoc.rs"),
+            "pub fn find_protoc() {}\n",
+        )
+        .unwrap();
+        fs::write(
+            code.join("crates/a-b/fuzz/Cargo.toml"),
+            "[package]\nname = \"a-b-fuzz\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\nmembers = [\".\"]\n\n[[bin]]\nname = \"render_all\"\npath = \"fuzz_targets/render_all.rs\"\n",
+        )
+        .unwrap();
+        fs::write(
+            code.join("crates/a-b/fuzz/fuzz_targets/render_all.rs"),
+            "#[path = \"shared/helper.rs\"]\nmod helper;\npub fn fuzz_one() {}\nfn main() {}\n",
+        )
+        .unwrap();
+        fs::write(
+            code.join("crates/a-b/fuzz/fuzz_targets/shared/helper.rs"),
+            "pub fn assist() {}\n",
+        )
+        .unwrap();
+        fs::write(
+            code.join("tools/helper/Cargo.toml"),
+            "[package]\nname = \"helper\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .unwrap();
+        fs::write(code.join("tools/helper/src/lib.rs"), "pub struct Tool;\n").unwrap();
+
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let (meta, shards) = load_graph(&graph).unwrap();
+        assert_eq!(meta.packages, vec!["a_b", "helper", "render_all"]);
+        assert!(node(&shards, "a_b::find_protoc::find_protoc").is_some());
+        assert!(node(&shards, "a_b::public_api::api").is_some());
+        assert!(node(&shards, "a_b::nested::actual::api").is_none());
+        assert!(node(&shards, "helper::Tool").is_some());
+        assert!(node(&shards, "render_all::fuzz_one").is_some());
+        assert!(node(&shards, "render_all::helper::assist").is_some());
+        assert!(
+            shards
+                .iter()
+                .flat_map(|shard| &shard.nodes)
+                .all(|node| !node.id.contains("::crates::") && !node.id.contains("::src::"))
+        );
+        fs::remove_dir_all(base).ok();
+    }
+
+    #[test]
+    fn test_atlas_declaration_ids_are_unique_and_stable_for_impl_variants() {
+        let (code, graph) = copy_fixture("atlas-unique-impl-ids");
+        fs::write(
+            code.join("src/variants.rs"),
+            r#"
+pub trait Receiver {}
+pub struct Gateway<T>(T);
+impl<T: Clone> Receiver for Gateway<T> {}
+impl<T: Copy> Receiver for Gateway<T> {}
+#[cfg(unix)]
+impl<T: Send> Receiver for Gateway<T> {}
+impl<T> Gateway<T> { fn first(&self) {} }
+impl<T> Gateway<T> { fn second(&self) {} }
+"#,
+        )
+        .unwrap();
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let (_, shards) = load_graph(&graph).unwrap();
+        let declarations: Vec<&Node> = shards
+            .iter()
+            .flat_map(|shard| &shard.nodes)
+            .filter(|node| node.kind == NodeKind::Impl && node.file.ends_with("variants.rs"))
+            .collect();
+        assert_eq!(declarations.len(), 5);
+        assert_eq!(
+            declarations
+                .iter()
+                .map(|node| node.id.as_str())
+                .collect::<BTreeSet<_>>()
+                .len(),
+            5
+        );
+        assert!(declarations.iter().all(|node| node.id.contains('#')));
+        assert!(declarations.iter().any(|node| node.id.ends_with("~2")));
+
+        let first_ids: BTreeSet<String> = declarations.iter().map(|node| node.id.clone()).collect();
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let (_, shards) = load_graph(&graph).unwrap();
+        let second_ids: BTreeSet<String> = shards
+            .iter()
+            .flat_map(|shard| &shard.nodes)
+            .filter(|node| node.kind == NodeKind::Impl && node.file.ends_with("variants.rs"))
+            .map(|node| node.id.clone())
+            .collect();
+        assert_eq!(first_ids, second_ids);
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_cfg_module_identity_is_inherited_by_children() {
+        let (code, graph) = copy_fixture("atlas-cfg-modules");
+        fs::write(
+            code.join("src/platform.rs"),
+            r#"
+#[cfg(target_os = "linux")]
+mod imp { pub fn sample() {} }
+#[cfg(target_os = "macos")]
+mod imp { pub fn sample() {} }
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+mod imp { pub fn sample() {} }
+"#,
+        )
+        .unwrap();
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let (_, shards) = load_graph(&graph).unwrap();
+        for symbol in [
+            "atlas_basic::platform::imp",
+            "atlas_basic::platform::imp::sample",
+        ] {
+            let ids: BTreeSet<&str> = shards
+                .iter()
+                .flat_map(|shard| &shard.nodes)
+                .filter(|node| node.symbol == symbol)
+                .map(|node| node.id.as_str())
+                .collect();
+            assert_eq!(ids.len(), 3, "{symbol}: {ids:?}");
+        }
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_signature_comes_from_ast_and_doc_is_separate() {
+        let (code, graph) = copy_fixture("atlas-ast-signature");
+        fs::write(
+            code.join("src/documented.rs"),
+            r#"
+/// Finds the configured compiler.
+/// More details are deliberately separate.
+#[cfg(any(unix, windows))]
+#[inline]
+pub fn find_protoc<T: AsRef<str>>(name: T) -> Option<String>
+where
+    T: Clone,
+{
+    Some(name.as_ref().to_owned())
+}
+"#,
+        )
+        .unwrap();
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let (_, shards) = load_graph(&graph).unwrap();
+        let function = node(&shards, "atlas_basic::documented::find_protoc").unwrap();
+        assert!(function.signature.starts_with("pub fn find_protoc"));
+        assert!(function.signature.contains("where T : Clone"));
+        assert!(!function.signature.contains("///"));
+        assert!(!function.signature.contains("#["));
+        assert_eq!(
+            function.doc.as_deref(),
+            Some("Finds the configured compiler.")
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_marks_unresolved_and_external_edge_targets() {
+        let (code, graph) = copy_fixture("atlas-edge-resolution");
+        fs::write(
+            code.join("src/targets.rs"),
+            r#"
+pub struct Local;
+impl MissingTrait for Local {}
+impl std::fmt::Display for Local {
+    fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { todo!() }
+}
+"#,
+        )
+        .unwrap();
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let (_, shards) = load_graph(&graph).unwrap();
+        let edges = all_edges(&shards);
+        assert!(edges.iter().any(|edge| {
+            edge.kind == EdgeKind::ImplsTrait
+                && edge.target_text.as_deref() == Some("MissingTrait")
+                && edge.to == "MissingTrait"
+                && edge.resolution == EdgeResolution::Unresolved
+        }));
+        assert!(edges.iter().any(|edge| {
+            edge.kind == EdgeKind::ImplsTrait
+                && edge.target_text.as_deref() == Some("std::fmt::Display")
+                && edge.resolution == EdgeResolution::External
+        }));
+        fs::remove_dir_all(code.parent().unwrap()).ok();
     }
 
     #[test]
@@ -984,8 +2079,8 @@ mod tests {
         assert!(store.line_start > 0 && store.line_end >= store.line_start);
         assert_eq!(store.visibility, "pub");
 
-        assert!(node(&shards, "atlas_basic").is_some(), "crate node");
-        assert!(node(&shards, "atlas_basic::store").is_some(), "module node");
+        let crate_node = node(&shards, "atlas_basic").unwrap();
+        let store_module = node(&shards, "atlas_basic::store").unwrap();
         assert!(node(&shards, "atlas_basic::store::Kind").is_some());
         assert!(node(&shards, "atlas_basic::store::Store").is_some());
         assert!(node(&shards, "atlas_basic::store::LIMIT").is_some());
@@ -995,12 +2090,12 @@ mod tests {
 
         let edges = all_edges(&shards);
         assert!(edges.iter().any(|e| e.kind == EdgeKind::Contains
-            && e.from == "atlas_basic"
-            && e.to == "atlas_basic::store"
+            && e.from == crate_node.id
+            && e.to == store_module.id
             && e.provenance == Provenance::Syn));
         assert!(edges.iter().any(|e| e.kind == EdgeKind::Contains
-            && e.from == "atlas_basic::store"
-            && e.to == "atlas_basic::store::MemStore"));
+            && e.from == store_module.id
+            && e.to == store.id));
         fs::remove_dir_all(code.parent().unwrap()).ok();
     }
 
@@ -1015,13 +2110,17 @@ mod tests {
             .flat_map(|s| s.nodes.iter())
             .find(|n| n.kind == NodeKind::Impl)
             .unwrap();
+        let store_trait = node(&shards, "atlas_basic::store::Store").unwrap();
+        let mem_store = node(&shards, "atlas_basic::store::MemStore").unwrap();
         assert!(edges.iter().any(|e| e.kind == EdgeKind::ImplsTrait
             && e.from == impl_node.id
-            && e.to == "atlas_basic::store::Store"
+            && e.to == store_trait.id
+            && e.resolution == EdgeResolution::Resolved
             && e.provenance == Provenance::Syn));
         assert!(edges.iter().any(|e| e.kind == EdgeKind::ImplFor
             && e.from == impl_node.id
-            && e.to == "atlas_basic::store::MemStore"
+            && e.to == mem_store.id
+            && e.resolution == EdgeResolution::Resolved
             && e.provenance == Provenance::Syn));
         fs::remove_dir_all(code.parent().unwrap()).ok();
     }
@@ -1082,6 +2181,29 @@ mod tests {
     }
 
     #[test]
+    fn test_atlas_rebuilds_unchanged_file_when_module_path_changes() {
+        let (code, graph) = copy_fixture("atlas-incremental-module-layout");
+        let lib = code.join("src/lib.rs");
+        let mut source = fs::read_to_string(&lib).unwrap();
+        source.push_str("\nmod actual;\n");
+        fs::write(&lib, &source).unwrap();
+        fs::write(code.join("src/actual.rs"), "pub fn endpoint() {}\n").unwrap();
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+
+        let source = source.replace("mod actual;", "#[path = \"actual.rs\"]\nmod renamed;");
+        fs::write(&lib, source).unwrap();
+        let report = build(&code, &graph, &BuildOptions::default()).unwrap();
+        assert_eq!(
+            report.rebuilt,
+            vec!["src/actual.rs".to_string(), "src/lib.rs".to_string()]
+        );
+        let (_, shards) = load_graph(&graph).unwrap();
+        assert!(node(&shards, "atlas_basic::renamed::endpoint").is_some());
+        assert!(node(&shards, "atlas_basic::actual::endpoint").is_none());
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
     fn test_atlas_frozen_query_reports_stale_warning() {
         let (code, graph) = copy_fixture("atlas-frozen");
         build(&code, &graph, &BuildOptions::default()).unwrap();
@@ -1129,10 +2251,8 @@ mod tests {
         assert!(result.node.signature.contains("MemStore"));
         assert!(result.stale.is_empty());
         assert!(
-            result
-                .edges_in
-                .iter()
-                .any(|e| e.kind == EdgeKind::Contains && e.from == "atlas_basic::store")
+            result.edges_in.iter().any(|e| e.kind == EdgeKind::Contains
+                && e.from.starts_with("atlas_basic::store#module-"))
         );
         fs::remove_dir_all(code.parent().unwrap()).ok();
     }
@@ -1206,8 +2326,10 @@ mod tests {
         assert!(
             edges.iter().any(|e| e.kind == EdgeKind::References
                 && e.provenance == Provenance::Scip
-                && e.from == "atlas_basic::service::run"
-                && e.to == "atlas_basic::store::MemStore"),
+                && node(&shards, "atlas_basic::service::run")
+                    .is_some_and(|node| e.from == node.id)
+                && node(&shards, "atlas_basic::store::MemStore")
+                    .is_some_and(|node| e.to == node.id)),
             "cross-file scip reference expected: {edges:?}"
         );
         fs::remove_dir_all(code.parent().unwrap()).ok();
@@ -1224,6 +2346,38 @@ mod tests {
             all_edges(&shards)
                 .iter()
                 .all(|e| e.provenance == Provenance::Syn)
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_build_without_scip_removes_previous_overlay() {
+        let (code, graph) = copy_fixture("atlas-scip-remove-overlay");
+        build(
+            &code,
+            &graph,
+            &BuildOptions {
+                full: false,
+                scip_index: Some(scip_fixture()),
+            },
+        )
+        .unwrap();
+        let (_, shards) = load_graph(&graph).unwrap();
+        assert!(
+            all_edges(&shards)
+                .iter()
+                .any(|edge| edge.provenance == Provenance::Scip)
+        );
+
+        let report = build(&code, &graph, &BuildOptions::default()).unwrap();
+        assert!(report.rebuilt.is_empty());
+        assert!(!report.capability.scip);
+        let (meta, shards) = load_graph(&graph).unwrap();
+        assert!(!meta.capability.scip);
+        assert!(
+            all_edges(&shards)
+                .iter()
+                .all(|edge| edge.provenance != Provenance::Scip)
         );
         fs::remove_dir_all(code.parent().unwrap()).ok();
     }
