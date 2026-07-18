@@ -135,10 +135,17 @@
 
 ### P2-1 SCIP 生成流水线
 - 新增 `atlas scip-gen`（或 build 内置）：检测 `rust-analyzer`，对 code_root 跑
-  `rust-analyzer scip .` 产 `index.scip`（protobuf）或 JSON；缓存到 graph_dir、
-  按内容哈希增量。
+  `rust-analyzer scip .` 产 `index.scip`；缓存到 graph_dir、按内容哈希增量。
+- **格式桥（必需，非可选）**：实测 `rust-analyzer scip` **只出 protobuf**（无 JSON
+  输出选项），而当前 `overlay_scip` 用 `serde_json` 读 JSON——直接喂 protobuf 报
+  `atlas-scip: stream did not contain valid UTF-8`。所以必须补一层 protobuf→JSON：
+  要么接 `scip print --json`（加外部工具依赖），要么让 atlas 直接读 protobuf（加
+  `scip` protobuf crate，更自洽）。
 - 优雅降级：无 `rust-analyzer` / 项目不可编译 → 明确 warning + 退回纯 syn，**不报错**。
 - 文档化前置：需可编译项目、匹配的 toolchain、proc-macro server。
+- **可行性已验证**（2-crate 复现）：`impl crate::Trait`（限定 re-export 路径，syn 标
+  Unresolved）被 SCIP 链到 canonical 定义符号 `…inner/Trait#`——证明 SCIP 能补 §9 的
+  re-export 缺口。全量 grok-build 较重（分钟级 + 内存），属 opt-in。
 
 ### P2-2 扩展 `overlay_scip` 消费"关系"而非仅 occurrence
 - 当前 `overlay_scip` 只读 `symbol_roles`（def/ref）产 `References`。**扩展**为：
