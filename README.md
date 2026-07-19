@@ -554,6 +554,7 @@ agent-spec wiki check --code . --wiki .agent-spec/wiki
 agent-spec atlas build --code .          # Rust project graph: build/refresh
 agent-spec atlas query <symbol> --code . # query structure instead of grepping
 agent-spec atlas check --code .          # staleness gate (non-zero when stale)
+agent-spec atlas scip-gen --code .       # optional: rust-analyzer SCIP index for the semantic overlay (Calls/UsesType)
 agent-spec wiki meta update --code . --wiki .agent-spec/wiki
 ```
 
@@ -659,9 +660,10 @@ If the PRD or issue is unstructured prose, use the `agent-spec-intent-compiler` 
 
 ```bash
 agent-spec requirements import --from docs/prd.md --out knowledge/requirements
-agent-spec requirements import --from requirements.yaml --out knowledge/requirements
+agent-spec requirements import --from requirements.yaml --out knowledge/requirements   # v1.1 and ARC-native shapes auto-detected
 agent-spec requirements transition REQ-101 --to accepted   # human governance action
 agent-spec requirements export --out requirements.yaml     # derived YAML projection (--check gates drift)
+agent-spec requirements export --out requirements.yaml --dialect arc-native   # reference-compiler-loadable single-root tree
 agent-spec lint-knowledge --knowledge knowledge --gate
 agent-spec requirements graph --knowledge knowledge --format json --gate
 agent-spec requirements work-units --knowledge knowledge --out .agent-spec/work_units.json

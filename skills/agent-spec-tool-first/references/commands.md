@@ -419,8 +419,17 @@ for GitHub Code Scanning. `README.md` and `*-template.md` are exempt
 
 ```bash
 agent-spec requirements import \
-  --from <PRD_OR_ISSUE_MD> \
+  --from <PRD_OR_ISSUE_MD_OR_YAML> \
   [--out knowledge/requirements] \
+  [--check]
+
+agent-spec requirements export \
+  [--knowledge knowledge] \
+  --out requirements.yaml \
+  [--dialect v1|arc-native] \
+  [--root-name Requirements] \
+  [--id REQ-1 ...] \
+  [--provenance manifest.json] \
   [--check]
 
 agent-spec requirements graph \
@@ -557,7 +566,7 @@ estimate: 1d
 - Both fields are optional; specs without them still work normally
 - Used by `agent-spec graph` to generate dependency visualization and critical path
 
-## Six Verdicts
+## Five Verdicts
 
 | Verdict | Meaning | Action |
 |---------|---------|--------|
@@ -662,6 +671,8 @@ agent-spec archive \
   [--dry-run] \
   [--check]
 ```
+
+`import` accepts marked Markdown blocks and YAML: the v1.1 exchange dialect (`requirements:` list) and the reference compiler's ARC-native shape (single-root tree with `name`/`description`/`steps`, `root:`/`requirement:` wrapper tolerance, dotted ids preserved via `source-id:` annotations) are auto-detected. `export` projects confirmed requirements back out; `--dialect arc-native` emits the reference-loadable single-root tree with dotted-id restoration, and `--check` gates drift for both dialects.
 
 `plan --gate` fails on parse errors and Error-level plan diagnostics such as dangling requirement dependencies, requirement cycles, and ready requirements without satisfying specs.
 
