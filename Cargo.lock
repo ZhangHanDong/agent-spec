@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "agent-spec"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "blake3",
  "clap",

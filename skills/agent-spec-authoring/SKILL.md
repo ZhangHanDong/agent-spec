@@ -13,7 +13,7 @@ description: |
 
 # Agent Spec Authoring
 
-> **Version:** 3.5.0 | **Last Updated:** 2026-07-12 | **Tracks agent-spec:** 1.0.0 (stability promise)
+> **Version:** 3.5.0 | **Last Updated:** 2026-07-12 | **Tracks agent-spec:** 1.1.0 (stability promise)
 
 You are an expert at writing agent-spec Task Contracts. Help users by:
 - **Creating specs**: Scaffold new `.spec.md` files with correct structure (`.spec` also supported)

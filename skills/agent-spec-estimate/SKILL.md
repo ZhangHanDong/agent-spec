@@ -11,7 +11,7 @@ description: |
 
 # Agent Spec Estimate
 
-> **Version:** 1.3.0 | **Last Updated:** 2026-07-12 | **Tracks agent-spec:** 1.0.0 (stability promise)
+> **Version:** 1.3.0 | **Last Updated:** 2026-07-12 | **Tracks agent-spec:** 1.1.0 (stability promise)
 
 You are an expert at estimating AI agent work effort from structured Task Contracts. Help users by:
 - **Estimating specs**: Read a `.spec`/`.spec.md` file and produce a round-based effort estimate

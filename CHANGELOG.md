@@ -4,7 +4,12 @@ All notable changes to `agent-spec` are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.1.0] - 2026-07-19
+
+The **interop deepening** release: compiled requirements now flow both ways
+with the reference compiler's native format, the code graph gains an
+optional semantic layer from rust-analyzer, and the 1.0 book ships. All
+changes are additive — the 1.0 compatibility promise holds untouched.
 
 ### Added
 

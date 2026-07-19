@@ -72,7 +72,7 @@ requirements:
 文件，任何不带标记的既有文档一律拒绝覆盖（没有强制开关——手写文档的所有权
 不容侵犯）。
 
-### ARC 原生形状（1.0.1+）
+### ARC 原生形状（1.1.0+）
 
 参照编译器（ARC）的真实输入是**单根树**：顶层就是根节点字段、`name:` 而非
 `title:`、场景是 `steps: [{keyword, content}]`、ATOMIC 用 `description:` 携带
