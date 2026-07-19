@@ -399,10 +399,79 @@ mod tests {
         )
         .unwrap();
 
+        let before_refresh = crate::status(&code, &graph).unwrap();
+        assert_eq!(before_refresh.syn.state, LayerState::Stale);
+        assert_eq!(before_refresh.scip.state, LayerState::Stale);
+
         impls(&code, &graph, "Store", &QueryOptions::default()).unwrap();
         let report = crate::status(&code, &graph).unwrap();
         assert_eq!(report.syn.state, LayerState::Fresh);
         assert_eq!(report.scip.state, LayerState::Stale);
+        assert!(
+            report
+                .scip
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.contains("source-set fingerprint mismatch"))
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_status_refresh_retains_explicit_scip_index_fingerprint() {
+        let (code, graph) = fixture("atlas-status-refresh-scip-index-authority");
+        let index = copied_scip_index(&code);
+        build(
+            &code,
+            &graph,
+            &BuildOptions {
+                full: false,
+                scip_index: Some(index.clone()),
+            },
+        )
+        .unwrap();
+        let explicit = crate::status(&code, &graph).unwrap();
+        let explicit_index_fingerprint = explicit.scip.recorded_fingerprint.unwrap();
+        let explicit_source_fingerprint = crate::load_graph(&graph)
+            .unwrap()
+            .0
+            .capability
+            .scip_source_fingerprint
+            .unwrap();
+
+        let mut changed_index: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&index).unwrap()).unwrap();
+        changed_index["metadata"]["tool_info"]["version"] =
+            serde_json::json!("2026-07-20-authority-regression");
+        fs::write(&index, serde_json::to_vec_pretty(&changed_index).unwrap()).unwrap();
+        let service = code.join("src/service.rs");
+        fs::write(
+            &service,
+            format!("{}\n// changed\n", fs::read_to_string(&service).unwrap()),
+        )
+        .unwrap();
+
+        impls(&code, &graph, "Store", &QueryOptions::default()).unwrap();
+
+        let persisted = crate::load_graph(&graph).unwrap().0.capability;
+        assert_eq!(
+            persisted.scip_fingerprint.as_deref(),
+            Some(explicit_index_fingerprint.as_str())
+        );
+        assert_eq!(
+            persisted.scip_source_fingerprint.as_deref(),
+            Some(explicit_source_fingerprint.as_str())
+        );
+        let report = crate::status(&code, &graph).unwrap();
+        assert_eq!(report.syn.state, LayerState::Fresh);
+        assert_eq!(report.scip.state, LayerState::Stale);
+        assert!(
+            report
+                .scip
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.contains("index fingerprint mismatch"))
+        );
         assert!(
             report
                 .scip

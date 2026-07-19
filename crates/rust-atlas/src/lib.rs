@@ -347,7 +347,7 @@ fn build_with_meta(
     graph_dir: &Path,
     opts: &BuildOptions,
     known_meta: Option<Meta>,
-    retain_scip_source_fingerprint: bool,
+    retain_scip_authority_fingerprints: bool,
 ) -> Result<BuildReport, AtlasError> {
     // `cargo metadata` reports absolute, canonical paths; canonicalize the root
     // so the file walk and layout share one path space (otherwise `--code .`
@@ -367,6 +367,9 @@ fn build_with_meta(
     let retained_scip_source_fingerprint = old_meta
         .as_ref()
         .and_then(|meta| meta.capability.scip_source_fingerprint.clone());
+    let retained_scip_fingerprint = old_meta
+        .as_ref()
+        .and_then(|meta| meta.capability.scip_fingerprint.clone());
 
     let mut files = BTreeMap::new();
     let mut rebuilt = Vec::new();
@@ -420,10 +423,15 @@ fn build_with_meta(
         // re-overlay after edits instead of silently dropping the semantic layer.
         let abs = std::fs::canonicalize(index_path).unwrap_or_else(|_| index_path.clone());
         capability.scip_index = Some(abs.to_string_lossy().into_owned());
-        capability.scip_fingerprint = std::fs::read(index_path)
+        let current_scip_fingerprint = std::fs::read(index_path)
             .ok()
             .map(|bytes| blake3::hash(&bytes).to_hex().to_string());
-        capability.scip_source_fingerprint = if retain_scip_source_fingerprint {
+        capability.scip_fingerprint = if retain_scip_authority_fingerprints {
+            retained_scip_fingerprint
+        } else {
+            current_scip_fingerprint
+        };
+        capability.scip_source_fingerprint = if retain_scip_authority_fingerprints {
             retained_scip_source_fingerprint
         } else {
             Some(status::source_fingerprint(&files)?)
