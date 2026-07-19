@@ -938,6 +938,120 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn test_atlas_eval_opt_in_runner_rejects_invalid_run_shapes() {
+        use std::os::unix::fs::PermissionsExt;
+
+        if !std::process::Command::new("jq")
+            .arg("--version")
+            .output()
+            .is_ok_and(|output| output.status.success())
+        {
+            return;
+        }
+
+        let dir = temp_dir("atlas-eval-runner-invalid-runs");
+        let agent = dir.join("fake-agent.sh");
+        let started = dir.join("agent-started");
+        std::fs::write(
+            &agent,
+            "#!/usr/bin/env bash\nprintf started >\"$ATLAS_EVAL_STARTED\"\n",
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&agent).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&agent, permissions).unwrap();
+
+        let valid = serde_json::to_value(compile_plan(&valid_corpus(3)).unwrap()).unwrap();
+        let mut null_run = valid.clone();
+        null_run["runs"][0] = serde_json::Value::Null;
+        let mut unknown_field = valid.clone();
+        unknown_field["runs"][0]
+            .as_object_mut()
+            .unwrap()
+            .insert("unexpected".to_string(), serde_json::json!(true));
+        let mut missing_field = valid.clone();
+        missing_field["runs"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("prompt");
+        let mut empty_string = valid.clone();
+        empty_string["runs"][0]["model"] = serde_json::json!("");
+        let mut wrong_arm = valid.clone();
+        wrong_arm["runs"][0]["arm"] = serde_json::json!("control");
+        let mut wrong_permissions = valid.clone();
+        wrong_permissions["runs"][0]["permissions"] = serde_json::json!("admin");
+        let mut wrong_cache = valid.clone();
+        wrong_cache["runs"][0]["cache_condition"] = serde_json::json!("unknown");
+        let mut wrong_type = valid.clone();
+        wrong_type["runs"][0]["case_id"] = serde_json::json!(7);
+        let mut fractional_trial = valid.clone();
+        fractional_trial["runs"][0]["trial"] = serde_json::json!(1.5);
+        let mut zero_trial = valid;
+        zero_trial["runs"][0]["trial"] = serde_json::json!(0);
+
+        let cases = [
+            ("null-run", null_run),
+            ("unknown-field", unknown_field),
+            ("missing-field", missing_field),
+            ("empty-string", empty_string),
+            ("wrong-arm", wrong_arm),
+            ("wrong-permissions", wrong_permissions),
+            ("wrong-cache", wrong_cache),
+            ("wrong-type", wrong_type),
+            ("fractional-trial", fractional_trial),
+            ("zero-trial", zero_trial),
+        ];
+        let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("scripts/atlas-eval/run-opt-in.sh");
+
+        for (name, value) in cases {
+            let plan = dir.join(format!("{name}.json"));
+            let receipts = dir.join(format!("{name}.ndjson"));
+            std::fs::write(&plan, serde_json::to_vec(&value).unwrap()).unwrap();
+            std::fs::remove_file(&started).ok();
+
+            let output = std::process::Command::new(&script)
+                .arg(&plan)
+                .arg(&receipts)
+                .env("ATLAS_EVAL_AGENT_COMMAND", &agent)
+                .env("ATLAS_EVAL_STARTED", &started)
+                .output()
+                .unwrap();
+
+            assert!(!output.status.success(), "{name} run was accepted");
+            assert!(output.stdout.is_empty());
+            assert!(!started.exists(), "{name} run started the agent");
+            assert!(!receipts.exists(), "{name} run produced receipts");
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_atlas_eval_opt_in_runner_rejects_shell_builtin_command() {
+        let dir = temp_dir("atlas-eval-runner-builtin");
+        let plan = dir.join("plan.json");
+        let receipts = dir.join("receipts.ndjson");
+        write_json_atomic(&plan, &compile_plan(&valid_corpus(3)).unwrap()).unwrap();
+
+        let output = std::process::Command::new(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("scripts/atlas-eval/run-opt-in.sh"),
+        )
+        .arg(&plan)
+        .arg(&receipts)
+        .env("ATLAS_EVAL_AGENT_COMMAND", "echo")
+        .output()
+        .unwrap();
+
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        assert!(!receipts.exists(), "shell builtin was launched");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn test_atlas_eval_opt_in_runner_reports_missing_jq() {
         use std::os::unix::fs::PermissionsExt;
 
