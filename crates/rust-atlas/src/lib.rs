@@ -3565,6 +3565,98 @@ impl std::fmt::Display for Local {
     }
 
     #[test]
+    fn test_atlas_impls_matches_suffix_node_id_without_text_fallback() {
+        let (code, graph) = copy_fixture("atlas-impls-suffix-locator-only");
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let (_, original_shards) = load_graph(&graph).unwrap();
+        let target = node(&original_shards, "atlas_basic::store::Store")
+            .cloned()
+            .unwrap();
+        let mut locator_only = all_edges(&original_shards)
+            .into_iter()
+            .find(|edge| edge.kind == EdgeKind::ImplsTrait && edge.to == target.id)
+            .unwrap();
+        locator_only.target_text = None;
+
+        assert!(target.symbol.ends_with("::Store"));
+        assert_ne!(target.symbol, "Store");
+        assert!(!locator_only.to.ends_with("::Store"));
+        rebuild_test_index(&graph, |shards| {
+            for shard in shards.iter_mut() {
+                shard.edges.clear();
+            }
+            shards[0].edges.push(locator_only.clone());
+        });
+
+        let report = impls(&code, &graph, "Store", &QueryOptions::default()).unwrap();
+        assert_eq!(report.symbol, "Store");
+        assert_eq!(report.edges, vec![locator_only]);
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_query_sorts_complete_adjacency_and_is_byte_stable() {
+        let (code, graph) = copy_fixture("atlas-query-adjacency-order");
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let meta = read_meta(&graph).unwrap();
+        let mut index = load_query_index(&graph, &meta).unwrap();
+        let target = index
+            .matching_nodes("atlas_basic::store::MemStore")
+            .into_iter()
+            .next()
+            .cloned()
+            .unwrap();
+        let incoming_z = edge("z-incoming", &target.id, EdgeKind::References);
+        let outgoing_z = edge(&target.id, "z-outgoing", EdgeKind::Calls);
+        let incoming_a = edge("a-incoming", &target.id, EdgeKind::Calls);
+        let outgoing_a = edge(&target.id, "a-outgoing", EdgeKind::UsesType);
+
+        index.edges = vec![
+            incoming_z.clone(),
+            outgoing_z.clone(),
+            incoming_a.clone(),
+            outgoing_a.clone(),
+        ];
+        index.incoming = BTreeMap::from([
+            (target.id.clone(), vec![0, 2]),
+            ("z-outgoing".to_string(), vec![1]),
+            ("a-outgoing".to_string(), vec![3]),
+        ]);
+        index.outgoing = BTreeMap::from([
+            ("z-incoming".to_string(), vec![0]),
+            (target.id.clone(), vec![1, 3]),
+            ("a-incoming".to_string(), vec![2]),
+        ]);
+        let sorted_table: Vec<Edge> = index
+            .edges
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        assert_ne!(index.edges, sorted_table, "fixture table must be unsorted");
+        let index_path = graph.join("query-index.json");
+        write_json_atomic(&index_path, &index).unwrap();
+        let index_bytes = fs::read(&index_path).unwrap();
+
+        let first = query(&code, &graph, &target.id, &QueryOptions::default()).unwrap();
+        let expected_in: Vec<Edge> = BTreeSet::from([incoming_z, incoming_a])
+            .into_iter()
+            .collect();
+        let expected_out: Vec<Edge> = BTreeSet::from([outgoing_z, outgoing_a])
+            .into_iter()
+            .collect();
+        assert_eq!(first.edges_in, expected_in);
+        assert_eq!(first.edges_out, expected_out);
+
+        let first_json = serde_json::to_vec(&first).unwrap();
+        let second = query(&code, &graph, &target.id, &QueryOptions::default()).unwrap();
+        assert_eq!(serde_json::to_vec(&second).unwrap(), first_json);
+        assert_eq!(fs::read(index_path).unwrap(), index_bytes);
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
     fn test_atlas_low_level_queries_propagate_missing_query_index() {
         let (code, graph) = copy_fixture("atlas-low-level-query-index-missing");
         build(&code, &graph, &BuildOptions::default()).unwrap();
