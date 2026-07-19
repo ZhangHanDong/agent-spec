@@ -17,7 +17,7 @@ use std::process::Command;
 use quote::ToTokens;
 use serde::{Deserialize, Serialize};
 
-pub const SCHEMA_VERSION: u32 = 4;
+pub const SCHEMA_VERSION: u32 = 5;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AtlasError {
@@ -87,6 +87,41 @@ pub enum EdgeResolution {
     External,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct EdgeSite {
+    pub file: String,
+    pub line_start: usize,
+    pub column_start: usize,
+    pub line_end: usize,
+    pub column_end: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ExtractorIdentity {
+    pub name: String,
+    pub version: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DispatchKind {
+    Static,
+    Trait,
+    Generic,
+    Closure,
+    FunctionPointer,
+    Channel,
+    Macro,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EdgeConfidence {
+    Exact,
+    BoundedCandidates,
+    Heuristic,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Node {
     pub id: String,
@@ -108,6 +143,18 @@ pub struct Edge {
     pub resolution: EdgeResolution,
     pub kind: EdgeKind,
     pub provenance: Provenance,
+    #[serde(default)]
+    pub site: Option<EdgeSite>,
+    #[serde(default)]
+    pub extractor: Option<ExtractorIdentity>,
+    #[serde(default)]
+    pub dispatch: Option<DispatchKind>,
+    #[serde(default)]
+    pub confidence: Option<EdgeConfidence>,
+    #[serde(default)]
+    pub candidates: Vec<String>,
+    #[serde(default)]
+    pub evidence: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -512,6 +559,20 @@ fn io_err(error: std::io::Error) -> AtlasError {
     AtlasError::Io(error.to_string())
 }
 
+fn syn_extractor() -> ExtractorIdentity {
+    ExtractorIdentity {
+        name: "syn".to_string(),
+        version: None,
+    }
+}
+
+fn scip_extractor(tool: Option<&str>) -> ExtractorIdentity {
+    ExtractorIdentity {
+        name: "rust-analyzer-scip".to_string(),
+        version: tool.map(str::to_string),
+    }
+}
+
 fn read_meta(graph_dir: &Path) -> Result<Meta, AtlasError> {
     let path = graph_dir.join("meta.json");
     let text = std::fs::read_to_string(&path).map_err(|_| AtlasError::MissingGraph {
@@ -617,11 +678,13 @@ fn resolve_syn_edges(
                 Some([id]) => {
                     edge.to = id.clone();
                     edge.resolution = EdgeResolution::Resolved;
+                    edge.confidence = Some(EdgeConfidence::Exact);
                 }
                 _ => match resolve_bare(&target_text) {
                     Some(id) => {
                         edge.to = id;
                         edge.resolution = EdgeResolution::Resolved;
+                        edge.confidence = Some(EdgeConfidence::Exact);
                     }
                     None => {
                         edge.to = target_text.clone();
@@ -633,6 +696,7 @@ fn resolve_syn_edges(
                         } else {
                             EdgeResolution::Unresolved
                         };
+                        edge.confidence = None;
                     }
                 },
             }
@@ -670,6 +734,7 @@ fn validate_graph(shards_dir: &Path, files: &BTreeMap<String, String>) -> Result
         shards.push(shard);
     }
     for shard in &shards {
+        validate_edges(shard.edges.iter())?;
         for edge in &shard.edges {
             if !node_ids.contains(&edge.from) {
                 return Err(AtlasError::Invariant(format!(
@@ -683,6 +748,20 @@ fn validate_graph(shards_dir: &Path, files: &BTreeMap<String, String>) -> Result
                     edge.to, shard.file
                 )));
             }
+        }
+    }
+    Ok(())
+}
+
+fn validate_edges<'a>(edges: impl IntoIterator<Item = &'a Edge>) -> Result<(), AtlasError> {
+    for edge in edges {
+        if edge.confidence == Some(EdgeConfidence::Exact) && edge.candidates.len() > 1 {
+            return Err(AtlasError::Invariant(format!(
+                "edge confidence exact cannot represent {} candidates ({} -> {})",
+                edge.candidates.len(),
+                edge.from,
+                edge.to
+            )));
         }
     }
     Ok(())
@@ -1325,6 +1404,12 @@ impl ExtractCtx<'_> {
             resolution: EdgeResolution::Resolved,
             kind: EdgeKind::Contains,
             provenance: Provenance::Syn,
+            site: None,
+            extractor: Some(syn_extractor()),
+            dispatch: None,
+            confidence: Some(EdgeConfidence::Exact),
+            candidates: Vec::new(),
+            evidence: None,
         });
     }
 }
@@ -1826,6 +1911,12 @@ fn extract_items(
                         resolution: EdgeResolution::Unresolved,
                         kind: EdgeKind::ImplsTrait,
                         provenance: Provenance::Syn,
+                        site: None,
+                        extractor: Some(syn_extractor()),
+                        dispatch: None,
+                        confidence: None,
+                        candidates: Vec::new(),
+                        evidence: None,
                     });
                 }
                 ctx.edges.push(Edge {
@@ -1835,6 +1926,12 @@ fn extract_items(
                     resolution: EdgeResolution::Unresolved,
                     kind: EdgeKind::ImplFor,
                     provenance: Provenance::Syn,
+                    site: None,
+                    extractor: Some(syn_extractor()),
+                    dispatch: None,
+                    confidence: None,
+                    candidates: Vec::new(),
+                    evidence: None,
                 });
                 for ii in &i.items {
                     let (member, kind, span, vis, signature, attrs) = match ii {
@@ -2211,6 +2308,12 @@ fn overlay_scip(
                 resolution: EdgeResolution::Resolved,
                 kind: occ.edge_kind(&model.kinds),
                 provenance: Provenance::Scip,
+                site: None,
+                extractor: Some(scip_extractor(model.tool.as_deref())),
+                dispatch: None,
+                confidence: Some(EdgeConfidence::Exact),
+                candidates: Vec::new(),
+                evidence: None,
             };
             push_edge(&mut shards, &mut changed, &rel, edge);
         }
@@ -2261,6 +2364,12 @@ fn overlay_scip(
                 resolution,
                 kind,
                 provenance: Provenance::Scip,
+                site: None,
+                extractor: Some(scip_extractor(model.tool.as_deref())),
+                dispatch: None,
+                confidence: Some(EdgeConfidence::Exact),
+                candidates: Vec::new(),
+                evidence: None,
             };
             push_edge(&mut shards, &mut changed, &rel, edge);
         }
@@ -2389,6 +2498,33 @@ mod tests {
 
     fn all_edges(shards: &[Shard]) -> Vec<Edge> {
         shards.iter().flat_map(|s| s.edges.clone()).collect()
+    }
+
+    fn edge(from: &str, to: &str, kind: EdgeKind) -> Edge {
+        Edge {
+            from: from.to_string(),
+            to: to.to_string(),
+            target_text: None,
+            resolution: EdgeResolution::Resolved,
+            kind,
+            provenance: Provenance::Syn,
+            site: None,
+            extractor: Some(syn_extractor()),
+            dispatch: None,
+            confidence: Some(EdgeConfidence::Exact),
+            candidates: Vec::new(),
+            evidence: None,
+        }
+    }
+
+    #[test]
+    fn test_atlas_rejects_exact_confidence_with_multiple_candidates() {
+        let mut edge = edge("a", "b", EdgeKind::Calls);
+        edge.confidence = Some(EdgeConfidence::Exact);
+        edge.candidates = vec!["b".into(), "c".into()];
+        let error = validate_edges([&edge]).unwrap_err().to_string();
+        assert!(error.contains("confidence"));
+        assert!(error.contains("2 candidates"));
     }
 
     /// Write a standalone crate (detached `[workspace]`) with the given source
