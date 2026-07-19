@@ -390,7 +390,7 @@ git commit -m "feat(atlas): retain SCIP occurrence evidence"
 
 **Interfaces:**
 - Consumes: validated `Meta` and `Shard` values.
-- Produces: `pub fn rebuild_query_index(graph_dir: &Path, meta: &Meta, shards: &[Shard]) -> Result<QueryIndex, AtlasError>` and `pub fn load_query_index(graph_dir: &Path, meta: &Meta) -> Result<QueryIndex, AtlasError>`.
+- Produces: `pub fn rebuild_query_index(graph_dir: &Path, meta: &Meta, shards: &[Shard]) -> Result<QueryIndex, AtlasError>`, `pub fn load_query_index(graph_dir: &Path, meta: &Meta) -> Result<QueryIndex, AtlasError>`, and indexed node/incoming/outgoing lookups used by `query`, `refs`, and `impls`.
 
 - [ ] **Step 1: Write failing index build and stale tests**
 
@@ -411,6 +411,14 @@ fn test_atlas_search_rejects_graph_fingerprint_mismatch() {
     let error = search(&code, &graph, "Store", &SearchOptions::default()).unwrap_err();
     assert!(error.to_string().contains("atlas-query-index-stale"));
 }
+
+#[test]
+fn test_atlas_query_uses_index_without_scanning_unrelated_shards() {
+    let (code, graph) = build_multi_file_fixture();
+    corrupt_shard(&graph, "src/unrelated.rs");
+    let result = query(&code, &graph, "fixture::target", &QueryOptions::default()).unwrap();
+    assert_eq!(result.node.symbol, "fixture::target");
+}
 ```
 
 - [ ] **Step 2: Run tests and observe missing index**
@@ -421,11 +429,13 @@ Expected: FAIL because `query-index.json` and index APIs do not exist.
 
 - [ ] **Step 3: Implement canonical fingerprint and index tables**
 
-Define `QueryIndex` with `schema_version`, `graph_fingerprint`, sorted node/edge tables, and BTreeMap locators for id, symbol, file, incoming, and outgoing edges. Compute the fingerprint from canonical JSON containing schema, package, roots, capability, and `meta.files`. Write through a same-directory temporary file followed by `rename`.
+Add `graph_fingerprint: String` to `Meta` and define `QueryIndex` with `schema_version`, the same `graph_fingerprint`, sorted node/edge tables, and BTreeMap locators for id, symbol, file, incoming, and outgoing edges. Compute the fingerprint from canonical JSON containing schema, package, roots, capability, and `meta.files`; exclude the fingerprint field itself. A missing index returns `atlas-query-index-missing`, an index schema mismatch returns `atlas-query-index-schema`, and a graph fingerprint mismatch returns `atlas-query-index-stale`; all three name `atlas build` as the repair. Write through a same-directory temporary file followed by `rename`.
 
-- [ ] **Step 4: Integrate index rebuild after graph validation**
+- [ ] **Step 4: Integrate index rebuild and migrate low-level queries**
 
 After `validate_graph`, load the current shards, compute the new meta, atomically write `meta.json`, and then atomically write `query-index.json`. A failed index write returns an error and never leaves a partially serialized index.
+
+Refactor `query`, `refs`, and `impls` to load `Meta` plus `QueryIndex`, resolve node candidates from the id/symbol tables, and fetch adjacency from incoming/outgoing edge locators. They MUST NOT call `load_graph` or read unrelated shard files. Preserve existing result ordering, ambiguity errors, unknown-symbol errors, and stale behavior.
 
 - [ ] **Step 5: Run index and crate tests**
 
@@ -498,7 +508,7 @@ Search {
 }
 ```
 
-MCP schema accepts `query`, optional `limit`, optional `code`, and optional `graph`; it calls the same library API and serializes the same result.
+MCP schema accepts `query` and optional `limit`; it calls the same frozen library API rooted at `McpContext.code` and serializes the same result. The dispatcher recognizes `atlas_search`, but `tools/list` exposes it only when `AGENT_SPEC_MCP_ATLAS_SEARCH=1`. This provides the required MCP surface without changing the default tool list before the E1 Agent A/B gate; tests cover both default-hidden and opt-in-listed states.
 
 - [ ] **Step 5: Verify crate, CLI, and MCP tests**
 
@@ -528,7 +538,7 @@ git commit -m "feat(atlas): add deterministic indexed symbol search"
 
 **Interfaces:**
 - Consumes: canonical code root, graph root, Cargo source set, stored SCIP fingerprint, and `rustc -Vv`.
-- Produces: `GraphIdentity`, `LayerState`, `LayerStatus`, `AtlasStatus`, `pub fn status(code_root: &Path, graph_dir: &Path) -> Result<AtlasStatus, AtlasError>`.
+- Produces: persisted `GraphIdentity`, `LayerState`, `LayerStatus`, `AtlasStatus`, and `pub fn status(code_root: &Path, graph_dir: &Path) -> Result<AtlasStatus, AtlasError>`.
 
 - [ ] **Step 1: Write failing layer and no-git identity tests**
 
@@ -577,13 +587,22 @@ pub struct GraphIdentity {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum LayerState { Fresh, Stale, Unavailable }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LayerStatus {
+    pub state: LayerState,
+    pub recorded_fingerprint: Option<String>,
+    pub current_fingerprint: Option<String>,
+    pub stale_files: Vec<String>,
+    pub diagnostics: Vec<String>,
+}
 ```
 
-Use `git rev-parse --show-toplevel` and `--git-common-dir` when available; canonical code root is the no-git fallback. Capture `rustc -Vv` exactly. Status reports recorded and current identity, mismatch diagnostic, separate layer fingerprints, and syn stale files.
+Persist the build-time identity in `Meta`. This is a required authority field, so bump `SCHEMA_VERSION` from 5 to 6 and reject v5 metadata through the existing minimal-header `atlas-schema-mismatch` path; do not use `serde(default)` to fabricate identity for an old graph. Use `git -C <code-root> rev-parse --show-toplevel` and `--git-common-dir` when available, canonicalize returned paths, and use the canonical code root as the no-git fallback. Capture successful `rustc -Vv` stdout exactly. `AtlasStatus` reports the graph fingerprint, recorded and current identity, an optional worktree-mismatch diagnostic, and separate `syn`, `scip`, and `mir` `LayerStatus` values. All status arrays are deterministically sorted. `status` reads and schema-validates `Meta` before computing current identity so schema mismatch remains the first error.
 
 - [ ] **Step 4: Persist explicit SCIP source-set fingerprint**
 
-On explicit `build --scip`, hash the canonical sorted `meta.files` map and store it with the index fingerprint. An automatic refresh that reuses the old index retains the prior source-set fingerprint so status reports SCIP stale after source edits.
+On explicit `build --scip`, hash canonical JSON for the sorted `meta.files` map and store that source-set fingerprint beside the SCIP index fingerprint. Distinguish this explicit overlay from an automatic refresh: refresh may re-overlay the recorded index so graph edges remain available, but it MUST retain the prior SCIP source-set fingerprint. Status computes the current source-set fingerprint from current source hashes and reports SCIP stale when either the index file fingerprint or source-set fingerprint differs. It reports SCIP unavailable when no explicit overlay exists and MIR unavailable until MIR metadata exists.
 
 - [ ] **Step 5: Run status and crate tests**
 
