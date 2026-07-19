@@ -17,6 +17,11 @@ use std::process::Command;
 use quote::ToTokens;
 use serde::{Deserialize, Serialize};
 
+mod index;
+
+use index::write_json_atomic;
+pub use index::{QueryIndex, canonical_graph_fingerprint, load_query_index, rebuild_query_index};
+
 pub const SCHEMA_VERSION: u32 = 5;
 
 #[derive(Debug, thiserror::Error)]
@@ -40,6 +45,21 @@ pub enum AtlasError {
          the graph was built by a different atlas version — rebuild with `atlas build`"
     )]
     SchemaMismatch { found: u32, expected: u32 },
+    #[error(
+        "atlas-query-index-missing: no query index at {index_path}; \
+         rebuild with `atlas build`"
+    )]
+    QueryIndexMissing { index_path: String },
+    #[error(
+        "atlas-query-index-schema: query index schema v{found} != binary v{expected}; \
+         rebuild with `atlas build`"
+    )]
+    QueryIndexSchema { found: u32, expected: u32 },
+    #[error(
+        "atlas-query-index-stale: query index fingerprint {found} != graph fingerprint {expected}; \
+         rebuild with `atlas build`"
+    )]
+    QueryIndexStale { found: String, expected: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -187,6 +207,8 @@ pub struct Meta {
     pub roots: Vec<String>,
     pub capability: Capability,
     pub files: BTreeMap<String, String>,
+    #[serde(default)]
+    pub graph_fingerprint: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -309,15 +331,22 @@ pub fn build(
     }
     validate_graph(&shards_dir, &files)?;
 
-    let meta = Meta {
+    let mut meta = Meta {
         schema_version: SCHEMA_VERSION,
         package: layout.graph_root.clone(),
         packages: layout.packages.clone(),
         roots: layout.roots.clone(),
         capability: capability.clone(),
         files,
+        graph_fingerprint: String::new(),
     };
-    write_json(&graph_dir.join("meta.json"), &meta)?;
+    meta.graph_fingerprint = canonical_graph_fingerprint(&meta)?;
+    let mut shards = Vec::new();
+    for rel in meta.files.keys() {
+        shards.push(read_shard(&shards_dir, rel)?);
+    }
+    write_json_atomic(&graph_dir.join("meta.json"), &meta)?;
+    rebuild_query_index(graph_dir, &meta, &shards)?;
     Ok(BuildReport {
         rebuilt,
         removed,
