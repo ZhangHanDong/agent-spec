@@ -79,6 +79,13 @@ impl Verifier for TestVerifier {
                         format!("covered by legacy @spec test `{selector_label}`")
                     }
                 }
+            } else if executed_tests == 0 {
+                // cargo exited non-zero before any test ran → build/toolchain
+                // failure, not a disproven claim (verdict is Uncertain).
+                format!(
+                    "could not run `{selector_label}`: cargo exited before any test ran \
+                     (build/toolchain failure)"
+                )
             } else {
                 match binding.source {
                     BindingSource::ExplicitScenarioSelector => {
@@ -211,14 +218,20 @@ fn cargo_test_executed_count(output: &str) -> usize {
 }
 
 fn test_run_verdict(success: bool, executed_tests: usize, review: ReviewMode) -> Verdict {
-    if !success {
-        Verdict::Fail
-    } else if executed_tests == 0 {
-        Verdict::Skip
-    } else if review == ReviewMode::Human {
-        Verdict::PendingReview
-    } else {
-        Verdict::Pass
+    match (success, executed_tests) {
+        // A test built, ran, and failed → a genuinely disproven claim.
+        (false, n) if n > 0 => Verdict::Fail,
+        // Non-success with zero tests executed means cargo never reached a test
+        // — a build/toolchain failure, not a disproven claim. Report Uncertain
+        // so a project that merely fails to build (e.g. a book chapter spec whose
+        // analyzed project doesn't compile in the reviewer's environment) cannot
+        // masquerade as a failed scenario.
+        (false, _) => Verdict::Uncertain,
+        // Built cleanly but the selector matched no tests.
+        (true, 0) => Verdict::Skip,
+        // Human/AI-reviewed scenarios are judged out of band.
+        (true, _) if review == ReviewMode::Human => Verdict::PendingReview,
+        (true, _) => Verdict::Pass,
     }
 }
 
@@ -327,10 +340,20 @@ mod tests {
     }
 
     #[test]
-    fn test_zero_match_cargo_test_is_skip() {
+    fn test_run_verdict_distinguishes_build_from_test_failure() {
         assert_eq!(test_run_verdict(true, 0, ReviewMode::Auto), Verdict::Skip);
         assert_eq!(test_run_verdict(true, 1, ReviewMode::Auto), Verdict::Pass);
-        assert_eq!(test_run_verdict(false, 0, ReviewMode::Auto), Verdict::Fail);
+        assert_eq!(
+            test_run_verdict(true, 1, ReviewMode::Human),
+            Verdict::PendingReview
+        );
+        // Built, ran, and failed → a real failure.
+        assert_eq!(test_run_verdict(false, 2, ReviewMode::Auto), Verdict::Fail);
+        // cargo failed before any test ran (build failure) → Uncertain, not Fail.
+        assert_eq!(
+            test_run_verdict(false, 0, ReviewMode::Auto),
+            Verdict::Uncertain
+        );
     }
 
     #[test]
