@@ -19,9 +19,17 @@ All notable changes to `agent-spec` are documented here. Format follows
   mdbook-mermaid; built at Pages deploy time (never committed) and
   served at `/book/`. English edition is declared follow-up work.
 
-## [Unreleased]
-
-### Added
+- Atlas SCIP semantic overlay (`REQ-INTENT-CODE-LINKER`, Phase 2 of
+  `docs/atlas-roadmap.md`): rust-atlas accepts rust-analyzer's protobuf
+  `index.scip` and layers `Calls` / `UsesType` / `References` edges over
+  the syn baseline — additive `provenance=Scip` edges only, the offline
+  syn layer is never mutated and survives incremental refresh. `ImplsTrait`
+  / `ImplFor` resolve precisely via SCIP symbol descriptors (fixing syn's
+  re-export/cross-crate blind spot). New `agent-spec atlas scip-gen`
+  subcommand invokes rust-analyzer to produce the index. Phase 1 syn
+  hardening ships alongside: bare-name unique-suffix resolution, exclude
+  respect, five new node kinds (`Static`, `Union`, `TraitAlias`,
+  `AssocConst`, `AssocType`), declaration-head signatures.
 
 - ARC-native requirements dialect (`REQ-ARC-NATIVE-DIALECT`): agent-spec
   compiled requirements are now directly consumable as the reference
@@ -36,6 +44,14 @@ All notable changes to `agent-spec` are documented here. Format follows
   round-trip law holds (export → import → export byte-identical, verified
   even on dotted-id corpora). The verbatim reference ticketbooking file is
   a fixture and the parity input-conformance test now binds it.
+
+### Changed
+
+- rust-atlas crate bumped to **0.2.0** (graph `schema_version` 4): node
+  ids now carry `#` disambiguation suffixes and the node-kind vocabulary
+  grew — a breaking format change versus the published 0.1.0, versioned
+  per the 1.0 compatibility promise (atlas `schema_version` gates the
+  format; `### Symbols` bare-name references still resolve).
 
 ### Fixed
 

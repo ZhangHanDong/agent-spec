@@ -2,7 +2,7 @@
 name = "rust-atlas"
 description = "Incrementally invalidated Rust project graph for AI agents: syn-based symbol extraction, per-file shards with blake3 invalidation, optional SCIP reference overlay"
 edition = "2024"
-version = "0.1.0"
+version = "0.2.0"
 license = "MIT"
 repository = "https://github.com/ZhangHanDong/agent-spec"
 

@@ -50,3 +50,14 @@ graph TD
 分片只在源文件 hash 变化时重建——大仓库重索引的成本是一个文件而不是全世界。
 agent-spec 仓库自托管：写作时 85 个源文件全图零 unparsed。MIR 层（rustc 驱动
 的深度事实）是 0.7 弧的 additive 深化，已列入路线图合同。
+
+---
+
+### 版本演化说明
+
+> 本章核心分析基于 rust-atlas 0.1.0。截至 rust-atlas 0.2.0（schema v4），
+> 本章的构建、查询、新鲜度与冻结模式语义不变，有两处 additive 演化：节点 id
+> 带上了 `#` 消歧后缀（裸名引用仍可解析）；语法基线之上新增可选的 SCIP 语义
+> 叠加层——`atlas scip-gen` 调 rust-analyzer 产出 `index.scip`，叠加
+> `Calls`/`UsesType` 等语义边（`provenance=Scip`，syn 基线永不改写）。
+> 路线图见仓库 `docs/atlas-roadmap.md`。
