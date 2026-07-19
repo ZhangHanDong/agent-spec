@@ -625,6 +625,7 @@ git commit -m "feat(atlas): add graph identity and layered freshness"
 - Modify: `src/spec_mcp/tools.rs`
 - Modify: `src/spec_knowledge/code_graph.rs`
 - Modify: `src/spec_verify/atlas_symbols.rs`
+- Modify: `specs/task-atlas-worktree-layered-freshness.spec.md`
 - Test: all modified Rust modules
 
 **Interfaces:**
@@ -647,6 +648,13 @@ fn test_code_bindings_block_on_stale_semantic_layer() {
     assert!(result.unwrap_err().to_string().contains("atlas-stale"));
     assert!(!bindings_path().exists());
 }
+
+#[test]
+fn test_atlas_partial_scip_authority_fails_closed() {
+    let status = status_from_incomplete_scip_metadata();
+    assert_eq!(status.scip.state, LayerState::Stale);
+    assert!(require_authority(&status).unwrap_err().to_string().contains("atlas-stale"));
+}
 ```
 
 - [ ] **Step 2: Run tests and confirm current false-authority behavior**
@@ -666,7 +674,9 @@ Before any automatic refresh or definitive query/index access, compute shared st
 
 Add the same serialized `AtlasStatus` to tree, query, refs, impls, and search results. Keep the existing top-level `stale` arrays for this wave as compatibility mirrors of `status.syn.stale_files`; test that they cannot diverge. A successful non-frozen refresh recomputes status before returning. CLI and MCP wrappers serialize these library results directly, and `atlas status` calls the same library entry point rather than rebuilding a local summary.
 
-Replace provider-local file-hash freshness interpretation with `rust_atlas::status`. The provider fingerprint is blake3 over canonical JSON containing schema version, recorded graph identity, explicit toolchain identity, recorded source-set fingerprint, graph fingerprint, and each available layer's recorded fingerprint. Diagnostics, current worktree, and display ordering are not fingerprint inputs. Atlas provider, binding, and Contract verifier share one authority-gate helper rather than independently interpreting layer states.
+Replace provider-local file-hash freshness interpretation with `rust_atlas::status`. The provider fingerprint is blake3 over canonical JSON containing schema version, recorded graph identity, explicit toolchain identity, recorded source-set fingerprint, graph fingerprint, and each available layer's recorded fingerprint. Diagnostics, current worktree, and display ordering are not fingerprint inputs. Atlas provider, binding, and Contract verifier share one authority-gate helper rather than independently interpreting layer states. A declared SCIP capability with any missing authority field is stale or invalid and MUST NOT be downgraded to unavailable; only an honestly absent capability is unavailable.
+
+Exercise the actual `requirements bind` command with a pre-existing sentinel output file: stale semantic authority must return `atlas-stale` before the write path and leave the sentinel byte-identical. Pure `build_code_bindings` tests do not establish this command-level atomicity contract. Give every material decision in the Task Contract a real selector, including result-status parity, provider fingerprint inputs/exclusions, CLI/MCP parity, stale semantic verifier behavior, and invalid-index preservation.
 
 - [ ] **Step 4: Preserve schema-mismatch precedence**
 
@@ -681,6 +691,8 @@ cargo test -p rust-atlas
 cargo test atlas_symbols -- --nocapture
 cargo test code_bindings -- --nocapture
 cargo test test_mcp_atlas -- --nocapture
+cargo test test_requirements_bind_rejects_stale_semantic_authority_without_writing -- --nocapture
+agent-spec lint specs/task-atlas-worktree-layered-freshness.spec.md --min-score 0.7
 ```
 
 Expected: all tests pass and all result shapes carry the same serialized `AtlasStatus`.
