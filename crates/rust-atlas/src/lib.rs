@@ -2077,11 +2077,38 @@ struct ScipDoc {
     occurrences: Vec<ScipOcc>,
 }
 
+#[derive(Clone, Copy)]
+struct ScipRange {
+    start_line: usize,
+    start_column: usize,
+    end_line: usize,
+    end_column: usize,
+}
+
+impl ScipRange {
+    fn from_values(range: &[u32]) -> Option<Self> {
+        match range {
+            [start_line, start_column, end_column] => Some(Self {
+                start_line: *start_line as usize,
+                start_column: *start_column as usize,
+                end_line: *start_line as usize,
+                end_column: *end_column as usize,
+            }),
+            [start_line, start_column, end_line, end_column] => Some(Self {
+                start_line: *start_line as usize,
+                start_column: *start_column as usize,
+                end_line: *end_line as usize,
+                end_column: *end_column as usize,
+            }),
+            _ => None,
+        }
+    }
+}
+
 struct ScipOcc {
     symbol: String,
     is_definition: bool,
-    /// 0-based start line (`range[0]`).
-    line: usize,
+    range: ScipRange,
 }
 
 impl ScipOcc {
@@ -2122,10 +2149,11 @@ fn load_scip_json(text: &str) -> Result<ScipModel, AtlasError> {
                 .occurrences
                 .into_iter()
                 .filter_map(|occ| {
-                    occ.range.first().map(|line| ScipOcc {
+                    let range = ScipRange::from_values(&occ.range)?;
+                    Some(ScipOcc {
                         symbol: occ.symbol,
                         is_definition: occ.symbol_roles & 1 == 1,
-                        line: *line as usize,
+                        range,
                     })
                 })
                 .collect(),
@@ -2169,10 +2197,15 @@ fn load_scip_protobuf(bytes: &[u8]) -> Result<ScipModel, AtlasError> {
                 .occurrences
                 .iter()
                 .filter_map(|occ| {
-                    occ.range.first().map(|line| ScipOcc {
+                    let range = occ
+                        .range
+                        .iter()
+                        .map(|value| u32::try_from(*value).ok())
+                        .collect::<Option<Vec<_>>>()?;
+                    ScipRange::from_values(&range).map(|range| ScipOcc {
                         symbol: occ.symbol.clone(),
                         is_definition: occ.symbol_roles & 1 == 1,
-                        line: *line as usize,
+                        range,
                     })
                 })
                 .collect(),
@@ -2206,6 +2239,34 @@ fn classify_scip_kind(kind: scip::types::symbol_information::Kind) -> ScipKind {
         | K::TypeParameter => ScipKind::DataType,
         _ => ScipKind::Other,
     }
+}
+
+fn edge_site(file: &str, range: &ScipRange) -> EdgeSite {
+    EdgeSite {
+        file: file.to_string(),
+        line_start: range.start_line + 1,
+        column_start: range.start_column + 1,
+        line_end: range.end_line + 1,
+        column_end: range.end_column + 1,
+    }
+}
+
+fn scip_occurrence_evidence(
+    file: &str,
+    range: &ScipRange,
+    symbol: &str,
+    candidates: usize,
+) -> String {
+    let site = edge_site(file, range);
+    let resolution = if candidates > 1 {
+        format!("multiple candidates ({candidates})")
+    } else {
+        "one target".to_string()
+    };
+    format!(
+        "rust-analyzer-scip occurrence at {}:{}:{}-{}:{} for `{symbol}`: {resolution}",
+        site.file, site.line_start, site.column_start, site.line_end, site.column_end
+    )
 }
 
 /// Overlay semantic edges from a SCIP index (protobuf or JSON) onto the shards.
@@ -2265,16 +2326,16 @@ fn overlay_scip(
     };
 
     // pass 1: definition occurrences → canonical atlas node id
-    let mut defs: BTreeMap<String, String> = BTreeMap::new();
+    let mut defs: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for doc in &model.documents {
         let Some(shard) = shards.get(&doc.relative_path) else {
             continue;
         };
         for occ in &doc.occurrences {
             if occ.is_definition
-                && let Some(node_id) = containing_node(shard, occ.line + 1)
+                && let Some(node_id) = containing_node(shard, occ.range.start_line + 1)
             {
-                defs.insert(occ.symbol.clone(), node_id);
+                defs.entry(occ.symbol.clone()).or_default().insert(node_id);
             }
         }
     }
@@ -2286,34 +2347,56 @@ fn overlay_scip(
             if occ.is_definition {
                 continue;
             }
-            let Some(target) = defs.get(&occ.symbol) else {
-                continue;
-            };
             let from = {
                 let Some(shard) = shards.get(&rel) else {
                     continue;
                 };
-                match containing_node(shard, occ.line + 1) {
+                match containing_node(shard, occ.range.start_line + 1) {
                     Some(from) => from,
                     None => continue,
                 }
             };
-            if from == *target {
+            let (to, resolution, confidence, candidates) = match defs.get(&occ.symbol) {
+                Some(ids) if ids.len() == 1 => {
+                    let Some(target) = ids.iter().next() else {
+                        continue;
+                    };
+                    (
+                        target.clone(),
+                        EdgeResolution::Resolved,
+                        EdgeConfidence::Exact,
+                        Vec::new(),
+                    )
+                }
+                Some(ids) => (
+                    occ.symbol.clone(),
+                    EdgeResolution::Unresolved,
+                    EdgeConfidence::BoundedCandidates,
+                    ids.iter().cloned().collect(),
+                ),
+                None => continue,
+            };
+            if from == to {
                 continue;
             }
             let edge = Edge {
                 from,
-                to: target.clone(),
+                to,
                 target_text: Some(occ.symbol.clone()),
-                resolution: EdgeResolution::Resolved,
+                resolution,
                 kind: occ.edge_kind(&model.kinds),
                 provenance: Provenance::Scip,
-                site: None,
+                site: Some(edge_site(&rel, &occ.range)),
                 extractor: Some(scip_extractor(model.tool.as_deref())),
                 dispatch: None,
-                confidence: Some(EdgeConfidence::Exact),
-                candidates: Vec::new(),
-                evidence: None,
+                confidence: Some(confidence),
+                evidence: Some(scip_occurrence_evidence(
+                    &rel,
+                    &occ.range,
+                    &occ.symbol,
+                    candidates.len(),
+                )),
+                candidates,
             };
             push_edge(&mut shards, &mut changed, &rel, edge);
         }
@@ -2342,7 +2425,7 @@ fn overlay_scip(
             continue;
         };
         for occ in &doc.occurrences {
-            if occ.is_definition || occ.line + 1 != line_start {
+            if occ.is_definition || occ.range.start_line + 1 != line_start {
                 continue;
             }
             let kind = match model.kinds.get(&occ.symbol) {
@@ -2350,9 +2433,30 @@ fn overlay_scip(
                 Some(ScipKind::DataType) => EdgeKind::ImplFor,
                 _ => continue,
             };
-            let (to, resolution) = match defs.get(&occ.symbol) {
-                Some(node_id) => (node_id.clone(), EdgeResolution::Resolved),
-                None => (occ.symbol.clone(), EdgeResolution::External),
+            let (to, resolution, confidence, candidates) = match defs.get(&occ.symbol) {
+                Some(ids) if ids.len() == 1 => {
+                    let Some(node_id) = ids.iter().next() else {
+                        continue;
+                    };
+                    (
+                        node_id.clone(),
+                        EdgeResolution::Resolved,
+                        EdgeConfidence::Exact,
+                        Vec::new(),
+                    )
+                }
+                Some(ids) => (
+                    occ.symbol.clone(),
+                    EdgeResolution::Unresolved,
+                    EdgeConfidence::BoundedCandidates,
+                    ids.iter().cloned().collect(),
+                ),
+                None => (
+                    occ.symbol.clone(),
+                    EdgeResolution::External,
+                    EdgeConfidence::Exact,
+                    Vec::new(),
+                ),
             };
             if to == impl_id {
                 continue;
@@ -2364,12 +2468,17 @@ fn overlay_scip(
                 resolution,
                 kind,
                 provenance: Provenance::Scip,
-                site: None,
+                site: Some(edge_site(&rel, &occ.range)),
                 extractor: Some(scip_extractor(model.tool.as_deref())),
                 dispatch: None,
-                confidence: Some(EdgeConfidence::Exact),
-                candidates: Vec::new(),
-                evidence: None,
+                confidence: Some(confidence),
+                evidence: Some(scip_occurrence_evidence(
+                    &rel,
+                    &occ.range,
+                    &occ.symbol,
+                    candidates.len(),
+                )),
+                candidates,
             };
             push_edge(&mut shards, &mut changed, &rel, edge);
         }
@@ -3387,6 +3496,135 @@ impl std::fmt::Display for Local {
                 .any(|e| e.provenance == Provenance::Scip && e.kind == EdgeKind::References),
             "json overlay should still produce reference edges"
         );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_scip_json_references_preserve_full_occurrence_range() {
+        let (code, graph) = copy_fixture("atlas-scip-json-occurrence-site");
+        build(
+            &code,
+            &graph,
+            &BuildOptions {
+                full: false,
+                scip_index: Some(scip_fixture()),
+            },
+        )
+        .unwrap();
+        let (_, shards) = load_graph(&graph).unwrap();
+        let edge = all_edges(&shards)
+            .into_iter()
+            .find(|edge| {
+                edge.provenance == Provenance::Scip
+                    && edge.kind == EdgeKind::References
+                    && edge.target_text.as_deref()
+                        == Some("rust-analyzer cargo atlas-basic 0.1.0 store/MemStore#")
+            })
+            .unwrap();
+        assert_eq!(
+            edge.site,
+            Some(EdgeSite {
+                file: "src/service.rs".to_string(),
+                line_start: 3,
+                column_start: 20,
+                line_end: 3,
+                column_end: 28,
+            })
+        );
+        assert_eq!(
+            edge.extractor
+                .as_ref()
+                .map(|extractor| extractor.name.as_str()),
+            Some("rust-analyzer-scip")
+        );
+        assert_eq!(edge.confidence, Some(EdgeConfidence::Exact));
+        assert!(
+            edge.evidence
+                .as_deref()
+                .is_some_and(|value| value.contains("occurrence"))
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_scip_calls_preserve_occurrence_site_and_evidence() {
+        let (code, graph) = copy_fixture("atlas-scip-call-occurrence-site");
+        build(
+            &code,
+            &graph,
+            &BuildOptions {
+                full: false,
+                scip_index: Some(scip_protobuf_fixture()),
+            },
+        )
+        .unwrap();
+        let (_, shards) = load_graph(&graph).unwrap();
+        let edge = all_edges(&shards)
+            .into_iter()
+            .find(|edge| edge.provenance == Provenance::Scip && edge.kind == EdgeKind::Calls)
+            .unwrap();
+        let site = edge.site.as_ref().unwrap();
+        assert!(site.line_start >= 1 && site.column_start >= 1);
+        assert!(site.line_end >= site.line_start && site.column_end >= site.column_start);
+        assert_eq!(edge.extractor.as_ref().unwrap().name, "rust-analyzer-scip");
+        assert_eq!(edge.confidence, Some(EdgeConfidence::Exact));
+        assert!(
+            edge.evidence
+                .as_deref()
+                .is_some_and(|value| value.contains("occurrence"))
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_scip_multiple_definition_candidates_are_not_exact() {
+        let (code, graph) = scratch_crate(
+            "atlas_scip_multiple_candidates",
+            &[
+                (
+                    "src/lib.rs",
+                    "pub mod first;\npub mod second;\npub fn caller() { first::shared(); }\n",
+                ),
+                ("src/first.rs", "pub fn shared() {}\n"),
+                ("src/second.rs", "pub fn shared() {}\n"),
+            ],
+        );
+        let index_path = graph.join("multiple-candidates.json");
+        fs::create_dir_all(&graph).unwrap();
+        fs::write(
+            &index_path,
+            r#"{
+  "documents": [
+    {"relative_path":"src/first.rs","occurrences":[{"symbol":"test shared#","symbol_roles":1,"range":[0,7,0,13]}]},
+    {"relative_path":"src/second.rs","occurrences":[{"symbol":"test shared#","symbol_roles":1,"range":[0,7,0,13]}]},
+    {"relative_path":"src/lib.rs","occurrences":[{"symbol":"test shared#","symbol_roles":0,"range":[2,24,2,30]}]}
+  ]
+}"#,
+        )
+        .unwrap();
+        build(
+            &code,
+            &graph,
+            &BuildOptions {
+                full: false,
+                scip_index: Some(index_path),
+            },
+        )
+        .unwrap();
+        let (_, shards) = load_graph(&graph).unwrap();
+        let edge = all_edges(&shards)
+            .into_iter()
+            .find(|edge| {
+                edge.provenance == Provenance::Scip
+                    && edge.target_text.as_deref() == Some("test shared#")
+            })
+            .unwrap();
+        assert_eq!(edge.resolution, EdgeResolution::Unresolved);
+        assert_eq!(edge.confidence, Some(EdgeConfidence::BoundedCandidates));
+        assert_eq!(edge.candidates.len(), 2);
+        assert!(edge.evidence.as_deref().is_some_and(|value| {
+            value.contains("occurrence") && value.contains("multiple candidates")
+        }));
         fs::remove_dir_all(code.parent().unwrap()).ok();
     }
 
