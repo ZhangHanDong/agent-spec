@@ -234,20 +234,30 @@ fn segmented_identifier_match(symbol: &str, query: &str) -> bool {
 fn identifier_segments(value: &str) -> Vec<String> {
     let mut segments = Vec::new();
     let mut current = String::new();
-    let mut previous_lowercase = false;
-    for character in value.chars() {
+    let mut previous = None;
+    let mut characters = value.chars().peekable();
+    while let Some(character) = characters.next() {
         if !character.is_ascii_alphanumeric() {
             if !current.is_empty() {
                 segments.push(std::mem::take(&mut current));
             }
-            previous_lowercase = false;
+            previous = None;
             continue;
         }
-        if character.is_ascii_uppercase() && previous_lowercase && !current.is_empty() {
+        let next = characters.peek().copied();
+        let starts_new_segment = previous.is_some_and(|previous: char| {
+            (previous.is_ascii_lowercase() && character.is_ascii_uppercase())
+                || (previous.is_ascii_alphabetic() && character.is_ascii_digit())
+                || (previous.is_ascii_digit() && character.is_ascii_alphabetic())
+                || (previous.is_ascii_uppercase()
+                    && character.is_ascii_uppercase()
+                    && next.is_some_and(|next| next.is_ascii_lowercase()))
+        });
+        if starts_new_segment && !current.is_empty() {
             segments.push(std::mem::take(&mut current));
         }
         current.push(character.to_ascii_lowercase());
-        previous_lowercase = character.is_ascii_lowercase();
+        previous = Some(character);
     }
     if !current.is_empty() {
         segments.push(current);
@@ -591,6 +601,31 @@ mod tests {
             .collect();
         assert_eq!(result.limit, 5);
         assert_eq!(ids, vec!["symbol-a", "d", "a", "b", "z"]);
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_search_segments_acronyms_and_digit_boundaries() {
+        let (code, graph) = build_fixture("atlas-search-segment-boundaries");
+        write_search_index(
+            &graph,
+            vec![
+                search_node("http", "pkg::HTTPServer", "src/http.rs", 1),
+                search_node("digits", "pkg::Foo2Bar", "src/digits.rs", 2),
+            ],
+        );
+        let options = SearchOptions {
+            limit: 20,
+            frozen: true,
+        };
+
+        let http = search(&code, &graph, "http_server", &options).unwrap();
+        assert_eq!(http.matches.len(), 1);
+        assert_eq!(http.matches[0].match_kind, MatchKind::SegmentedIdentifier);
+
+        let digits = search(&code, &graph, "foo_2_bar", &options).unwrap();
+        assert_eq!(digits.matches.len(), 1);
+        assert_eq!(digits.matches[0].match_kind, MatchKind::SegmentedIdentifier);
         fs::remove_dir_all(code.parent().unwrap()).ok();
     }
 

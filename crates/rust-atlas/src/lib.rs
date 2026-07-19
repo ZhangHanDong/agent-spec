@@ -480,8 +480,7 @@ pub fn query(
     symbol: &str,
     opts: &QueryOptions,
 ) -> Result<QueryResult, AtlasError> {
-    let (meta, stale) = refresh(code_root, graph_dir, opts)?;
-    let index = load_query_index(graph_dir, &meta)?;
+    let (_meta, index, stale) = indexed_query_state(code_root, graph_dir, opts)?;
     let matches = index.matching_nodes(symbol);
     let node = match matches.as_slice() {
         [] => {
@@ -525,14 +524,14 @@ pub fn search(
     opts: &SearchOptions,
 ) -> Result<SearchResult, AtlasError> {
     validate_search_limit(opts.limit)?;
-    let (meta, stale) = refresh(
+    let (meta, index, stale) = indexed_query_state(
         code_root,
         graph_dir,
         &QueryOptions {
             frozen: opts.frozen,
         },
     )?;
-    let mut matches = load_query_index(graph_dir, &meta)?.search_nodes(query);
+    let mut matches = index.search_nodes(query);
     matches.truncate(opts.limit);
     Ok(SearchResult {
         matches,
@@ -616,8 +615,7 @@ pub fn refs(
     symbol: &str,
     opts: &QueryOptions,
 ) -> Result<EdgeReport, AtlasError> {
-    let (meta, stale) = refresh(code_root, graph_dir, opts)?;
-    let index = load_query_index(graph_dir, &meta)?;
+    let (_meta, index, stale) = indexed_query_state(code_root, graph_dir, opts)?;
     let matches = index.matching_nodes(symbol);
     if matches.is_empty() {
         return Err(AtlasError::UnknownSymbol {
@@ -644,8 +642,7 @@ pub fn impls(
     name: &str,
     opts: &QueryOptions,
 ) -> Result<EdgeReport, AtlasError> {
-    let (meta, stale) = refresh(code_root, graph_dir, opts)?;
-    let index = load_query_index(graph_dir, &meta)?;
+    let (_meta, index, stale) = indexed_query_state(code_root, graph_dir, opts)?;
     let matching_ids: BTreeSet<&str> = index
         .nodes_with_symbol_suffix(name)
         .into_iter()
@@ -935,6 +932,30 @@ fn refresh(
     if opts.frozen {
         return Ok((meta, stale));
     }
+    Ok((refresh_stale_graph(code_root, graph_dir, meta)?, Vec::new()))
+}
+
+fn indexed_query_state(
+    code_root: &Path,
+    graph_dir: &Path,
+    opts: &QueryOptions,
+) -> Result<(Meta, QueryIndex, Vec<String>), AtlasError> {
+    let canonical_code_root = std::fs::canonicalize(code_root).map_err(io_err)?;
+    let meta = read_meta(graph_dir)?;
+    let index = load_query_index(graph_dir, &meta)?;
+    let stale = check_with_meta(&canonical_code_root, &meta)?;
+    if stale.is_empty() {
+        return Ok((meta, index, Vec::new()));
+    }
+    if opts.frozen {
+        return Ok((meta, index, stale));
+    }
+    let meta = refresh_stale_graph(code_root, graph_dir, meta)?;
+    let index = load_query_index(graph_dir, &meta)?;
+    Ok((meta, index, Vec::new()))
+}
+
+fn refresh_stale_graph(code_root: &Path, graph_dir: &Path, meta: Meta) -> Result<Meta, AtlasError> {
     // Keep the SCIP layer alive across incremental refreshes: re-overlay the
     // index recorded in the prior build if it still exists. A vanished index
     // falls back to syn (scip edges purged, capability cleared).
@@ -953,7 +974,7 @@ fn refresh(
         },
         Some(meta),
     )?;
-    Ok((read_meta(graph_dir)?, Vec::new()))
+    read_meta(graph_dir)
 }
 
 #[derive(Debug, Deserialize)]
@@ -2712,6 +2733,8 @@ mod tests {
     type QueryIndexMutation = fn(&mut serde_json::Value);
     type QueryIndexErrorMatcher = fn(&AtlasError) -> bool;
     type LowLevelQuery = fn(&Path, &Path, &QueryOptions) -> Result<(), AtlasError>;
+    type QueryIndexSetup = fn(&Path);
+    type QueryIndexCase = (&'static str, QueryIndexSetup, QueryIndexErrorMatcher);
 
     fn fixture_root() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/atlas/basic")
@@ -2761,6 +2784,61 @@ mod tests {
             .into_iter()
             .map(|path| (rel_path(code, &path), fs::read(path).unwrap()))
             .collect()
+    }
+
+    fn file_tree_snapshot(root: &Path) -> BTreeMap<String, Vec<u8>> {
+        fn collect(root: &Path, directory: &Path, files: &mut BTreeMap<String, Vec<u8>>) {
+            let mut entries: Vec<_> = fs::read_dir(directory)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .collect();
+            entries.sort();
+            for path in entries {
+                if path.is_dir() {
+                    collect(root, &path, files);
+                } else {
+                    let relative = path
+                        .strip_prefix(root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned();
+                    files.insert(relative, fs::read(path).unwrap());
+                }
+            }
+        }
+
+        let mut files = BTreeMap::new();
+        collect(root, root, &mut files);
+        files
+    }
+
+    fn rewrite_query_index(path: &Path, update: QueryIndexMutation) {
+        let mut index: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+        update(&mut index);
+        fs::write(path, serde_json::to_vec_pretty(&index).unwrap()).unwrap();
+    }
+
+    fn remove_query_index(path: &Path) {
+        fs::remove_file(path).unwrap();
+    }
+
+    fn downgrade_query_index_schema(path: &Path) {
+        rewrite_query_index(path, |index| {
+            index["schema_version"] = serde_json::json!(SCHEMA_VERSION - 1);
+        });
+    }
+
+    fn stale_query_index_fingerprint(path: &Path) {
+        rewrite_query_index(path, |index| {
+            index["graph_fingerprint"] = serde_json::json!("wrong");
+        });
+    }
+
+    fn corrupt_query_index(path: &Path) {
+        rewrite_query_index(path, |index| {
+            index["nodes"] = serde_json::json!("not a node table");
+        });
     }
 
     fn rebuild_test_index(
@@ -3505,7 +3583,7 @@ impl std::fmt::Display for Local {
     fn test_atlas_low_level_queries_reuse_refresh_meta() {
         let (code, graph) = copy_fixture("atlas-low-level-query-meta-reads");
         build(&code, &graph, &BuildOptions::default()).unwrap();
-        let operations: [(&str, LowLevelQuery); 3] = [
+        let operations: [(&str, LowLevelQuery); 4] = [
             ("query", |code, graph, opts| {
                 query(code, graph, "atlas_basic::store::MemStore", opts).map(|_| ())
             }),
@@ -3514,6 +3592,18 @@ impl std::fmt::Display for Local {
             }),
             ("impls", |code, graph, opts| {
                 impls(code, graph, "Store", opts).map(|_| ())
+            }),
+            ("search", |code, graph, opts| {
+                search(
+                    code,
+                    graph,
+                    "MemStore",
+                    &SearchOptions {
+                        limit: 20,
+                        frozen: opts.frozen,
+                    },
+                )
+                .map(|_| ())
             }),
         ];
 
@@ -3812,6 +3902,69 @@ impl std::fmt::Display for Local {
                 assert!(expected(&error), "{case}: {error}");
             }
             fs::remove_dir_all(code.parent().unwrap()).ok();
+        }
+    }
+
+    #[test]
+    fn test_atlas_stale_non_frozen_queries_validate_index_before_refresh() {
+        let cases: [QueryIndexCase; 4] = [
+            ("missing", remove_query_index, |error| {
+                matches!(error, AtlasError::QueryIndexMissing { .. })
+            }),
+            ("schema", downgrade_query_index_schema, |error| {
+                matches!(error, AtlasError::QueryIndexSchema { .. })
+            }),
+            ("stale", stale_query_index_fingerprint, |error| {
+                matches!(error, AtlasError::QueryIndexStale { .. })
+            }),
+            ("corrupt", corrupt_query_index, |error| {
+                matches!(error, AtlasError::QueryIndexCorrupt { .. })
+            }),
+        ];
+        let operations: [(&str, LowLevelQuery); 4] = [
+            ("query", |code, graph, opts| {
+                query(code, graph, "atlas_basic::store::MemStore", opts).map(|_| ())
+            }),
+            ("refs", |code, graph, opts| {
+                refs(code, graph, "atlas_basic::store::MemStore", opts).map(|_| ())
+            }),
+            ("impls", |code, graph, opts| {
+                impls(code, graph, "Store", opts).map(|_| ())
+            }),
+            ("search", |code, graph, opts| {
+                search(
+                    code,
+                    graph,
+                    "MemStore",
+                    &SearchOptions {
+                        limit: 20,
+                        frozen: opts.frozen,
+                    },
+                )
+                .map(|_| ())
+            }),
+        ];
+
+        for (case, invalidate, expected) in cases {
+            for (operation_name, operation) in operations {
+                let fixture = format!("atlas-stale-index-{case}-{operation_name}");
+                let (code, graph) = copy_fixture(&fixture);
+                build(&code, &graph, &BuildOptions::default()).unwrap();
+
+                let service = code.join("src/service.rs");
+                let mut source = fs::read_to_string(&service).unwrap();
+                source.push_str("\npub fn stale_before_index_validation() {}\n");
+                fs::write(&service, source).unwrap();
+                invalidate(&graph.join("query-index.json"));
+                let source_before = source_tree_snapshot(&code);
+                let graph_before = file_tree_snapshot(&graph);
+
+                let error = operation(&code, &graph, &QueryOptions::default()).unwrap_err();
+                assert!(expected(&error), "{case}/{operation_name}: {error}");
+                assert_eq!(source_tree_snapshot(&code), source_before);
+                assert_eq!(file_tree_snapshot(&graph), graph_before);
+                fs::remove_dir_all(code.parent().unwrap()).ok();
+            }
         }
     }
 

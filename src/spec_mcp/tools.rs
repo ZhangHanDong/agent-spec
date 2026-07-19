@@ -327,10 +327,13 @@ fn atlas_tool(name: &str, args: &Value, ctx: &McpContext) -> Result<Value, Strin
                     value
                         .as_u64()
                         .and_then(|limit| usize::try_from(limit).ok())
-                        .ok_or("atlas_search `limit` must be an unsigned integer")
+                        .ok_or_else(|| {
+                            "atlas-search-limit: `limit` must be an integer in 1..=200".to_string()
+                        })
                 })
                 .transpose()?
                 .unwrap_or(20);
+            rust_atlas::validate_search_limit(limit).map_err(|error| error.to_string())?;
             let result = rust_atlas::search(
                 &ctx.code,
                 &graph_dir,
@@ -430,7 +433,7 @@ mod tests {
     #[test]
     fn test_mcp_atlas_search_dispatches_and_rejects_invalid_limits() {
         let (_root, ctx) = fixture("atlas-search-limit");
-        for limit in [0, 201] {
+        for limit in [json!(0), json!(201), json!(-1), json!(1.5), json!("20")] {
             let error = dispatch(
                 "atlas_search",
                 &json!({ "query": "MemStore", "limit": limit }),
