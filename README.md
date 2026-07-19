@@ -558,6 +558,20 @@ agent-spec atlas scip-gen --code .       # optional: rust-analyzer SCIP index fo
 agent-spec wiki meta update --code . --wiki .agent-spec/wiki
 ```
 
+## Atlas Evaluation
+
+Atlas includes an offline, correctness-first evaluation baseline that compiles
+paired Atlas and baseline runs from a pinned corpus. It does not invoke models
+or the network unless the separate runner is explicitly configured. See
+[Atlas Evaluation Baseline](docs/atlas-evaluation.md) for the corpus, run-plan,
+receipt, summary, and opt-in runner contracts.
+
+```bash
+cargo run -- atlas benchmark validate --corpus benchmarks/atlas/corpus.json
+cargo run -- atlas benchmark plan --corpus benchmarks/atlas/corpus.json --out plan.json
+cargo run -- atlas benchmark summarize --receipts receipts.ndjson --out summary.json
+```
+
 Wiki pages are maintained agent working memory, not KLL truth and not published
 human docs. Track `.agent-spec/wiki/**` in git, but keep `.agent-spec/runs`,
 `.agent-spec/trace`, temporary files, and other runtime state ignored. Each

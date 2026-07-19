@@ -39,6 +39,7 @@ agent-spec:   Write Contract (60%) → Agent codes (0%) → Read explain (30%) �
 | `agent-spec wiki query <text>` | Search tracked live wiki articles | Before opening many source files |
 | `agent-spec wiki check` | Live wiki lint + worktree status gate | Pre-commit / CI for tracked wiki |
 | `agent-spec atlas build/tree/query/refs/impls/check` | Rust project graph: query structure instead of grepping | Before broad source reading; `check` gates staleness |
+| `agent-spec atlas benchmark validate/plan/summarize` | Validate an offline evaluation corpus, compile paired run plans, and summarize graded receipts | Use the correctness-first evaluation baseline; see `docs/atlas-evaluation.md` |
 
 ### KLL Requirements Intake
 

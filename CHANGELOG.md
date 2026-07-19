@@ -4,6 +4,20 @@ All notable changes to `agent-spec` are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Atlas evaluation baseline: versioned offline corpus and paired run-plan
+  compilation, typed correctness receipts, robust per-arm and aggregate median/
+  MAD summaries, and `atlas benchmark validate|plan|summarize`. `plan` and
+  `summarize` honor an atomic `--out` contract. The separate opt-in runner
+  requires `jq` and an explicit single executable in
+  `ATLAS_EVAL_AGENT_COMMAND`; default commands do not invoke a model or network.
+  The harness records evaluation inputs and results but does not claim an
+  executed real-model benchmark or an Atlas performance improvement. See
+  `docs/atlas-evaluation.md`.
+
 ## [1.1.0] - 2026-07-19
 
 The **interop deepening** release: compiled requirements now flow both ways
