@@ -5,7 +5,7 @@ use std::process::Command;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AtlasError, Meta, check_with_meta, io_err, read_persisted_meta, rel_path, walk_rs_files,
+    AtlasError, Meta, PersistedMeta, io_err, read_persisted_meta, rel_path, walk_rs_files,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,9 +51,17 @@ pub struct AtlasStatus {
 /// which keeps schema mismatch as the first actionable failure.
 pub fn status(code_root: &Path, graph_dir: &Path) -> Result<AtlasStatus, AtlasError> {
     let recorded = read_persisted_meta(graph_dir)?;
+    status_with_meta(code_root, graph_dir, &recorded)
+}
+
+pub(crate) fn status_with_meta(
+    code_root: &Path,
+    graph_dir: &Path,
+    recorded: &PersistedMeta,
+) -> Result<AtlasStatus, AtlasError> {
     let current_identity = capture_identity(code_root, graph_dir)?;
     let current_files = source_hashes(code_root)?;
-    let stale_files = check_with_meta(&canonical_path(code_root)?, &recorded.meta)?;
+    let stale_files = stale_files(&recorded.meta.files, &current_files);
     let recorded_source_fingerprint = source_fingerprint(&recorded.meta.files)?;
     let current_source_fingerprint = source_fingerprint(&current_files)?;
 
@@ -72,20 +80,82 @@ pub fn status(code_root: &Path, graph_dir: &Path) -> Result<AtlasStatus, AtlasEr
     let worktree_mismatch = (recorded.identity.worktree_root != current_identity.worktree_root)
         .then(|| {
             format!(
-                "worktree mismatch: graph was built in {}; current worktree is {}",
+                "atlas-worktree-mismatch: graph was built in {}; current worktree is {}",
                 recorded.identity.worktree_root, current_identity.worktree_root
             )
         });
 
     Ok(AtlasStatus {
-        graph_fingerprint: recorded.meta.graph_fingerprint,
-        recorded_identity: recorded.identity,
+        graph_fingerprint: recorded.meta.graph_fingerprint.clone(),
+        recorded_identity: recorded.identity.clone(),
         current_identity,
         worktree_mismatch,
         syn,
         scip,
         mir: unavailable("MIR layer is unavailable"),
     })
+}
+
+/// Reject graph status that cannot provide definitive evidence.
+///
+/// An unavailable semantic layer is not evidence and therefore does not block
+/// syn-only consumers. Any available-but-stale layer does.
+pub fn require_authority(status: &AtlasStatus) -> Result<(), AtlasError> {
+    require_worktree_match(status)?;
+    let mut diagnostics = Vec::new();
+    if status.syn.state == LayerState::Stale {
+        if status.syn.stale_files.is_empty() {
+            diagnostics.push("syn layer is stale".to_string());
+        } else {
+            diagnostics.push(format!(
+                "syn graph lags the code for {}",
+                status.syn.stale_files.join(", ")
+            ));
+        }
+        diagnostics.extend(status.syn.diagnostics.iter().cloned());
+    }
+    for (name, layer) in [("SCIP", &status.scip), ("MIR", &status.mir)] {
+        if layer.state == LayerState::Stale {
+            if layer.diagnostics.is_empty() {
+                diagnostics.push(format!("{name} layer is stale"));
+            } else {
+                diagnostics.extend(layer.diagnostics.iter().cloned());
+            }
+        }
+    }
+    diagnostics.sort();
+    diagnostics.dedup();
+    if diagnostics.is_empty() {
+        Ok(())
+    } else {
+        Err(AtlasError::StaleAuthority {
+            detail: diagnostics.join("; "),
+        })
+    }
+}
+
+pub(crate) fn require_worktree_match(status: &AtlasStatus) -> Result<(), AtlasError> {
+    if status.recorded_identity.worktree_root == status.current_identity.worktree_root {
+        return Ok(());
+    }
+    Err(AtlasError::WorktreeMismatch {
+        recorded: status.recorded_identity.worktree_root.clone(),
+        current: status.current_identity.worktree_root.clone(),
+    })
+}
+
+fn stale_files(
+    recorded: &BTreeMap<String, String>,
+    current: &BTreeMap<String, String>,
+) -> Vec<String> {
+    recorded
+        .keys()
+        .chain(current.keys())
+        .filter(|file| recorded.get(*file) != current.get(*file))
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 pub(crate) fn capture_identity(

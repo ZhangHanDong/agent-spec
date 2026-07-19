@@ -38,10 +38,29 @@ pub trait CodeGraphProvider {
 }
 
 /// Rust Atlas adapter: nodes are syn-extracted facts keyed by canonical
-/// symbol path; the fingerprint hashes the graph's `file -> shard hash` map.
+/// symbol path; the fingerprint hashes canonical recorded authority inputs.
 pub struct AtlasProvider {
     pub code_root: PathBuf,
     pub graph_dir: PathBuf,
+}
+
+#[derive(Serialize)]
+struct AtlasAuthorityFingerprint<'a> {
+    schema_version: u32,
+    recorded_graph_identity: &'a rust_atlas::GraphIdentity,
+    toolchain_identity: &'a str,
+    recorded_source_set_fingerprint: Option<&'a str>,
+    graph_fingerprint: &'a str,
+    layer_recorded_fingerprints: BTreeMap<&'static str, Option<&'a str>>,
+}
+
+impl AtlasProvider {
+    fn authoritative_status(&self) -> Result<rust_atlas::AtlasStatus, String> {
+        let status = rust_atlas::status(&self.code_root, &self.graph_dir)
+            .map_err(|error| error.to_string())?;
+        rust_atlas::require_authority(&status).map_err(|error| error.to_string())?;
+        Ok(status)
+    }
 }
 
 impl CodeGraphProvider for AtlasProvider {
@@ -50,20 +69,30 @@ impl CodeGraphProvider for AtlasProvider {
     }
 
     fn fingerprint(&self) -> Result<String, String> {
-        let (meta, _) = rust_atlas::load_graph(&self.graph_dir).map_err(|e| e.to_string())?;
-        let combined = meta
-            .files
-            .iter()
-            .map(|(file, hash)| format!("{file}:{hash}\n"))
-            .collect::<String>();
-        Ok(blake3_hex(combined.as_bytes()))
+        let status = self.authoritative_status()?;
+        let layer_recorded_fingerprints = BTreeMap::from([
+            ("mir", status.mir.recorded_fingerprint.as_deref()),
+            ("scip", status.scip.recorded_fingerprint.as_deref()),
+            ("syn", status.syn.recorded_fingerprint.as_deref()),
+        ]);
+        let payload = AtlasAuthorityFingerprint {
+            schema_version: rust_atlas::SCHEMA_VERSION,
+            recorded_graph_identity: &status.recorded_identity,
+            toolchain_identity: &status.recorded_identity.toolchain,
+            recorded_source_set_fingerprint: status.syn.recorded_fingerprint.as_deref(),
+            graph_fingerprint: &status.graph_fingerprint,
+            layer_recorded_fingerprints,
+        };
+        let bytes = serde_json::to_vec(&payload).map_err(|error| error.to_string())?;
+        Ok(blake3_hex(&bytes))
     }
 
     fn stale_files(&self) -> Result<Vec<String>, String> {
-        rust_atlas::check(&self.code_root, &self.graph_dir).map_err(|e| e.to_string())
+        Ok(self.authoritative_status()?.syn.stale_files)
     }
 
     fn resolve(&self, symbol: &str) -> Result<CodeTarget, String> {
+        self.authoritative_status()?;
         let result = rust_atlas::query(
             &self.code_root,
             &self.graph_dir,
@@ -300,6 +329,10 @@ mod tests {
     use super::*;
     use std::fs;
 
+    fn scip_fixture() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/atlas/scip/index.json")
+    }
+
     /// Temp tree: a tiny cargo crate (atlas source), a built graph, a
     /// knowledge tree with one ready requirement, and a spec declaring
     /// symbols against the graph.
@@ -354,6 +387,13 @@ mod tests {
     #[test]
     fn test_code_bindings_generate_for_ready_units() {
         let dir = make_tree("bind-ok");
+        assert_eq!(
+            rust_atlas::status(&dir.join("code"), &dir.join("graph"))
+                .unwrap()
+                .scip
+                .state,
+            rust_atlas::LayerState::Unavailable
+        );
         let bindings =
             build_code_bindings(&dir.join("knowledge"), &dir.join("specs"), &providers(&dir))
                 .unwrap();
@@ -388,6 +428,121 @@ mod tests {
             err.contains("stale") && err.contains("src/lib.rs"),
             "stale gate must name the lagging files: {err}"
         );
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn test_code_bindings_block_on_stale_semantic_layer() {
+        let dir = make_tree("bind-stale-scip");
+        rust_atlas::build(
+            &dir.join("code"),
+            &dir.join("graph"),
+            &rust_atlas::BuildOptions {
+                full: false,
+                scip_index: Some(scip_fixture()),
+            },
+        )
+        .unwrap();
+        let lib = dir.join("code/src/lib.rs");
+        let mut source = fs::read_to_string(&lib).unwrap();
+        source.push_str("\npub fn refreshed_syn_only() {}\n");
+        fs::write(&lib, source).unwrap();
+        rust_atlas::query(
+            &dir.join("code"),
+            &dir.join("graph"),
+            "bind_demo::SlotStore",
+            &rust_atlas::QueryOptions::default(),
+        )
+        .unwrap();
+        let status = rust_atlas::status(&dir.join("code"), &dir.join("graph")).unwrap();
+        assert_eq!(status.syn.state, rust_atlas::LayerState::Fresh);
+        assert_eq!(status.scip.state, rust_atlas::LayerState::Stale);
+
+        let artifact = dir.join(".agent-spec/code-bindings.json");
+        let error =
+            build_code_bindings(&dir.join("knowledge"), &dir.join("specs"), &providers(&dir))
+                .unwrap_err();
+        assert!(error.contains("atlas-stale"), "{error}");
+        assert!(!artifact.exists());
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn test_atlas_provider_fingerprint_is_stable_and_tracks_authority_inputs() {
+        let dir = make_tree("bind-fingerprint-authority");
+        let provider = AtlasProvider {
+            code_root: dir.join("code"),
+            graph_dir: dir.join("graph"),
+        };
+        let first = provider.fingerprint().unwrap();
+        let second = provider.fingerprint().unwrap();
+        assert_eq!(first.as_bytes(), second.as_bytes());
+
+        let meta_path = dir.join("graph/meta.json");
+        let original_meta: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&meta_path).unwrap()).unwrap();
+        let mut meta = original_meta.clone();
+        meta["graph_fingerprint"] = serde_json::json!("authority-input-changed");
+        fs::write(&meta_path, serde_json::to_vec_pretty(&meta).unwrap()).unwrap();
+        assert_ne!(provider.fingerprint().unwrap(), first);
+
+        let mut meta = original_meta.clone();
+        meta["identity"]["toolchain"] = serde_json::json!("recorded-toolchain-changed");
+        fs::write(&meta_path, serde_json::to_vec_pretty(&meta).unwrap()).unwrap();
+        assert_ne!(provider.fingerprint().unwrap(), first);
+
+        let lib = dir.join("code/src/lib.rs");
+        let original_source = fs::read(&lib).unwrap();
+        let changed_source = [original_source.as_slice(), b"\n// source-set changed\n"].concat();
+        fs::write(&lib, &changed_source).unwrap();
+        let mut meta = original_meta.clone();
+        meta["files"]["src/lib.rs"] =
+            serde_json::json!(blake3::hash(&changed_source).to_hex().to_string());
+        fs::write(&meta_path, serde_json::to_vec_pretty(&meta).unwrap()).unwrap();
+        assert_ne!(provider.fingerprint().unwrap(), first);
+
+        fs::write(&lib, original_source).unwrap();
+        let index = dir.join("authority.scip");
+        fs::write(&index, b"recorded semantic layer").unwrap();
+        let mut meta = original_meta.clone();
+        fs::write(
+            &meta_path,
+            serde_json::to_vec_pretty(&original_meta).unwrap(),
+        )
+        .unwrap();
+        let recorded_sources = rust_atlas::status(&dir.join("code"), &dir.join("graph"))
+            .unwrap()
+            .syn
+            .recorded_fingerprint
+            .unwrap();
+        meta["capability"]["scip"] = serde_json::json!(true);
+        meta["capability"]["scip_index"] =
+            serde_json::json!(fs::canonicalize(&index).unwrap().to_string_lossy());
+        meta["capability"]["scip_fingerprint"] = serde_json::json!(
+            blake3::hash(b"recorded semantic layer")
+                .to_hex()
+                .to_string()
+        );
+        meta["capability"]["scip_source_fingerprint"] = serde_json::json!(recorded_sources);
+        fs::write(&meta_path, serde_json::to_vec_pretty(&meta).unwrap()).unwrap();
+        assert_ne!(provider.fingerprint().unwrap(), first);
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn test_code_bindings_preserve_atlas_schema_mismatch_precedence() {
+        let dir = make_tree("bind-schema-precedence");
+        let meta_path = dir.join("graph/meta.json");
+        let mut meta: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&meta_path).unwrap()).unwrap();
+        meta["schema_version"] = serde_json::json!(5);
+        fs::write(&meta_path, serde_json::to_vec_pretty(&meta).unwrap()).unwrap();
+
+        let error =
+            build_code_bindings(&dir.join("knowledge"), &dir.join("specs"), &providers(&dir))
+                .unwrap_err();
+        assert!(error.contains("atlas-schema-mismatch"), "{error}");
+        assert!(!error.contains("atlas-stale"), "{error}");
         fs::remove_dir_all(dir).ok();
     }
 

@@ -45,6 +45,10 @@ fn declared_symbols(ctx: &VerificationContext) -> Vec<String> {
 }
 
 fn stale_result(detail: String, locations: Vec<String>) -> ScenarioResult {
+    authority_result(DIAG_STALE, detail, locations)
+}
+
+fn authority_result(pattern: &str, detail: String, locations: Vec<String>) -> ScenarioResult {
     ScenarioResult {
         scenario_name: "[atlas-symbols] contract symbols resolve in a fresh graph".into(),
         verdict: Verdict::Fail,
@@ -54,7 +58,7 @@ fn stale_result(detail: String, locations: Vec<String>) -> ScenarioResult {
             reason: detail,
         }],
         evidence: vec![Evidence::PatternMatch {
-            pattern: DIAG_STALE.into(),
+            pattern: pattern.into(),
             matched: true,
             locations,
         }],
@@ -91,22 +95,36 @@ impl Verifier for AtlasSymbolVerifier {
                 vec![graph_dir.to_string_lossy().into_owned()],
             )]);
         }
-        let stale = match rust_atlas::check(&code_root, &graph_dir) {
-            Ok(stale) => stale,
+        let status = match rust_atlas::status(&code_root, &graph_dir) {
+            Ok(status) => status,
             Err(error) => {
-                return Ok(vec![stale_result(
-                    format!("{DIAG_STALE}: cannot check graph freshness: {error}"),
+                let pattern = match &error {
+                    rust_atlas::AtlasError::SchemaMismatch { .. } => "atlas-schema-mismatch",
+                    rust_atlas::AtlasError::WorktreeMismatch { .. } => "atlas-worktree-mismatch",
+                    _ => DIAG_STALE,
+                };
+                return Ok(vec![authority_result(
+                    pattern,
+                    error.to_string(),
                     Vec::new(),
                 )]);
             }
         };
-        if !stale.is_empty() {
-            return Ok(vec![stale_result(
-                format!(
-                    "{DIAG_STALE}: graph lags the code for {}; rebuild before validating symbols",
-                    stale.join(", ")
+        if let Err(error) = rust_atlas::require_authority(&status) {
+            let (pattern, locations) = match &error {
+                rust_atlas::AtlasError::WorktreeMismatch { recorded, current } => (
+                    "atlas-worktree-mismatch",
+                    vec![recorded.clone(), current.clone()],
                 ),
-                stale,
+                rust_atlas::AtlasError::SchemaMismatch { .. } => {
+                    ("atlas-schema-mismatch", Vec::new())
+                }
+                _ => (DIAG_STALE, status.syn.stale_files.clone()),
+            };
+            return Ok(vec![authority_result(
+                pattern,
+                error.to_string(),
+                locations,
             )]);
         }
 
@@ -190,6 +208,20 @@ mod tests {
         .unwrap();
     }
 
+    fn build_graph_with_scip(dir: &Path) {
+        rust_atlas::build(
+            &dir.join("code"),
+            &dir.join("code/.agent-spec/graph"),
+            &rust_atlas::BuildOptions {
+                full: false,
+                scip_index: Some(
+                    Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/atlas/scip/index.json"),
+                ),
+            },
+        )
+        .unwrap();
+    }
+
     fn write_spec(dir: &Path, symbols: &[&str]) -> std::path::PathBuf {
         let mut boundaries = String::from("## Boundaries\n\n### Allowed Changes\n- src/**\n");
         if !symbols.is_empty() {
@@ -259,6 +291,59 @@ mod tests {
             !patterns.iter().any(|p| p == DIAG_SYMBOL_MISSING),
             "a stale graph must not produce false symbol-missing diagnostics"
         );
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn test_lifecycle_reports_stale_atlas_semantic_layer() {
+        let dir = make_code("linker-stale-scip");
+        build_graph_with_scip(&dir);
+        let lib = dir.join("code/src/lib.rs");
+        let mut source = fs::read_to_string(&lib).unwrap();
+        source.push_str("\npub fn refresh_syn_only() {}\n");
+        fs::write(&lib, source).unwrap();
+        rust_atlas::query(
+            &dir.join("code"),
+            &dir.join("code/.agent-spec/graph"),
+            "linker_demo::SlotStore",
+            &rust_atlas::QueryOptions::default(),
+        )
+        .unwrap();
+
+        let spec = write_spec(&dir, &["linker_demo::SlotStore"]);
+        let gateway = SpecGateway::load(&spec).unwrap();
+        let report = gateway.verify(dir.join("code")).unwrap();
+        let patterns = atlas_results(&report);
+        assert!(patterns.iter().any(|pattern| pattern == DIAG_STALE));
+        assert!(
+            !patterns
+                .iter()
+                .any(|pattern| pattern == DIAG_SYMBOL_MISSING)
+        );
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn test_lifecycle_preserves_atlas_schema_mismatch_precedence() {
+        let dir = make_code("linker-schema-precedence");
+        build_graph(&dir);
+        let meta_path = dir.join("code/.agent-spec/graph/meta.json");
+        let mut meta: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&meta_path).unwrap()).unwrap();
+        meta["schema_version"] = serde_json::json!(5);
+        fs::write(&meta_path, serde_json::to_vec_pretty(&meta).unwrap()).unwrap();
+
+        let spec = write_spec(&dir, &["linker_demo::SlotStore"]);
+        let gateway = SpecGateway::load(&spec).unwrap();
+        let report = gateway.verify(dir.join("code")).unwrap();
+        let patterns = atlas_results(&report);
+        assert!(
+            patterns
+                .iter()
+                .any(|pattern| pattern == "atlas-schema-mismatch"),
+            "{patterns:?}"
+        );
+        assert!(!patterns.iter().any(|pattern| pattern == DIAG_STALE));
         fs::remove_dir_all(dir).ok();
     }
 

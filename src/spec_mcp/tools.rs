@@ -41,7 +41,7 @@ pub fn tool_specs() -> Value {
           "inputSchema": { "type": "object", "properties": { "symbol": {"type": "string"} }, "required": ["symbol"] } },
         { "name": "atlas_impls", "description": "Impl relations touching a trait or type name.",
           "inputSchema": { "type": "object", "properties": { "name": {"type": "string"} }, "required": ["name"] } },
-        { "name": "atlas_status", "description": "Graph metadata, capability, and stale file list.",
+        { "name": "atlas_status", "description": "Graph identity and independent syn, SCIP, and MIR freshness.",
           "inputSchema": { "type": "object", "properties": {} } },
         { "name": "context.read", "description": "Read free-form context by path, or list all when no path is given.",
           "inputSchema": { "type": "object", "properties": { "path": {"type": "string"} } } }
@@ -292,15 +292,8 @@ fn atlas_tool(name: &str, args: &Value, ctx: &McpContext) -> Result<Value, Strin
     let to_value = |v: serde_json::Result<Value>| v.map_err(|e| e.to_string());
     match name {
         "atlas_status" => {
-            let (meta, _) = rust_atlas::load_graph(&graph_dir).map_err(|e| e.to_string())?;
-            let stale = rust_atlas::check(&ctx.code, &graph_dir).map_err(|e| e.to_string())?;
-            Ok(json!({
-                "schema_version": meta.schema_version,
-                "package": meta.package,
-                "capability": { "scip": meta.capability.scip, "scip_tool": meta.capability.scip_tool },
-                "files": meta.files.len(),
-                "stale": stale,
-            }))
+            let status = rust_atlas::status(&ctx.code, &graph_dir).map_err(|e| e.to_string())?;
+            to_value(serde_json::to_value(&status))
         }
         "atlas_tree" => {
             let outline =

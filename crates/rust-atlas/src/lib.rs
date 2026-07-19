@@ -22,7 +22,7 @@ mod status;
 
 use index::write_json_atomic;
 pub use index::{QueryIndex, canonical_graph_fingerprint, load_query_index, rebuild_query_index};
-pub use status::{AtlasStatus, GraphIdentity, LayerState, LayerStatus, status};
+pub use status::{AtlasStatus, GraphIdentity, LayerState, LayerStatus, require_authority, status};
 
 pub const SCHEMA_VERSION: u32 = 6;
 
@@ -47,6 +47,12 @@ pub enum AtlasError {
          the graph was built by a different atlas version — rebuild with `atlas build`"
     )]
     SchemaMismatch { found: u32, expected: u32 },
+    #[error(
+        "atlas-worktree-mismatch: graph was built in {recorded}; current worktree is {current}"
+    )]
+    WorktreeMismatch { recorded: String, current: String },
+    #[error("atlas-stale: {detail}")]
+    StaleAuthority { detail: String },
     #[error(
         "atlas-query-index-missing: no query index at {index_path}; \
          rebuild with `atlas build`"
@@ -239,12 +245,14 @@ pub struct QueryResult {
     pub node: Node,
     pub edges_out: Vec<Edge>,
     pub edges_in: Vec<Edge>,
+    pub status: AtlasStatus,
     pub stale: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TreeOutline {
     pub tree: serde_json::Value,
+    pub status: AtlasStatus,
     pub stale: Vec<String>,
 }
 
@@ -252,6 +260,7 @@ pub struct TreeOutline {
 pub struct EdgeReport {
     pub symbol: String,
     pub edges: Vec<Edge>,
+    pub status: AtlasStatus,
     pub stale: Vec<String>,
 }
 
@@ -301,6 +310,7 @@ pub struct SearchHit {
 pub struct SearchResult {
     pub matches: Vec<SearchHit>,
     pub graph_fingerprint: String,
+    pub status: AtlasStatus,
     pub stale: Vec<String>,
     pub limit: usize,
 }
@@ -470,29 +480,6 @@ pub fn check(code_root: &Path, graph_dir: &Path) -> Result<Vec<String>, AtlasErr
     Ok(status(code_root, graph_dir)?.syn.stale_files)
 }
 
-fn check_with_meta(code_root: &Path, meta: &Meta) -> Result<Vec<String>, AtlasError> {
-    let mut stale = BTreeSet::new();
-    let mut seen = BTreeSet::new();
-    for path in walk_rs_files(code_root) {
-        let rel = rel_path(code_root, &path);
-        let bytes = std::fs::read(&path).map_err(io_err)?;
-        let hash = blake3::hash(&bytes).to_hex().to_string();
-        match meta.files.get(&rel) {
-            Some(recorded) if *recorded == hash => {}
-            _ => {
-                stale.insert(rel.clone());
-            }
-        }
-        seen.insert(rel);
-    }
-    for rel in meta.files.keys() {
-        if !seen.contains(rel) {
-            stale.insert(rel.clone());
-        }
-    }
-    Ok(stale.into_iter().collect())
-}
-
 /// Node facts plus adjacent edges for a canonical symbol path.
 pub fn query(
     code_root: &Path,
@@ -500,7 +487,7 @@ pub fn query(
     symbol: &str,
     opts: &QueryOptions,
 ) -> Result<QueryResult, AtlasError> {
-    let (_meta, index, stale) = indexed_query_state(code_root, graph_dir, opts)?;
+    let (_meta, index, status) = indexed_query_state(code_root, graph_dir, opts)?;
     let matches = index.matching_nodes(symbol);
     let node = match matches.as_slice() {
         [] => {
@@ -532,7 +519,8 @@ pub fn query(
             .into_iter()
             .collect(),
         node,
-        stale,
+        stale: status.syn.stale_files.clone(),
+        status,
     })
 }
 
@@ -544,7 +532,7 @@ pub fn search(
     opts: &SearchOptions,
 ) -> Result<SearchResult, AtlasError> {
     validate_search_limit(opts.limit)?;
-    let (meta, index, stale) = indexed_query_state(
+    let (meta, index, status) = indexed_query_state(
         code_root,
         graph_dir,
         &QueryOptions {
@@ -556,7 +544,8 @@ pub fn search(
     Ok(SearchResult {
         matches,
         graph_fingerprint: meta.graph_fingerprint,
-        stale,
+        stale: status.syn.stale_files.clone(),
+        status,
         limit: opts.limit,
     })
 }
@@ -567,7 +556,7 @@ pub fn tree(
     graph_dir: &Path,
     opts: &QueryOptions,
 ) -> Result<TreeOutline, AtlasError> {
-    let (meta, stale) = refresh(code_root, graph_dir, opts)?;
+    let (meta, status) = refresh(code_root, graph_dir, opts)?;
     let shards = load_shards(graph_dir, &meta)?;
     let mut kinds = BTreeMap::new();
     let mut children: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
@@ -620,7 +609,11 @@ pub fn tree(
     } else {
         serde_json::json!({ "id": meta.package, "kind": "workspace", "children": roots })
     };
-    Ok(TreeOutline { tree, stale })
+    Ok(TreeOutline {
+        tree,
+        stale: status.syn.stale_files.clone(),
+        status,
+    })
 }
 
 /// Incoming reference/call edges for a symbol.
@@ -635,7 +628,7 @@ pub fn refs(
     symbol: &str,
     opts: &QueryOptions,
 ) -> Result<EdgeReport, AtlasError> {
-    let (_meta, index, stale) = indexed_query_state(code_root, graph_dir, opts)?;
+    let (_meta, index, status) = indexed_query_state(code_root, graph_dir, opts)?;
     let matches = index.matching_nodes(symbol);
     if matches.is_empty() {
         return Err(AtlasError::UnknownSymbol {
@@ -651,7 +644,8 @@ pub fn refs(
     Ok(EdgeReport {
         symbol: symbol.to_string(),
         edges: edges.into_iter().collect(),
-        stale,
+        stale: status.syn.stale_files.clone(),
+        status,
     })
 }
 
@@ -662,7 +656,7 @@ pub fn impls(
     name: &str,
     opts: &QueryOptions,
 ) -> Result<EdgeReport, AtlasError> {
-    let (_meta, index, stale) = indexed_query_state(code_root, graph_dir, opts)?;
+    let (_meta, index, status) = indexed_query_state(code_root, graph_dir, opts)?;
     let matching_ids: BTreeSet<&str> = index
         .nodes_with_symbol_suffix(name)
         .into_iter()
@@ -688,7 +682,8 @@ pub fn impls(
     Ok(EdgeReport {
         symbol: name.to_string(),
         edges: edges.into_iter().collect(),
-        stale,
+        stale: status.syn.stale_files.clone(),
+        status,
     })
 }
 
@@ -733,7 +728,7 @@ struct MetaHeader {
 }
 
 #[derive(Deserialize)]
-struct PersistedMeta {
+pub(crate) struct PersistedMeta {
     #[serde(flatten)]
     meta: Meta,
     identity: GraphIdentity,
@@ -991,40 +986,49 @@ fn refresh(
     code_root: &Path,
     graph_dir: &Path,
     opts: &QueryOptions,
-) -> Result<(Meta, Vec<String>), AtlasError> {
-    let canonical_code_root = std::fs::canonicalize(code_root).map_err(io_err)?;
-    let meta = read_meta(graph_dir)?;
-    let stale = check_with_meta(&canonical_code_root, &meta)?;
-    if stale.is_empty() {
-        return Ok((meta, Vec::new()));
+) -> Result<(Meta, AtlasStatus), AtlasError> {
+    let persisted = read_persisted_meta(graph_dir)?;
+    let status = status::status_with_meta(code_root, graph_dir, &persisted)?;
+    status::require_worktree_match(&status)?;
+    if status.syn.state == LayerState::Fresh {
+        return Ok((persisted.meta, status));
     }
     if opts.frozen {
-        return Ok((meta, stale));
+        return Ok((persisted.meta, status));
     }
-    Ok((refresh_stale_graph(code_root, graph_dir, meta)?, Vec::new()))
+    let persisted = refresh_stale_graph(code_root, graph_dir, persisted.meta)?;
+    let status = status::status_with_meta(code_root, graph_dir, &persisted)?;
+    status::require_worktree_match(&status)?;
+    Ok((persisted.meta, status))
 }
 
 fn indexed_query_state(
     code_root: &Path,
     graph_dir: &Path,
     opts: &QueryOptions,
-) -> Result<(Meta, QueryIndex, Vec<String>), AtlasError> {
-    let canonical_code_root = std::fs::canonicalize(code_root).map_err(io_err)?;
-    let meta = read_meta(graph_dir)?;
-    let index = load_query_index(graph_dir, &meta)?;
-    let stale = check_with_meta(&canonical_code_root, &meta)?;
-    if stale.is_empty() {
-        return Ok((meta, index, Vec::new()));
+) -> Result<(Meta, QueryIndex, AtlasStatus), AtlasError> {
+    let persisted = read_persisted_meta(graph_dir)?;
+    let index = load_query_index(graph_dir, &persisted.meta)?;
+    let status = status::status_with_meta(code_root, graph_dir, &persisted)?;
+    status::require_worktree_match(&status)?;
+    if status.syn.state == LayerState::Fresh {
+        return Ok((persisted.meta, index, status));
     }
     if opts.frozen {
-        return Ok((meta, index, stale));
+        return Ok((persisted.meta, index, status));
     }
-    let meta = refresh_stale_graph(code_root, graph_dir, meta)?;
-    let index = load_query_index(graph_dir, &meta)?;
-    Ok((meta, index, Vec::new()))
+    let persisted = refresh_stale_graph(code_root, graph_dir, persisted.meta)?;
+    let index = load_query_index(graph_dir, &persisted.meta)?;
+    let status = status::status_with_meta(code_root, graph_dir, &persisted)?;
+    status::require_worktree_match(&status)?;
+    Ok((persisted.meta, index, status))
 }
 
-fn refresh_stale_graph(code_root: &Path, graph_dir: &Path, meta: Meta) -> Result<Meta, AtlasError> {
+fn refresh_stale_graph(
+    code_root: &Path,
+    graph_dir: &Path,
+    meta: Meta,
+) -> Result<PersistedMeta, AtlasError> {
     // Keep the SCIP layer alive across incremental refreshes: re-overlay the
     // index recorded in the prior build if it still exists. A vanished index
     // falls back to syn (scip edges purged, capability cleared).
@@ -1044,7 +1048,7 @@ fn refresh_stale_graph(code_root: &Path, graph_dir: &Path, meta: Meta) -> Result
         Some(meta),
         true,
     )?;
-    read_meta(graph_dir)
+    read_persisted_meta(graph_dir)
 }
 
 #[derive(Debug, Deserialize)]
@@ -2856,6 +2860,30 @@ mod tests {
             .collect()
     }
 
+    fn init_git_repository(code: &Path) {
+        for args in [
+            ["init"].as_slice(),
+            ["add", "."].as_slice(),
+            [
+                "-c",
+                "user.name=Atlas Test",
+                "-c",
+                "user.email=atlas@example.test",
+                "commit",
+                "-m",
+                "initial",
+            ]
+            .as_slice(),
+        ] {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(code)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "git {args:?}: {output:?}");
+        }
+    }
+
     fn file_tree_snapshot(root: &Path) -> BTreeMap<String, Vec<u8>> {
         fn collect(root: &Path, directory: &Path, files: &mut BTreeMap<String, Vec<u8>>) {
             let mut entries: Vec<_> = fs::read_dir(directory)
@@ -3508,6 +3536,20 @@ impl std::fmt::Display for Local {
             check(&code, &graph).unwrap_err(),
             AtlasError::SchemaMismatch { .. }
         ));
+        assert!(matches!(
+            status(&code, &graph).unwrap_err(),
+            AtlasError::SchemaMismatch { .. }
+        ));
+        assert!(matches!(
+            query(
+                &code,
+                &graph,
+                "atlas_basic::store::MemStore",
+                &QueryOptions::default(),
+            )
+            .unwrap_err(),
+            AtlasError::SchemaMismatch { .. }
+        ));
 
         // build recovers: it reads old meta via `.ok()`, so a mismatch degrades
         // to a full rebuild that restores the current schema.
@@ -3702,6 +3744,128 @@ impl std::fmt::Display for Local {
         )
         .unwrap();
         assert_eq!(meta_read_count(), 2, "non-frozen stale query");
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_rejects_borrowed_worktree_graph() {
+        let (code, graph) = copy_fixture("atlas-borrowed-worktree");
+        init_git_repository(&code);
+        let linked = code.parent().unwrap().join("linked");
+        let output = Command::new("git")
+            .args(["worktree", "add", "-b", "linked", &linked.to_string_lossy()])
+            .current_dir(&code)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git worktree add: {output:?}");
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+
+        let report = status(&linked, &graph).unwrap();
+        let recorded = report.recorded_identity.worktree_root.clone();
+        let current = report.current_identity.worktree_root.clone();
+        assert_ne!(recorded, current);
+        assert!(report.worktree_mismatch.is_some());
+        let graph_before = file_tree_snapshot(&graph);
+
+        let operations = [
+            tree(&linked, &graph, &QueryOptions::default()).map(|_| ()),
+            query(
+                &linked,
+                &graph,
+                "atlas_basic::store::MemStore",
+                &QueryOptions::default(),
+            )
+            .map(|_| ()),
+            refs(
+                &linked,
+                &graph,
+                "atlas_basic::store::MemStore",
+                &QueryOptions::default(),
+            )
+            .map(|_| ()),
+            impls(&linked, &graph, "Store", &QueryOptions::default()).map(|_| ()),
+            search(&linked, &graph, "MemStore", &SearchOptions::default()).map(|_| ()),
+        ];
+        for result in operations {
+            let error = result.unwrap_err();
+            assert!(
+                matches!(error, AtlasError::WorktreeMismatch { .. }),
+                "unexpected error: {error}"
+            );
+            let diagnostic = error.to_string();
+            assert!(diagnostic.contains(&recorded), "{diagnostic}");
+            assert!(diagnostic.contains(&current), "{diagnostic}");
+        }
+        assert_eq!(file_tree_snapshot(&graph), graph_before);
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_read_results_share_status_and_stale_mirror() {
+        let (code, graph) = copy_fixture("atlas-result-status");
+        build(
+            &code,
+            &graph,
+            &BuildOptions {
+                full: false,
+                scip_index: Some(scip_fixture()),
+            },
+        )
+        .unwrap();
+
+        let assert_results = |opts: &QueryOptions| {
+            let tree = tree(&code, &graph, opts).unwrap();
+            let query = query(&code, &graph, "atlas_basic::store::MemStore", opts).unwrap();
+            let refs = refs(&code, &graph, "atlas_basic::store::MemStore", opts).unwrap();
+            let impls = impls(&code, &graph, "Store", opts).unwrap();
+            let search = search(
+                &code,
+                &graph,
+                "MemStore",
+                &SearchOptions {
+                    limit: 20,
+                    frozen: opts.frozen,
+                },
+            )
+            .unwrap();
+            for (status, stale) in [
+                (&tree.status, &tree.stale),
+                (&query.status, &query.stale),
+                (&refs.status, &refs.stale),
+                (&impls.status, &impls.stale),
+                (&search.status, &search.stale),
+            ] {
+                assert_eq!(status, &tree.status);
+                assert_eq!(stale, &status.syn.stale_files);
+            }
+            tree.status
+        };
+
+        let fresh = assert_results(&QueryOptions::default());
+        assert_eq!(fresh.syn.state, LayerState::Fresh);
+        assert_eq!(fresh.scip.state, LayerState::Fresh);
+
+        let service = code.join("src/service.rs");
+        let mut source = fs::read_to_string(&service).unwrap();
+        source.push_str("\npub fn status_consistency_edit() {}\n");
+        fs::write(&service, source).unwrap();
+
+        let frozen = assert_results(&QueryOptions { frozen: true });
+        assert_eq!(frozen.syn.state, LayerState::Stale);
+        assert_eq!(frozen.syn.stale_files, vec!["src/service.rs"]);
+        assert_eq!(frozen.scip.state, LayerState::Stale);
+
+        let refreshed = assert_results(&QueryOptions::default());
+        assert_eq!(refreshed.syn.state, LayerState::Fresh);
+        assert!(refreshed.syn.stale_files.is_empty());
+        assert_eq!(refreshed.scip.state, LayerState::Stale);
+        assert!(
+            refreshed
+                .scip
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.contains("source-set fingerprint mismatch"))
+        );
         fs::remove_dir_all(code.parent().unwrap()).ok();
     }
 

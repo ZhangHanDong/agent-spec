@@ -495,6 +495,15 @@ enum AtlasCommands {
         #[arg(long, default_value = "json")]
         format: String,
     },
+    /// Graph identity and independent syn/SCIP/MIR freshness
+    Status {
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+        #[arg(long, default_value = "json")]
+        format: String,
+    },
     /// Freshness check; exits non-zero when any shard is stale
     Check {
         #[arg(long, default_value = ".")]
@@ -3398,8 +3407,16 @@ fn cmd_atlas(action: AtlasCommands) -> Result<(), Box<dyn std::error::Error>> {
             let report = rust_atlas::impls(&code, &graph, &name, &frozen_opts(frozen))?;
             print_value(&report, &format)
         }
+        AtlasCommands::Status {
+            code,
+            graph,
+            format,
+        } => {
+            let stdout = std::io::stdout();
+            cmd_atlas_status_with_writer(&code, &graph, &format, &mut stdout.lock())
+        }
         AtlasCommands::Check { code, graph } => {
-            let stale = rust_atlas::check(&code, &graph)?;
+            let stale = rust_atlas::status(&code, &graph)?.syn.stale_files;
             let payload = serde_json::json!({ "stale": stale });
             println!("{}", serde_json::to_string_pretty(&payload)?);
             if stale.is_empty() {
@@ -3409,6 +3426,21 @@ fn cmd_atlas(action: AtlasCommands) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+}
+
+fn cmd_atlas_status_with_writer(
+    code: &Path,
+    graph: &Path,
+    format: &str,
+    stdout: &mut dyn std::io::Write,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let status = rust_atlas::status(code, graph)?;
+    if format == "json" {
+        writeln!(stdout, "{}", serde_json::to_string_pretty(&status)?)?;
+    } else {
+        writeln!(stdout, "{}", serde_json::to_string(&status)?)?;
+    }
+    Ok(())
 }
 
 fn cmd_atlas_benchmark(action: AtlasBenchmarkCommands) -> Result<(), Box<dyn std::error::Error>> {
@@ -11234,6 +11266,53 @@ Scenario: pass
     }
 
     #[test]
+    fn test_atlas_status_cli_and_mcp_serialize_library_shape() {
+        let (code, _) = atlas_fixture_copy("atlas-cli-mcp-status");
+        let graph = code.join(".agent-spec/graph");
+        rust_atlas::build(&code, &graph, &rust_atlas::BuildOptions::default()).unwrap();
+        let expected = serde_json::to_value(rust_atlas::status(&code, &graph).unwrap()).unwrap();
+
+        let parsed = super::Cli::parse_from([
+            "agent-spec",
+            "atlas",
+            "status",
+            "--code",
+            code.to_str().unwrap(),
+            "--graph",
+            graph.to_str().unwrap(),
+        ]);
+        match parsed.command {
+            super::Commands::Atlas {
+                action:
+                    super::AtlasCommands::Status {
+                        code: parsed_code,
+                        graph: parsed_graph,
+                        format,
+                    },
+            } => {
+                assert_eq!(parsed_code, code);
+                assert_eq!(parsed_graph, graph);
+                assert_eq!(format, "json");
+            }
+            _ => panic!("expected atlas status"),
+        }
+
+        let mut stdout = Vec::new();
+        super::cmd_atlas_status_with_writer(&code, &graph, "json", &mut stdout).unwrap();
+        let cli: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
+        assert_eq!(cli, expected);
+
+        let ctx = crate::spec_mcp::McpContext {
+            knowledge: code.join("knowledge"),
+            specs: code.join("specs"),
+            code: code.clone(),
+        };
+        let mcp = crate::spec_mcp::dispatch("atlas_status", &serde_json::json!({}), &ctx).unwrap();
+        assert_eq!(mcp, expected);
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
     fn test_atlas_search_cli_parses_limits_and_preserves_frozen_graph() {
         let cli = super::Cli::parse_from([
             "agent-spec",
@@ -11342,6 +11421,8 @@ Scenario: pass
                 .unwrap()
                 .ends_with("src/store.rs")
         );
+        assert_eq!(result["stale"], result["status"]["syn"]["stale_files"]);
+        assert_eq!(result["status"]["syn"]["state"], "fresh");
         fs::remove_dir_all(code.parent().unwrap()).ok();
     }
 
