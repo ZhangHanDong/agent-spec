@@ -159,9 +159,17 @@ newline or arguments, a shell builtin or function, an unavailable executable,
 a missing `jq`, and a malformed or empty run plan. It passes the plan path and
 any literal arguments supplied after `--` to the executable, captures its
 stdout in a temporary file, and atomically moves that file to the receipt path
-only when the executable succeeds. The runner rejects output unless every
-planned run has one complete typed receipt. `summarize` then parses the receipt
-set and enforces correctness before calculating aggregates.
+only when the executable succeeds. The saved stdout is a receipt candidate:
+the runner does not parse, validate, or reconcile it against the run plan.
+
+`atlas benchmark summarize` performs the receipt checks. It typed-parses the
+candidate as a JSON array or NDJSON, rejects unknown fields and empty input,
+and refuses to calculate aggregates when any parsed receipt lacks
+`correctness`. It does not consume the run plan, so it cannot verify that every
+planned run has exactly one receipt or that the plan and receipt set are
+complete matches. The agent command must produce a complete receipt candidate,
+and that candidate must pass `summarize`; plan-receipt reconciliation is not
+implemented.
 
 ## Limits
 
