@@ -1,306 +1,520 @@
-# rust-atlas Roadmap：从"精确的 Rust 语法图"到"多语言 + 语义解析的符号图"
+# Rust Atlas Roadmap：从可信 Rust 图到意图感知的代码智能
 
-> 状态基线：**Phase 0（`afca280`）与 Phase 1（`bb47849`，合入 PR #5）均已完成**；
-> 本文剩余部分（Phase 2–4）是前瞻规划。本文综合了对 `crates/rust-atlas/src/lib.rs`
-> 的源码审查、在真实 workspace（最新 grok-build 124d85b：68,638 节点 / agent-spec
-> 自举 ~2,300 节点）上的实测审计，以及对 tree-sitter / rust-analyzer 两条演进路线的
-> 取舍分析。
+> 当前正典 roadmap，修订于 2026-07-20。状态基线：`agent-spec` 1.1.0、
+> `rust-atlas` 0.2.0、仓库提交 `1633696`（含 PR #6：graph load 的
+> schema-mismatch 拒绝、spec_verify 构建失败判 Uncertain 而非 Fail）。
 >
-> 注：下文各处 `lib.rs:NNN` 行号锚定 Phase 1 完成前的快照，仅作定位线索；Phase 1
-> 大改后行号已漂移，以符号名为准。
->
-> 落地方式：本文件是**设计文档**。每个 Phase 的可交付项应切成 `specs/` 下的
-> `.spec.md` 合约（沿用 `task-atlas-*.spec.md` 约定）再交付实现。
+> 本文用能力轨道替代旧的单序列 Phase 编号。历史合约保留原名称以维持 trace 稳定，
+> 但其中的 `Phase 2`、`Phase 3` 不再代表当前排期。
 
----
+Rust Atlas 将 Rust 源码编译为可失效、可重建的 Code Graph；agent-spec 再把这张图与
+需求、work unit、Task Contract、测试、trace 证据和质量策略连接起来。目标不只是查询
+符号，而是让 Agent 能解释和验证完整链路：
 
-## 0. 指导原则（不可动摇的约束）
-
-1. **分层 provenance 不变**。schema 里的 `Provenance { Syn, Scip, Mir }`
-   （lib.rs:68）已经编码了三层设计意图：语法基线 / 语义 overlay / 全程序分析。
-   所有演进都往这三层里填，而非另起炉灶。
-2. **语法基线永远离线可用**。基线层（当前 syn，未来可加 tree-sitter）必须对**任意
-   文本**、**不可编译的项目**都能产出结果。语义层是 opt-in 的增强，不能成为硬依赖。
-3. **schema 向后兼容**。任何字段变更走 `SCHEMA_VERSION` 递增 + `#[serde(default)]`，
-   旧 shard 必须仍可反序列化（现有做法，保持）。
-4. **不变量即测试**。`validate_graph`（lib.rs:568）在构建期强制"节点 id 唯一 +
-   resolved 边端点存在"。新增边类型/解析路径都必须纳入该校验，且配回归测试。
-5. **实测优先**。每个 Phase 的验收都要在真实 workspace 上跑数字（解析率、节点/边
-   计数、查询命中），而非只看单测通过。
-
----
-
-## 1. 当前状态
-
-### 1.1 已修复（Phase 0，`afca280`）— 5 项原始缺陷，均已实证
-
-| 缺陷 | 修法 | 验收证据 |
-|---|---|---|
-| 虚拟 workspace 塌成 `crate::crates::…::src` | `cargo metadata` 真布局（`ProjectLayout::discover` lib.rs:894） | grok-build 66,993 节点 0 坏 id |
-| impl/泛型 id 碰撞 | `declaration_id`+计数器 + `validate_graph` 强制唯一 | build 成功即证全图唯一 |
-| 签名抓到 doc/属性 | `normalized_tokens(&sig)` + 独立 `doc` 字段 | 签名无泄漏，352 节点带 doc |
-| 悬空边伪装成真边 | `EdgeResolution` + `resolve_syn_edges` 事后解析 | 98.1% resolved / 其余诚实标注 |
-| SCIP 状态不一致 | 无 `--scip` 即 `remove_scip_edges` 清 overlay | 回归测试覆盖 |
-
-### 1.2 Phase 1 已修复（`bb47849`）— 审计暴露的 5 项新问题，均已实证
-
-| ID | 问题 | 结果 |
-|---|---|---|
-| **A** | `impls <内部Trait>` 返回空：裸名 trait 在 syn 层无法解析 + `impls()` 只认 resolved id | 裸名唯一后缀解析 + impls 兜底；`impls SpecLinter` 0→27；impls-trait resolved 3/51→41/51 |
-| **B** | 布局过度收集：被 `exclude` 的 fixture crate + `build_script_build` 污染图 | 尊重 `exclude` + 跳过 custom-build + walk 层过滤；污染 33→0 |
-| **C** | 完整性缺口：`static`/`union`/`TraitAlias`/关联 `const`·`type` 不入图 | 补齐 item 类型 + 新 `NodeKind`；最新 grok-build 图含 static 339、type-alias 549 |
-| **D** | struct/enum 签名嵌入整个字段体（最长 1122 字符） | 声明头签名；struct 签名最长 1122→47 |
-| **E** | 死字段 `Capability.scip_index`；`refs` 无 scip 恒空未文档化 | 删死字段 + refs 文档化 |
-| **F** | `--code .`（CLI 默认值）崩溃：cargo metadata 绝对路径 vs 相对遍历路径 | `build`/`check` 入口 canonicalize；默认命令恢复可用 |
-
-> 遗留（Phase 1 未完全覆盖，见 §9）：非 `exclude` 的 stray 文件仍被兜到 host crate
-> 命名空间；`crate::Tool` 式 re-export 路径不解析（留给 Phase 2 SCIP）。
-
----
-
-## 2. 目标架构：一条谱系，三个 provenance 层
-
-```
-             语法·多语言            语法·Rust            语义·Rust             全程序
-  ┌──────────────────────┐ ┌────────────────┐ ┌────────────────────┐ ┌──────────────┐
-  │     tree-sitter      │ │      syn       │ │ rust-analyzer→SCIP │ │  rustc MIR   │
-  │ 容错/增量/多语言/近似 │ │ Rust结构化/精确 │ │ 名称解析/宏展开/类型 │ │  调用图/数据流 │
-  └──────────┬───────────┘ └───────┬────────┘ └─────────┬──────────┘ └──────┬───────┘
-             └──── 基线层(Provenance::Syn) ────┘         Provenance::Scip     Provenance::Mir
-                    离线·always-on                        opt-in·精确          future
+```text
+需求
+  -> leaf work unit
+  -> Task Contract 与 scenario
+  -> code binding
+  -> Rust 符号与图路径
+  -> test selector 与质量门禁
+  -> worktree 与 commit 证据
 ```
 
-- **tree-sitter 与 syn 是同一层的两个后端**（多语言广度 vs Rust 精度），可共存。
-- **rust-analyzer 不是 parser，是 resolver**：它经 `rust-analyzer scip` 产 SCIP，
-  喂给已有的 `overlay_scip`。这是修复 **finding A** 的正解，也是 `Calls`/`UsesType`
-  （lib.rs:54-55，当前从不生成）的数据来源。
-- **MIR 层**（`Provenance::Mir`，已在枚举里预留）留给未来的调用图/数据流。
+## 1. 范围与不可变原则
 
----
+### 1.1 Rust Atlas 保持 Rust 专用
 
-## 3. Phase 1 — 巩固 syn 基线层（无新依赖，纯正确性 / 可用性）✅ 已完成（`bb47849`）
+`rust-atlas` 是 agent-spec 的第一个 Code Graph Provider，不是通用多语言解析器。它应
+继续发挥 Cargo metadata、`syn`、rust-analyzer SCIP 和未来 MIR 带来的 Rust 专用精度。
 
-**目标**：把审计的 A（廉价部分）、B、C、D、E 清掉，让**离线 Rust 图**本身达到"可信、
-完整、可导航"。全部不引入新依赖、不需要可编译项目。**下列子节记录各项的做法与
-验收，均已实现并配回归测试（18→23 测试）。**
+非 Rust 语言通过 provider-neutral Code Graph IR 接入。独立的 tree-sitter provider、
+SCIP provider 或第三方工具 adapter 可以实现同一消费合约，但不进入 `rust-atlas` 核心，
+也不改变 Requirement IR。
 
-### P1-A 裸名唯一后缀解析 + `impls()` 兜底 — **最高 ROI**
-- `resolve_syn_edges`（lib.rs:511）：当 `target_text` 无 `::` 且精确匹配失败时，
-  尝试**唯一后缀匹配**——若全图恰有一个 `node.symbol` 以 `::{target_text}` 结尾，
-  解析过去、标 `Resolved`；多于一个则保持 `Unresolved`（不猜）。
-  - 预建一个 `last_segment -> [symbol]` 索引，O(1) 查、避免全表扫。
-- `impls()`（lib.rs:432）：除按 resolved node id 匹配外，**再对 `target_text` 的
-  末段做匹配**，兜住仍未解析的边（并在输出里标注 `resolution`，让调用方知道是近似）。
-- **验收**：`atlas impls SpecLinter` 从 0 → 召回其实现者（agent-spec 自举图中
-  应 ≥ 27）；impls-trait 的 resolved 比例从 ~6% 显著上升。
-- **风险**：后缀匹配对重名 trait 会退回 Unresolved（可接受，宁缺毋误）。真正跨 crate
-  的精确解析留给 Phase 2 的 SCIP。
+### 1.2 一条图谱系，三层证据
 
-### P1-B 尊重 workspace 边界，过滤噪声 target
-- `ProjectLayout::discover`（lib.rs:894）/`nested_workspace_manifests`（lib.rs:702）：
-  - 尊重根 `Cargo.toml` 的 `exclude`（不要经嵌套 workspace 把被排除的 fixture 捞回）。
-  - 跳过 `custom-build` / `build_script_build` target（`target.kind` 含 `custom-build`）。
-  - 可选：提供 `--include-tests` / `--include-fixtures` 开关，默认只索引 lib/bin。
-- **验收**：agent-spec 自举图不再出现 `atlas_basic` / `requirements_noteapp` /
-  `build_script_build` 命名空间；孤儿节点归零。
+```text
+Rust source
+  -> syn baseline       provenance=syn   离线、容错、始终可用
+  -> SCIP overlay       provenance=scip  名称解析、调用、类型、宏
+  -> MIR overlay        provenance=mir   编译器级调用与控制流
+```
 
-### P1-C 补齐 item 类型
-- `extract_items`（lib.rs:1387）新增匹配臂：`Item::Static`、`Item::Union`、
-  `Item::TraitAlias`；在 trait/impl 体内补 `TraitItem::Const`/`Type`、
-  `ImplItem::Const`/`Type`（当前只提 `Fn`）。
-- 需要新 `NodeKind`（`Static`、`Union`、`TraitAlias`、`AssocConst`、`AssocType`）→
-  `SCHEMA_VERSION` 递增。
-- **验收**：源码里的 `static`/关联项在图中可查；`NodeKind` 覆盖率测试。
+- syn 基线必须运行在 stable Rust 上；单个文件不可解析时，按文件降级而不是中止全图。
+- SCIP 和 MIR 都是可选 overlay。缺失时必须明确报告 capability，但不能阻塞 syn 基线。
+- `provenance` 只回答“哪个分析层观察到事实”。置信度、dispatch 类型与 resolution 强度
+  是独立维度，不能通过增加第四种 provenance 混在一起。
 
-### P1-D 声明头签名
-- struct/enum 签名只渲染到 `{` 之前（`pub struct SpecMeta`），字段/变体不进签名。
-- **验收**：struct 签名长度中位/最长大幅下降；shard 体积下降。
+### 1.3 派生事实永远不是 KLL 真相
 
-### P1-E 清理与文档化
-- 删除死字段 `Capability.scip_index`（lib.rs:122）——**Phase 2 会以"复用上次 index"
-  的形式正式引入并真正 wire 上**，届时再加回带真实语义的版本。
-- `refs`（lib.rs:395）：无 scip 时在输出里返回一条 `note`/warning 说明"无语义层，
-  引用为空"，避免"静默空 = 没有引用"的误读。
-- 可选：`line_start` 指向声明关键字行（排除 doc/属性），`line_end` 不变。
+图 shard、查询索引和 code binding 都是可重建工作数据。需求和已接受决策仍由
+`knowledge/` 持有。陈旧图不能产生确定性 binding、lifecycle 证据、影响分析结论或归档
+证明。
 
-**Phase 1 交付物**：`specs/task-atlas-syn-hardening.spec.md`（含 A/B/C/D/E 的 BDD
-场景）+ 实现 PR + 每项回归测试 + 一份"agent-spec 自举图前后对比"数字。
+### 1.4 新鲜度必须区分证据层和 worktree
 
----
+每次查询必须能标识 repository root、git worktree、graph fingerprint，并分别报告
+syn、SCIP、MIR 的 freshness。syn 已刷新不能让旧 SCIP 或 MIR overlay 看起来也是最新。
 
-## 4. Phase 2 — 语义 overlay：rust-analyzer 经 SCIP 真正接上（修复 finding A 的根）✅ 已完成
+### 1.5 不确定性必须可查询
 
-**目标**：把 `Provenance::Scip` 层从"仅 occurrence→References"升级为"完整语义解析"，
-让 `impls`/`refs`/`calls` 对**内部与跨 crate** 都答对，并让宏生成的符号可见。
+未解析符号、external target、歧义名称、动态分派候选集、被截断路径、provider 不可用
+和陈旧证据都是一等结果。它们不能被转换为空成功，也不能被伪装成确定性边。
 
-> **实现状态**：合约 `specs/task-atlas-scip-semantic.spec.md`（lint 100%）+ 实现
-> （`overlay_scip` 重写、`generate_scip`、`atlas scip-gen` CLI、`Capability` 持久化）
-> 外加 10 个回归测试全绿（rust-atlas 23→33）。真实 `rust-analyzer scip` 产出的
-> protobuf index 端到端跑通。
->
-> **两处纸上规划被实测纠正**（真跑一次才暴露，spike 的价值）：
-> 1. **relationships 是空的**。P2-2 原计划"读 SCIP `relationships` 的
->    `is_implementation` 重写 ImplsTrait"——实测 rust-analyzer 1.92 **完全不填
->    `relationships`**（`external_symbols` 也为空）。改用**符号描述符**
->    `impl#[Type][Trait]` + impl 声明行上的 ref-occurrence（kind=Trait→ImplsTrait，
->    kind=Struct/Enum/Union→ImplFor）。kind 取自 `SymbolInformation`，覆盖完整。
-> 2. **不能就地改写 syn 边**。P2-2 原计划"把 syn 边的 `to` 重写为 resolved id"会破坏
->    "无 `--scip` 即 `remove_scip_edges` 干净还原"的可逆性不变量（§0 原则 3/4）。改为
->    **增量新增 `provenance=Scip` 边**，syn 基线一字不动。
->
-> **实测数字（agent-spec 自举，2,303 contains 基线）**：
->
-> | 边类型 | syn only | +SCIP | 说明 |
-> |---|---|---|---|
-> | `calls` | 0 | **2,431** | lib.rs:54 那个"从不生成"的枚举被填满 |
-> | `uses-type` | 0 | **2,277** | lib.rs:55 同上 |
-> | `references` | 0 | **10,693** | 真实跨文件引用 |
-> | `impls-trait` resolved | 41 (syn) | +41 (scip) | 见下 |
->
-> **诚实边界**：在 agent-spec 上 SCIP 的 41 条 resolved `impls-trait` 与 syn 的 41 条
-> **完全重叠**——是 corroborative 而非 additive。原因:agent-spec 剩下的 5 unresolved /
-> 4 external impl 目标是**纯第三方 trait**（serde/clap 等），rust-analyzer 不把它们的
-> 定义放进本仓库的 index（`external_symbols=0`），SCIP 也够不着——需要那些 crate 各自的
-> SCIP。finding A 的 **additive** 修复只在"目标 trait 在被索引集合内（workspace 内 /
-> re-export 隐藏）"时兑现，已由 2-crate spike 精确验证。真正大赢是 `calls`/`uses-type`
-> 从 0→数千（syn 永远给不了）。
->
-> **grok-build 全量实测（finding A 真身，~68,404 节点，`rust-analyzer scip` ~数分钟）**：
-> `calls` 0→**120,353**、`uses-type` 0→**83,883**、`references` 0→**415,088**。
-> impl 解析上：syn 留下 **124** 条 `Tool` 系未解析 impl 边，SCIP 解析 **491** 条——
-> 其中就包含原始 bug 报告里的 `xai_tool_runtime::tool::Tool#`(syn 因 re-export 标
-> Unresolved，SCIP 链到 canonical 定义节点)。这是"目标 trait 在 workspace 内 /
-> re-export 隐藏"这一 additive 分支在真实仓库上的兑现。
+### 1.6 正典存储可移植，加速层可替换
 
-### P2-1 SCIP 生成流水线
-- 新增 `atlas scip-gen`（或 build 内置）：检测 `rust-analyzer`，对 code_root 跑
-  `rust-analyzer scip .` 产 `index.scip`；缓存到 graph_dir、按内容哈希增量。
-- **格式桥（必需，非可选）**：实测 `rust-analyzer scip` **只出 protobuf**（无 JSON
-  输出选项），而当前 `overlay_scip` 用 `serde_json` 读 JSON——直接喂 protobuf 报
-  `atlas-scip: stream did not contain valid UTF-8`。所以必须补一层 protobuf→JSON：
-  要么接 `scip print --json`（加外部工具依赖），要么让 atlas 直接读 protobuf（加
-  `scip` protobuf crate，更自洽）。
-- 优雅降级：无 `rust-analyzer` / 项目不可编译 → 明确 warning + 退回纯 syn，**不报错**。
-- 文档化前置：需可编译项目、匹配的 toolchain、proc-macro server。
-- **可行性已验证**（2-crate 复现）：`impl crate::Trait`（限定 re-export 路径，syn 标
-  Unresolved）被 SCIP 链到 canonical 定义符号 `…inner/Trait#`——证明 SCIP 能补 §9 的
-  re-export 缺口。全量 grok-build 较重（分钟级 + 内存），属 opt-in。
+按源文件拆分的 JSON shard 继续作为可移植、可审计的正典图存储。反向边、搜索和路径
+索引是可重建缓存，可以在 profiling 后选择其他表示。重建索引不得修改源码、KLL 或
+Task Contract。
 
-### P2-2 扩展 `overlay_scip` 消费"关系"而非仅 occurrence
-- 当前 `overlay_scip` 只读 `symbol_roles`（def/ref）产 `References`。**扩展**为：
-  - ~~读 SCIP 的 **implementation relationships** 重写 syn 边的 `to`~~ →
-    **[实测纠正]** rust-analyzer 1.92 不填 `relationships`，改用符号描述符
-    `impl#[Type][Trait]` + impl 行 ref-occurrence；且**增量加 `provenance=Scip` 边**而非
-    就地改写（保可逆性）。这精确修复 **finding A** 中"目标 trait 在被索引集合内"的部分。
-  - 产 `Calls` 边（方法/函数调用）——填上 lib.rs:54 那个从不生成的枚举。
-  - 产 `UsesType` 边（字段/签名/局部的类型引用）——填上 lib.rs:55。
-  - 复用已有的 `containing_node`（按 range 找最内层节点）做 SCIP symbol → atlas
-    node id 的映射。
-- **宏展开**：rust-analyzer 的 SCIP 覆盖 derive/宏生成的 impl（如
-  `#[derive(Serialize)]`→`impl Serialize`），overlay 后这些 impl 变可见——这是
-  syn/tree-sitter 永远给不了的完整性。
+### 1.7 Agent 使用效果属于正确性
 
-### P2-3 SCIP 跨增量刷新存活（正式实现被删的 `scip_index`）
-- 把上次使用的 SCIP index 路径 + 指纹记进 `Capability`（真正 set/read）。
-- `refresh`（lib.rs:609）/增量 `build`：若有记录的 index 且仍新鲜，**自动 re-overlay**
-  而非 `remove_scip_edges` 清掉。使 `Provenance::Scip` 在编辑后稳定存活。
-- 这解决了 Phase 0 遗留的"自动 refresh 会 purge scip"设计缺口。
+单元测试与集成测试仍是硬门禁，但 Agent-facing 图功能只有在真实 Agent 评测中证明
+答案正确、内容充分，并比反复 Read/Grep 更容易消费，才算完成。
 
-**Phase 2 交付物**（✅ 已交付）：`specs/task-atlas-scip-semantic.spec.md` + 实现 +
-实测数字（见上表）。生成流水线：`atlas scip-gen --code . --ra <rust-analyzer>` 产
-`index.scip`，再 `atlas build --scip <index.scip>` overlay。全量 grok-build（68k 节点，
-finding A 的 `xai_tool_runtime::Tool` re-export 真身）属 opt-in 重活，用同一命令按需测量。
+## 2. 已交付基线
 
----
+以下能力已经实现，对应需求当前通过 `agent-spec trace` 报告为 `Honored`。
 
-## 5. Phase 3 — 多语言基线（tree-sitter）
-
-**目标**：把基线层从"Rust-only（syn）"扩成"多语言"，覆盖混合仓库。
-
-### P3-1 后端抽象
-- 抽 `trait LanguageBackend { fn extract(&self, unit, source) -> (Vec<Node>, Vec<Edge>); }`。
-  syn 成为 `RustSynBackend`（保留 Phase 1/2 全部精度）。
-- `extract_shard`（lib.rs:1319）按文件语言分派到对应 backend。
-
-### P3-2 tree-sitter 后端
-- 为 Go / JS / TS / Python 各挂 `tree-sitter-*` grammar + `tags.scm` 查询
-  （定义 + 近似引用），产 `Node`/`Edge`。用**声明式 `.scm` 查询**替代硬编码 match——
-  也顺带让 Rust 侧未来"加一类符号 = 改查询"（呼应 finding C 的可扩展性）。
-- 容错优势：tree-sitter 对残缺文件仍产部分树，消灭"整文件 unparsed"。
-- 语言检测按扩展名；`walk_rs_files`（lib.rs:1073）泛化为 `walk_source_files`。
-
-### P3-3 多语言语义层
-- SCIP 本就是跨语言标准：Go=`scip-go`、TS=`scip-typescript`、Python=`scip-python`、
-  Rust=`rust-analyzer`。同一个 `overlay_scip` 吃所有语言的 SCIP → 各语言都能有精确层。
-
-**Phase 3 交付物**：`specs/task-atlas-polyglot.spec.md` + 多语言 fixture + 实现。
-**排序说明**：Phase 3 独立于 2，可并行；但**建议 2 先行**——语义精度对 agent-spec
-当前（Rust 为主）价值更高，且 finding A 是已暴露的实痛。
-
----
-
-## 6. Phase 4 — 深化与硬化（future / 机会性）
-
-- **MIR 层**（`Provenance::Mir`）：经 rustc MIR 或 charon 产精确调用图 / 数据流 /
-  死代码。长期，重。
-- **daemon / LSP 模式**：把 build 变常驻服务，这时 tree-sitter 的**子文件增量解析**
-  才真正兑现（当前 CLI 批处理已在文件粒度拿到大部分增量收益）。
-- **性能——增量已有、但有固定地板**。build 已按文件 blake3 哈希增量：只有内容变了
-  的 `.rs` 才重新 syn 解析。实测最新 grok-build（68,638 节点）：首建 ~90s，**0 改动
-  重跑仍 ~45s**——这 45s 是地板，来自每次都跑的三个 O(全图) 遍：哈希全部 2261 文件 +
-  `resolve_syn_edges`（读全部 shard 建全局符号表、重解析所有边）+ `validate_graph`
-  （读全部 shard 查唯一性/边端点）。优化方向：(1) `extract_shard` 用 rayon 并行；
-  (2) 缓存 `cargo metadata`（当前每次 build shell 出）；(3) 把 resolve/validate 从
-  "全图重算"缩到"只碰变化的符号及其引用方"（增量解析）；(4) SCIP 增量。
-- **查询人体工学**：`impls`/`refs` 增加 `--provenance`/`--resolved-only` 过滤；
-  `AmbiguousSymbol`（lib.rs:287）给出候选列表而非仅报错。
-
----
-
-## 7. 排序、投入与风险
-
-| Phase | 价值 | 投入 | 风险 | 新依赖 | 前置 |
-|---|---|---|---|---|---|
-| 1 syn 巩固 | 高（修实痛 A/B/C） | 小-中 | 低 | 无 | 无 |
-| 2 SCIP 语义 | **很高**（根治 A + refs/calls + 宏） | 中 | 中（依赖 rust-analyzer 可用、可编译项目） | rust-analyzer（外部 CLI） | 建议在 1 后 |
-| 3 tree-sitter 多语言 | 高（广度） | 大 | 中（grammar 维护、C 依赖） | tree-sitter + grammar crates | 独立，可并行 |
-| 4 深化 | 中 | 大 | 高 | 视子项 | 2/3 之后 |
-
-**推荐落地顺序**：**Phase 1 → Phase 2 →（Phase 3 视多语言需求）→ Phase 4**。
-理由：先用零依赖把离线 Rust 图做到可信完整（1），再接上语义层根治最痛的解析缺口（2，
-这也是 tree-sitter 给不了、必须靠 rust-analyzer 的部分），多语言广度（3）按需再上。
-
----
-
-## 8. 附录：缺陷 → Phase → 代码触点 速查
-
-| 缺陷/能力 | 落在 | 主要触点 |
+| 能力 | 状态 | 证据 |
 |---|---|---|
-| A 内部 trait impls 空 | 1.1（近似）+ 2.2（精确） | `resolve_syn_edges`:511、`impls`:432、`overlay_scip` |
-| B fixture/build 污染 | 1.2 | `ProjectLayout::discover`:894、`nested_workspace_manifests`:702 |
-| C 缺 static/union/关联项 | 1.3 | `extract_items`:1387、`NodeKind`:42 |
-| D 签名膨胀 | 1.4 | `extract_items` struct/enum 臂 |
-| E 死字段/refs 空/line_start | 1.5（清理）+ 2.3（scip_index 正式化） | `Capability`:122、`refs`:395 |
-| Calls / UsesType 从不生成 | 2.2 | `EdgeKind`:54-55、`overlay_scip` |
-| SCIP 增量存活 | 2.3 | `refresh`:609、`build`:176 |
-| 多语言 | 3 | 新 `LanguageBackend`、`extract_shard`:1319、`walk_*`:1073 |
-| 子文件增量 / 调用图 | 4 | daemon 模式、`Provenance::Mir` |
+| syn 图与分片存储 | 已交付 | `REQ-RUST-ATLAS`、`specs/task-rust-atlas-code-graph.spec.md` |
+| syn 正确性硬化 | 已交付 | workspace 布局、唯一 id、item 覆盖、诚实的 unresolved 边 |
+| SCIP 语义 overlay | 已交付 | `specs/task-atlas-scip-semantic.spec.md`、schema v4 |
+| schema-version 门 | 已交付 | `read_meta` 强校验：不匹配即 `SchemaMismatch`，查询路径响亮失败并提示重建，build 降级全量重建（e90fcb5） |
+| provider-neutral Code Graph IR 与 binding | 已交付 | `REQ-CODE-GRAPH-IR`、`specs/task-code-graph-ir-bindings.spec.md` |
+| Contract 符号与 typed trace 集成 | 已交付 | `REQ-INTENT-CODE-LINKER`、`specs/task-atlas-kll-integration.spec.md` |
+| Quality Planning 与 Execution Bundle | 已交付 | `REQ-QUALITY-PLANNING`、`specs/task-quality-planning-bundles.spec.md` |
 
----
+当前图能力包括：
 
-## 9. 已知遗留与边界（Phase 1 后仍在，如实记录）
+- Cargo-aware workspace 布局和按源文件 blake3 失效。
+- stable-toolchain syn 提取和 parse-error 降级。
+- 直接读取 rust-analyzer SCIP protobuf。
+- 带 provenance 与 resolution 的 `calls`、`uses-type`、`references`、
+  `impls-trait`、`impl-for` 边。
+- tree、node、refs、impls、status 的 CLI 与 MCP 查询。
+- stale-aware Contract symbol、code binding、lifecycle 检查和 typed trace target。
+- graph load 的 schema-version 强校验：旧 schema shard 不静默半读，拒绝并给出
+  可执行的 rebuild 提示。
 
-在最新 grok-build（124d85b，68,638 节点，98.2% 边解析）上实测暴露：
+已有语义规模足以支持更强的消费层。在审计过的 grok-build workspace 上，SCIP overlay
+约产生 120,000 条 `calls`、84,000 条 `uses-type` 和 415,000 条 `references`。下一阶段
+的主要瓶颈已经不只是事实提取，而是检索、遍历、解释和增量服务。
 
-- **re-export 路径不解析**。`impl Tool for X` 里 `Tool` 经 `use` 从 crate 根引入、
-  写成 `crate::Tool`，而真正的 trait 节点在 `xai_tool_runtime::tool::Tool`（模块内）。
-  带 `::` 故不走裸名后缀、又不精确匹配 → 未解析（实测 `xai_tool_runtime::Tool`×59）。
-  纯 syn 看不穿 re-export，**这正是 Phase 2 SCIP 的领域**。未解析的 ~1.5% 主要就是
-  这类 + 外部 std trait（`Default`×211、`From`×142 等，合理未解析）。
-- **stray 非成员文件仍被兜到 host crate**。P1-B 修好了显式 `exclude` 的 fixture，但
-  仓库根下**未被 exclude 的**非成员 `.rs`（如某些 fixture）仍经 `source_unit` 的
-  `package_dir` 回退挂到 root crate 命名空间。根治需"只索引 target 模块树可达的文件、
-  其余跳过"的策略，属 P1-B 的后续。
-- **增量有 ~45s 地板**（见 §6 Phase 4 性能）：0 改动重跑仍要跑全图 resolve+validate。
-- **CI 卫生**：Phase 1 手写代码曾漏 `cargo fmt`，挂了 Rust Checks / guard 的 Format
-  步。收尾必须 `cargo fmt --check` + `cargo clippy` 一起跑，别只跑 clippy。
+## 3. 当前缺口
+
+| 缺口 | 后果 |
+|---|---|
+| Edge 没有 call-site span 和 analyzer evidence | 无法说明一条路径中的每一跳为何存在、发生在哪里 |
+| 查询加载并扫描全部 JSON shard | 反向遍历和大 workspace flow 查询无法扩展 |
+| 没有确定性符号搜索与候选排序 | Agent 必须事先知道 canonical symbol id |
+| 没有 `explore`、`flow`、`impact`、`affected` 综合查询 | Agent 仍需拼接多个低层调用和源码读取 |
+| 影响分析停留在代码事实 | 代码变更还不能直接追到需求、scenario、测试和质量门禁 |
+| freshness 尚未形成完整的分层/worktree 契约 | 旧语义层或借错 worktree 的图可能被误读 |
+| 没有真实 Rust Agent benchmark gate | 查询形态变化无法证明 Agent 实际受益 |
+| 零变更 rebuild 仍有明显全图地板 | 直接上 daemon 只会隐藏低效 resolve/validate，而不是解决它 |
+
+## 4. 能力轨道
+
+各轨道独立演进。交付物之间的依赖决定顺序，轨道编号不要求无关工作互相等待。
+
+### Track A：Graph Accuracy and Evidence
+
+#### A0. syn 基线与硬化
+
+状态：已交付。
+
+- 正确识别 Cargo workspace ownership 与 module layout。
+- 稳定 symbol id 和 schema invariant validation。
+- 覆盖当前支持的 Rust declaration 类型。
+- 明确区分 `resolved`、`unresolved`、`external` edge state。
+
+#### A1. SCIP 语义 overlay
+
+状态：已交付。
+
+- 直接摄取 rust-analyzer SCIP protobuf。
+- 生成 resolved call、reference、type use 和 implementation relation。
+- overlay 可逆，不修改 syn 基线事实。
+- 持久化 SCIP 路径和 fingerprint，支持增量 re-overlay。
+
+#### A2. Evidence-complete edge schema
+
+状态：下一步。
+
+为每条非 containment edge 增加向后兼容的可选字段：
+
+```text
+site          file、start/end line 与 column
+extractor     analyzer identity 与 version
+dispatch      static、trait、generic、closure、function-pointer、channel、macro
+confidence    exact、bounded-candidates、heuristic
+candidates    无法证明唯一 target 时的候选集合
+evidence      analyzer-specific reason 或 occurrence identifier
+```
+
+验收要求：
+
+- schema 版本号不匹配的旧 shard 响亮拒绝并提示重建（沿用 e90fcb5 的
+  `SchemaMismatch` 语义——派生数据以重建代替 migration）；`serde(default)`
+  仅用于同一 schema 版本内新增可选字段。
+- 每条 SCIP call edge 保留 occurrence site。
+- 存在多个 candidate 时，dynamic edge 不能标为 exact。
+- Edge 去重 identity 包含 source、target、kind 和 call site。
+- 查询结果无需打开原始 shard 就能解释每一跳。
+
+计划合约：`task-atlas-edge-evidence-index`。
+
+#### A3. MIR overlay
+
+状态：已在 `specs/roadmap/task-atlas-mir-layer.spec.md` 规划。
+
+- 优先评估 Charon；兼容性不足时再考虑 `rustc_public` driver。
+- 增加精确 MIR call edge 和 per-function CFG summary。
+- nightly 和 extractor version 要求必须 feature-gated。
+- 默认保留 generic form，不展开所有 monomorphized instance。
+- MIR 不可用时降级到 syn 加 SCIP，并返回 typed diagnostic。
+
+MIR 应增强一个已经能够解释 evidence 和 flow 的消费层。因此它依赖 A2 和第一版查询
+索引，但不阻塞这些高收益能力先落地。
+
+#### A4. Rust dynamic-dispatch enricher
+
+状态：未来工作，位于 A3 之后。
+
+候选机制包括 trait object、closure/function pointer、async task spawn、channel、callback
+registry 和选定的 Rust framework route。whole-graph 或 framework 推理必须与 core parser
+隔离，并输出 bounded candidate 与显式 confidence。
+
+### Track B：Agent Query and Retrieval
+
+#### B0. 现有低层查询
+
+状态：已交付。
+
+library、CLI 和 MCP 已提供 tree、query、refs、impls、status。即使未来默认 Agent surface
+收敛，这些稳定 primitive 仍然保留。
+
+#### B1. Search、disambiguation 与 derived query index
+
+状态：下一步；若模块边界仍清晰，可与 A2 放在同一合约交付。
+
+- 为 symbol/name、file-to-node、incoming/outgoing edge by kind 建立可重建索引。
+- 支持 exact、qualified、segmented identifier 与 deterministic fuzzy search。
+- 返回排序后的 ambiguity candidate、canonical id 与 location。
+- 选存储依赖前，对 JSON-side index、SQLite 或其他 embedded index 做 benchmark。
+- JSON shard 仍是正典存储，index recreation 必须 atomic。
+
+#### B2. 综合查询 `atlas explore`
+
+状态：B1 之后。
+
+`atlas explore` 是确定性组合查询，不在 Atlas 内调用 LLM。它从输入中提取 identifier 和
+path，查询图后一次返回受预算约束的结果：
+
+- 相关 symbol 与新鲜 source excerpt；
+- relationship map 和关键 path spine；
+- caller、callee、implementation 与 blast-radius summary；
+- 每一跳的 site、provenance、resolution、dispatch、confidence；
+- stale、unavailable、ambiguous 与 truncation diagnostic。
+
+只有当前源码 hash 与选择它的图层匹配时，才能内联 source excerpt。frozen stale query
+不能把旧图路径和未标注的当前源码混在一起。
+
+现有低层 CLI 继续保留。MCP 是否默认只列出 `atlas_explore`，必须由 Track E 的 Atlas
+A/B 结果决定，不能仅凭其他项目经验直接修改。
+
+计划合约：`task-atlas-explore-flow-impact`。
+
+#### B3. Flow query
+
+状态：与 B2 一起规划。
+
+```text
+atlas flow --from <symbol> --to <symbol>
+atlas flow --through <symbol>
+```
+
+- 返回有界的 shortest path 和 highest-confidence path。
+- dispatch 有歧义时保留 alternative path。
+- 区分 no-path、capability unavailable 和 search truncated。
+- 为 spine node 提供足够源码，避免为了理解一条 flow 打开所有参与文件。
+
+#### B4. Code impact 与 affected test
+
+状态：与 B2 同期或紧随其后。
+
+```text
+atlas impact <symbol> --depth <n>
+git diff --name-only | atlas affected --stdin
+```
+
+- 反向遍历 call、reference、type use、impl 与 containment edge。
+- 输入支持 symbol、file、staged change、worktree change 和 commit range。
+- 每个 affected node 返回 path 与 distance，不只返回平铺列表。
+- 不得仅凭测试文件名模式断言确定性 test coverage。
+- 输出 provider-neutral result，供 Intent-Code Linker 与 test obligation、Contract
+  selector 连接。
+
+### Track C：Intent-Aware Impact and Execution
+
+#### C0. Binding 与 lifecycle 集成
+
+状态：已交付。
+
+- ready work unit 可以绑定 fresh provider node。
+- Task Contract 可以声明 canonical symbol。
+- lifecycle 检查 missing symbol 与 stale graph。
+- trace target 记录 provider、node、file、provenance 和 graph fingerprint。
+
+#### C1. Intent-aware `affected`
+
+状态：B4 之后的下一步。
+
+将 code impact subgraph 与 agent-spec 已有工件连接：
+
+```text
+changed file or symbol
+  -> affected Atlas node and path
+  -> code-bindings.json
+  -> requirement and leaf work unit
+  -> Task Contract and scenario
+  -> Test selector or test obligation
+  -> quality profile and required skill
+  -> worktree and commit evidence
+```
+
+machine-readable result 必须列出链路缺口，例如 affected node 没有 binding、scenario 没有
+test selector，或者 required provider 不可用。不得静默丢弃这些路径。
+
+计划合约：`task-intent-aware-affected`。
+
+#### C2. Affected execution bundle
+
+状态：C1 之后。
+
+- 根据 graph impact 和 requirement risk 为一个 work unit 选择 fast check 与 acceptance
+  gate。
+- 通过显式 Test selector 和 test obligation 选择测试；文件名 heuristic 只能提议候选。
+- 从 project guidance 解析 required skill，记录 immutable skill receipt，但不把 receipt
+  当作通过证据。
+- 解释每个 tool、test、skill 被纳入的原因。
+
+#### C3. Failure explanation 与 replay 增强
+
+状态：C1 之后。
+
+扩展 failure/replay surface，使一次查询能回答：
+
+```text
+哪个 requirement
+哪个 leaf work unit
+哪个 scenario 与 test
+哪个 graph node 与 source span
+哪条 path、哪个 worktree 与 commit
+哪个 lifecycle 或 quality verdict 失败
+```
+
+Replay 仍是对已保存确定性记录的 evidence replay，不是 LLM rerun，也不承诺模型能重新
+生成完全相同的代码。
+
+### Track D：Live Runtime and Large Workspaces
+
+#### D1. Worktree identity 与 layered freshness
+
+状态：下一步，可与 B1 并行。
+
+- metadata 包含 git common dir、worktree root 与 graph root。
+- 检测从其他 worktree 借用的图，并拒绝确定性消费或清晰标注。
+- 分别报告 syn、SCIP、MIR freshness。
+- fingerprint 包含 analyzer 与 toolchain version。
+- binding、lifecycle 和 query gate 消费同一 freshness result。
+- 已交付的 schema-version 拒绝（e90fcb5）是本轨道第一个落地件，合约须把它纳入
+  回归场景。
+
+计划合约：`task-atlas-worktree-layered-freshness`。
+
+#### D2. 增量 resolution 与 validation
+
+状态：daemon 之前。
+
+- 相关输入未变时缓存 Cargo metadata。
+- 只更新 changed declaration 及其 dependent 的 symbol/reverse-edge index。
+- 零变更 rebuild 避免全图 resolution 与 validation。
+- 增加 bounded memory、cancellation、atomic shard swap 和 lock recovery。
+- 分别测量 cold build、zero-change rebuild、single-file edit 和 large overlay。
+
+#### D3. 可选 watch 与 daemon mode
+
+状态：D1、D2 之后。
+
+- 使用有界 OS resource 和 debounce 监听源码及 analyzer output。
+- 静态 MCP tool discovery 不依赖 index warm-up。
+- crash 和 stale lock 恢复时，不返回部分提交的图。
+- 为 CI、sandbox 和确定性运行保留显式 no-daemon mode。
+- 不宣称“永远新鲜”，必须暴露 pending sync 与 degraded watch state。
+
+Daemon 是正确增量模型之上的优化，不是对低效全图重算的遮蔽。
+
+### Track E：Evaluation and Adoption
+
+#### E0. Rust benchmark baseline
+
+状态：下一步，且必须早于默认 MCP surface 变化。
+
+建立可复现 corpus，覆盖 small、medium、large Rust workspace。每次能力变更至少测试以下
+问题类型：
+
+- symbol 与 implementation discovery；
+- request/event flow reconstruction；
+- change impact 与 affected test；
+- 需要编辑与验证的 implementation task；
+- stale、SCIP unavailable、compile-failing、alternate-worktree 场景。
+
+#### E1. Agent A/B gate
+
+状态：与 B2 一起规划。
+
+- 使用相同 model、prompt、repository revision、permission 和 cold/warm condition。
+- 对比 Atlas enabled 与 built-in Read/Grep exploration。
+- 每个 arm 至少运行三次，报告 median 与 variance。
+- 先测 answer correctness，再测 file read、graph call、total tool call、wall-clock、
+  context size 与 cost。
+- 不允许 correctness regression，也不允许把 stale result 展示为 fresh。
+- medium/large repo 应显著减少 Read/Grep 和总 tool call；具体阈值来自 E0，不复制其他
+  项目的 benchmark 数字。
+
+#### E2. Coverage 与 honesty metric
+
+状态：持续执行。
+
+按 workspace 与 provenance layer 报告：
+
+- resolved、unresolved、external、ambiguous edge；
+- 有 resolved cross-file dependent 的 file 与 symbol；
+- exact path 与 bounded-candidate path；
+- fixture 中的 false positive 与 false negative；
+- `atlas explore` 后的 read-back；
+- query truncation 与 fallback rate。
+
+### Track F：Provider Ecosystem
+
+#### F0. Provider-neutral consumer contract
+
+状态：已通过 `REQ-CODE-GRAPH-IR` 交付。
+
+#### F1. External provider adapter kit
+
+状态：Rust 路径通过 C1 验证之后。
+
+- 文档化第三方 provider 的 capability discovery、node/edge projection、freshness、graph
+  fingerprint 和 error normalization。
+- 增加不依赖特定工具的 provider conformance fixture。
+- adapter 必须可选且由项目配置；agent-spec 不绑定单一供应商或 orchestration system。
+
+#### F2. 非 Rust provider
+
+状态：需求驱动。
+
+候选包括 generic SCIP adapter、独立 tree-sitter provider，或已有本地 Code Graph 工具的
+adapter。它们投影到同一 Code Graph IR，并通过 provider conformance test，但不成为
+`rust-atlas` 内部模块。
+
+## 5. 从 codegraph 吸收的经验
+
+本轮基于本地 checkout 审查了
+[codegraph](https://github.com/colbymchenry/codegraph) `v1.3.1`
+（commit `e552dc2`）。以下实践进入 Track B、D、E：
+
+| codegraph 实践 | Atlas 采用方式 |
+|---|---|
+| 单一综合 `codegraph_explore` | 增加确定性 `atlas explore`；A/B 后再决定 MCP 默认暴露面 |
+| `impact` 与 changed-file `affected` | 增加反向图遍历，再连接 binding、scenario 和真实 test selector |
+| source/target edge index 与 symbol search | 增加 derived query index，JSON shard 仍是正典 |
+| 一次返回 source、path、blast radius | 返回受预算约束的源码与可解释图路径 |
+| heuristic provenance 与 synthesis metadata | 保留 Atlas provenance，另加 confidence、dispatch、evidence、candidate |
+| adaptive output sizing 与 sibling skeleton | 保留 path-spine body，压缩可互换的 off-spine implementation |
+| watch、daemon、lock recovery、worktree mismatch | 先吸收 failure case 与测试，增量正确后再实现运行时 |
+| 真实 Agent with/without A/B harness | 把 Agent 行为和答案正确性纳入 release evidence |
+
+明确不复制的内容：
+
+- 在 Rust Atlas 内实现 polyglot tree-sitter 架构。
+- 把 heuristic dynamic edge 伪装成 compiler fact。
+- 用“永远新鲜”隐藏 pending 或 layer-specific freshness。
+- 预先绑定 SQLite、Node daemon 或 installer-side agent configuration。
+- 未经 Atlas A/B 就默认只暴露一个 MCP 工具。
+- 在 agent-spec 已有 Contract selector/test obligation 时仍只按文件名选测试。
+- 直接采用 codegraph 的 benchmark 百分比作为 Atlas 验收阈值。其方法可以借鉴，但 Atlas
+  必须建立自己的 Rust baseline。
+
+## 6. 交付顺序
+
+推荐顺序优先改善 Agent 可用性，不等待最重的 compiler integration：
+
+| 顺序 | 交付物 | 依赖 | 当前优先原因 |
+|---|---|---|---|
+| 1 | E0 Rust benchmark baseline | 已交付图 | 改查询 UX 前先建立证据 |
+| 2 | A2 edge evidence 加 B1 query index | syn 与 SCIP | 让路径可解释且可扩展 |
+| 3 | D1 worktree 与 layered freshness | 已交付 stale model | 防止从错误 snapshot 给出权威答案 |
+| 4 | B2/B3 explore 与 flow | A2、B1、D1 | 给 Agent 一个内容充分的架构查询 |
+| 5 | B4 impact 与 affected code | B1、B3 | 提供确定性反向遍历 |
+| 6 | C1/C2 intent-aware affected bundle | B4、已交付 binding/quality planning | 连接代码变更、需求、测试、工具和 skill |
+| 7 | A3 MIR overlay | A2、B1 | 为已经可消费的 flow 增加精度 |
+| 8 | D2 incremental hardening | B1、D1 | 移除全图 rebuild 地板 |
+| 9 | D3 watch 与 daemon | D2 | 在不隐藏 stale 的前提下增加实时性能 |
+| 10 | F1/F2 provider ecosystem | Rust C1 已验证 | 泛化经过验证的合约，而不是提前猜抽象 |
+
+第一轮实施应建立三个独立合约：
+
+1. `task-atlas-agent-evaluation`
+2. `task-atlas-edge-evidence-index`
+3. `task-atlas-worktree-layered-freshness`
+
+这些基础被接受后，再启动 `task-atlas-explore-flow-impact`。
+
+## 7. 旧 Phase 映射
+
+历史文档和合约使用过重叠的 Phase 编号。保留历史名称以维持 trace，并按下表理解：
+
+| 历史标签 | 当前轨道状态 |
+|---|---|
+| 原始 Phase 1 Rust graph | A0 与 B0，已交付 |
+| syn hardening Phase 1 | A0，已交付 |
+| SCIP semantic Phase 2 | A1，已交付 |
+| 原始 MIR Phase 2 | A3，待实施 |
+| 原始 KLL integration Phase 3 | C0，已交付 |
+| polyglot Phase 3 | 改为 Rust Atlas 外部的 F1/F2 |
+| 原 Phase 4 daemon/performance | D2/D3，位于 query/freshness 基础之后 |
+
+Phase 0（`afca280`）与 Phase 1（`bb47849`）的逐缺陷审计证据表（共 10 项：
+问题、修法、实测验收）见本文件 git 历史中对应时期的版本。
+
+新文档与合约使用 track id 和描述性名称，不再增加数字 Phase。
+
+## 8. Roadmap 交付完成定义
+
+一个 roadmap item 只有满足全部适用条件才算已交付：
+
+1. KLL requirement 已接受，Task Contract 有当前有效的 `satisfies` 链接。
+2. parser、schema、migration、negative path、stale/worktree 行为有确定性测试。
+3. active contract 的 `agent-spec lifecycle` 通过，且没有 skip/uncertain verdict。
+4. 相关 graph invariant 与 provider capability check 通过。
+5. 记录真实 workspace 数字，包括 unresolved/degraded case，而不只记录成功数量。
+6. 改变默认查询面或输出形态的 Agent-facing 变化通过 Track E A/B gate；加性
+   flag 与非默认命令不强制。
+7. requirement trace 报告 `Honored`，replay 可以走到当前证据。
+8. 文档与 skill guidance 反映最终命令面，且不把派生图事实提升为 KLL 真相。
+
+## 9. 已知边界
+
+- external crate definition 只有在对应 semantic index 被纳入 SCIP 输入时才可见。
+- 代码无法编译时仍可保留 syn fact，但 SCIP/MIR 可能不可用。
+- reflection、runtime registration、build-script generated behavior 和 external service 不一定
+  能被静态解析。
+- 精确 impact analysis 受图覆盖率限制，结果必须暴露 unresolved frontier。
+- 小仓库可能无法摊薄 index/MCP overhead；E0 必须保留这个 tie zone，不能隐藏它。
+- Wiki 可以引用 Atlas fact，但仍是派生 working memory，不能替代 graph freshness、KLL
+  requirement 或 lifecycle evidence。
