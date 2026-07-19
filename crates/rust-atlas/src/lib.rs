@@ -35,6 +35,11 @@ pub enum AtlasError {
     Cargo(String),
     #[error("atlas-invariant: {0}")]
     Invariant(String),
+    #[error(
+        "atlas-schema-mismatch: graph schema v{found} != binary v{expected}; \
+         the graph was built by a different atlas version — rebuild with `atlas build`"
+    )]
+    SchemaMismatch { found: u32, expected: u32 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -512,7 +517,19 @@ fn read_meta(graph_dir: &Path) -> Result<Meta, AtlasError> {
     let text = std::fs::read_to_string(&path).map_err(|_| AtlasError::MissingGraph {
         graph_dir: graph_dir.display().to_string(),
     })?;
-    serde_json::from_str(&text).map_err(|e| AtlasError::Io(e.to_string()))
+    let meta: Meta = serde_json::from_str(&text).map_err(|e| AtlasError::Io(e.to_string()))?;
+    // Reject a graph written by a different atlas version. Without this, a
+    // stale-schema graph passes `check` (which only diffs file hashes) while
+    // `query` silently misreads or fails on the changed shard format — a false
+    // green. `build` reads meta via `.ok()`, so a mismatch there degrades to a
+    // full rebuild rather than an error.
+    if meta.schema_version != SCHEMA_VERSION {
+        return Err(AtlasError::SchemaMismatch {
+            found: meta.schema_version,
+            expected: SCHEMA_VERSION,
+        });
+    }
+    Ok(meta)
 }
 
 fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), AtlasError> {
@@ -2888,6 +2905,35 @@ impl std::fmt::Display for Local {
         assert!(broken.nodes.is_empty());
         // the rest of the graph still builds
         assert!(node(&shards, "atlas_basic::store::MemStore").is_some());
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_rejects_mismatched_schema_version() {
+        let (code, graph) = copy_fixture("atlas-schema-mismatch");
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+
+        // Rewrite meta.json to an older, incompatible schema version.
+        let meta_path = graph.join("meta.json");
+        let mut meta: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&meta_path).unwrap()).unwrap();
+        meta["schema_version"] = serde_json::json!(SCHEMA_VERSION - 1);
+        fs::write(&meta_path, meta.to_string()).unwrap();
+
+        // Consuming paths must fail loudly, not false-green.
+        assert!(matches!(
+            load_graph(&graph).unwrap_err(),
+            AtlasError::SchemaMismatch { .. }
+        ));
+        assert!(matches!(
+            check(&code, &graph).unwrap_err(),
+            AtlasError::SchemaMismatch { .. }
+        ));
+
+        // build recovers: it reads old meta via `.ok()`, so a mismatch degrades
+        // to a full rebuild that restores the current schema.
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        assert_eq!(load_graph(&graph).unwrap().0.schema_version, SCHEMA_VERSION);
         fs::remove_dir_all(code.parent().unwrap()).ok();
     }
 
