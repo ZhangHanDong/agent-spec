@@ -2077,38 +2077,10 @@ struct ScipDoc {
     occurrences: Vec<ScipOcc>,
 }
 
-#[derive(Clone, Copy)]
-struct ScipRange {
-    start_line: usize,
-    start_column: usize,
-    end_line: usize,
-    end_column: usize,
-}
-
-impl ScipRange {
-    fn from_values(range: &[u32]) -> Option<Self> {
-        match range {
-            [start_line, start_column, end_column] => Some(Self {
-                start_line: *start_line as usize,
-                start_column: *start_column as usize,
-                end_line: *start_line as usize,
-                end_column: *end_column as usize,
-            }),
-            [start_line, start_column, end_line, end_column] => Some(Self {
-                start_line: *start_line as usize,
-                start_column: *start_column as usize,
-                end_line: *end_line as usize,
-                end_column: *end_column as usize,
-            }),
-            _ => None,
-        }
-    }
-}
-
 struct ScipOcc {
     symbol: String,
     is_definition: bool,
-    range: ScipRange,
+    site: EdgeSite,
 }
 
 impl ScipOcc {
@@ -2143,20 +2115,24 @@ fn load_scip_json(text: &str) -> Result<ScipModel, AtlasError> {
     let documents = index
         .documents
         .into_iter()
-        .map(|doc| ScipDoc {
-            relative_path: doc.relative_path,
-            occurrences: doc
+        .map(|doc| {
+            let relative_path = doc.relative_path;
+            let occurrences = doc
                 .occurrences
                 .into_iter()
                 .filter_map(|occ| {
-                    let range = ScipRange::from_values(&occ.range)?;
+                    let site = normalize_scip_site(&relative_path, &occ.range)?;
                     Some(ScipOcc {
                         symbol: occ.symbol,
                         is_definition: occ.symbol_roles & 1 == 1,
-                        range,
+                        site,
                     })
                 })
-                .collect(),
+                .collect();
+            ScipDoc {
+                relative_path,
+                occurrences,
+            }
         })
         .collect();
     let tool = index
@@ -2191,9 +2167,9 @@ fn load_scip_protobuf(bytes: &[u8]) -> Result<ScipModel, AtlasError> {
     let documents = index
         .documents
         .iter()
-        .map(|doc| ScipDoc {
-            relative_path: doc.relative_path.clone(),
-            occurrences: doc
+        .map(|doc| {
+            let relative_path = doc.relative_path.clone();
+            let occurrences = doc
                 .occurrences
                 .iter()
                 .filter_map(|occ| {
@@ -2202,13 +2178,17 @@ fn load_scip_protobuf(bytes: &[u8]) -> Result<ScipModel, AtlasError> {
                         .iter()
                         .map(|value| u32::try_from(*value).ok())
                         .collect::<Option<Vec<_>>>()?;
-                    ScipRange::from_values(&range).map(|range| ScipOcc {
+                    normalize_scip_site(&relative_path, &range).map(|site| ScipOcc {
                         symbol: occ.symbol.clone(),
                         is_definition: occ.symbol_roles & 1 == 1,
-                        range,
+                        site,
                     })
                 })
-                .collect(),
+                .collect();
+            ScipDoc {
+                relative_path,
+                occurrences,
+            }
         })
         .collect();
 
@@ -2241,23 +2221,30 @@ fn classify_scip_kind(kind: scip::types::symbol_information::Kind) -> ScipKind {
     }
 }
 
-fn edge_site(file: &str, range: &ScipRange) -> EdgeSite {
-    EdgeSite {
-        file: file.to_string(),
-        line_start: range.start_line + 1,
-        column_start: range.start_column + 1,
-        line_end: range.end_line + 1,
-        column_end: range.end_column + 1,
+fn normalize_scip_site(file: &str, range: &[u32]) -> Option<EdgeSite> {
+    fn one_based(value: u32) -> Option<usize> {
+        usize::try_from(value).ok()?.checked_add(1)
     }
+
+    let (start_line, start_column, end_line, end_column) = match range {
+        [start_line, start_column, end_column] => {
+            (*start_line, *start_column, *start_line, *end_column)
+        }
+        [start_line, start_column, end_line, end_column] => {
+            (*start_line, *start_column, *end_line, *end_column)
+        }
+        _ => return None,
+    };
+    Some(EdgeSite {
+        file: file.to_string(),
+        line_start: one_based(start_line)?,
+        column_start: one_based(start_column)?,
+        line_end: one_based(end_line)?,
+        column_end: one_based(end_column)?,
+    })
 }
 
-fn scip_occurrence_evidence(
-    file: &str,
-    range: &ScipRange,
-    symbol: &str,
-    candidates: usize,
-) -> String {
-    let site = edge_site(file, range);
+fn scip_occurrence_evidence(site: &EdgeSite, symbol: &str, candidates: usize) -> String {
     let resolution = if candidates > 1 {
         format!("multiple candidates ({candidates})")
     } else {
@@ -2333,7 +2320,7 @@ fn overlay_scip(
         };
         for occ in &doc.occurrences {
             if occ.is_definition
-                && let Some(node_id) = containing_node(shard, occ.range.start_line + 1)
+                && let Some(node_id) = containing_node(shard, occ.site.line_start)
             {
                 defs.entry(occ.symbol.clone()).or_default().insert(node_id);
             }
@@ -2351,7 +2338,7 @@ fn overlay_scip(
                 let Some(shard) = shards.get(&rel) else {
                     continue;
                 };
-                match containing_node(shard, occ.range.start_line + 1) {
+                match containing_node(shard, occ.site.line_start) {
                     Some(from) => from,
                     None => continue,
                 }
@@ -2386,13 +2373,12 @@ fn overlay_scip(
                 resolution,
                 kind: occ.edge_kind(&model.kinds),
                 provenance: Provenance::Scip,
-                site: Some(edge_site(&rel, &occ.range)),
+                site: Some(occ.site.clone()),
                 extractor: Some(scip_extractor(model.tool.as_deref())),
                 dispatch: None,
                 confidence: Some(confidence),
                 evidence: Some(scip_occurrence_evidence(
-                    &rel,
-                    &occ.range,
+                    &occ.site,
                     &occ.symbol,
                     candidates.len(),
                 )),
@@ -2425,7 +2411,7 @@ fn overlay_scip(
             continue;
         };
         for occ in &doc.occurrences {
-            if occ.is_definition || occ.range.start_line + 1 != line_start {
+            if occ.is_definition || occ.site.line_start != line_start {
                 continue;
             }
             let kind = match model.kinds.get(&occ.symbol) {
@@ -2468,13 +2454,12 @@ fn overlay_scip(
                 resolution,
                 kind,
                 provenance: Provenance::Scip,
-                site: Some(edge_site(&rel, &occ.range)),
+                site: Some(occ.site.clone()),
                 extractor: Some(scip_extractor(model.tool.as_deref())),
                 dispatch: None,
                 confidence: Some(confidence),
                 evidence: Some(scip_occurrence_evidence(
-                    &rel,
-                    &occ.range,
+                    &occ.site,
                     &occ.symbol,
                     candidates.len(),
                 )),
@@ -2607,6 +2592,28 @@ mod tests {
 
     fn all_edges(shards: &[Shard]) -> Vec<Edge> {
         shards.iter().flat_map(|s| s.edges.clone()).collect()
+    }
+
+    fn assert_scip_occurrence_metadata(edge: &Edge, expected_site: EdgeSite) {
+        let expected_location = format!(
+            "{}:{}:{}-{}:{}",
+            expected_site.file,
+            expected_site.line_start,
+            expected_site.column_start,
+            expected_site.line_end,
+            expected_site.column_end
+        );
+        assert_eq!(edge.site.as_ref(), Some(&expected_site));
+        assert_eq!(
+            edge.extractor
+                .as_ref()
+                .map(|extractor| extractor.name.as_str()),
+            Some("rust-analyzer-scip")
+        );
+        assert_eq!(edge.confidence, Some(EdgeConfidence::Exact));
+        assert!(edge.evidence.as_deref().is_some_and(
+            |evidence| evidence.contains("occurrence") && evidence.contains(&expected_location)
+        ));
     }
 
     fn edge(from: &str, to: &str, kind: EdgeKind) -> Edge {
@@ -3521,29 +3528,64 @@ impl std::fmt::Display for Local {
                         == Some("rust-analyzer cargo atlas-basic 0.1.0 store/MemStore#")
             })
             .unwrap();
-        assert_eq!(
-            edge.site,
-            Some(EdgeSite {
+        assert_scip_occurrence_metadata(
+            &edge,
+            EdgeSite {
                 file: "src/service.rs".to_string(),
                 line_start: 3,
                 column_start: 20,
                 line_end: 3,
                 column_end: 28,
-            })
-        );
-        assert_eq!(
-            edge.extractor
-                .as_ref()
-                .map(|extractor| extractor.name.as_str()),
-            Some("rust-analyzer-scip")
-        );
-        assert_eq!(edge.confidence, Some(EdgeConfidence::Exact));
-        assert!(
-            edge.evidence
-                .as_deref()
-                .is_some_and(|value| value.contains("occurrence"))
+            },
         );
         fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_scip_loaders_normalize_occurrence_sites() {
+        let json = load_scip(&scip_fixture()).unwrap();
+        let json_occurrence = json
+            .documents
+            .iter()
+            .find(|document| document.relative_path == "src/service.rs")
+            .unwrap()
+            .occurrences
+            .iter()
+            .find(|occurrence| {
+                !occurrence.is_definition && occurrence.symbol.ends_with("store/MemStore#")
+            })
+            .unwrap();
+        assert_eq!(
+            json_occurrence.site,
+            EdgeSite {
+                file: "src/service.rs".to_string(),
+                line_start: 3,
+                column_start: 20,
+                line_end: 3,
+                column_end: 28,
+            }
+        );
+
+        let protobuf = load_scip(&scip_protobuf_fixture()).unwrap();
+        let protobuf_occurrence = protobuf
+            .documents
+            .iter()
+            .find(|document| document.relative_path == "src/service.rs")
+            .unwrap()
+            .occurrences
+            .iter()
+            .find(|occurrence| occurrence.symbol.ends_with("impl#[MemStore][Store]get()."))
+            .unwrap();
+        assert_eq!(
+            protobuf_occurrence.site,
+            EdgeSite {
+                file: "src/service.rs".to_string(),
+                line_start: 4,
+                column_start: 11,
+                line_end: 4,
+                column_end: 14,
+            }
+        );
     }
 
     #[test]
@@ -3563,15 +3605,15 @@ impl std::fmt::Display for Local {
             .into_iter()
             .find(|edge| edge.provenance == Provenance::Scip && edge.kind == EdgeKind::Calls)
             .unwrap();
-        let site = edge.site.as_ref().unwrap();
-        assert!(site.line_start >= 1 && site.column_start >= 1);
-        assert!(site.line_end >= site.line_start && site.column_end >= site.column_start);
-        assert_eq!(edge.extractor.as_ref().unwrap().name, "rust-analyzer-scip");
-        assert_eq!(edge.confidence, Some(EdgeConfidence::Exact));
-        assert!(
-            edge.evidence
-                .as_deref()
-                .is_some_and(|value| value.contains("occurrence"))
+        assert_scip_occurrence_metadata(
+            &edge,
+            EdgeSite {
+                file: "src/service.rs".to_string(),
+                line_start: 4,
+                column_start: 11,
+                line_end: 4,
+                column_end: 14,
+            },
         );
         fs::remove_dir_all(code.parent().unwrap()).ok();
     }
@@ -3629,6 +3671,74 @@ impl std::fmt::Display for Local {
     }
 
     #[test]
+    fn test_scip_preserves_distinct_occurrences_for_same_edge() {
+        let (code, graph) = scratch_crate(
+            "atlas_scip_distinct_occurrences",
+            &[(
+                "src/lib.rs",
+                "pub fn target() {}\npub fn caller() {\n    target();\n    target();\n}\n",
+            )],
+        );
+        let index_path = graph.join("distinct-occurrences.json");
+        fs::create_dir_all(&graph).unwrap();
+        fs::write(
+            &index_path,
+            r#"{
+  "documents": [{
+    "relative_path": "src/lib.rs",
+    "occurrences": [
+      {"symbol":"test target().","symbol_roles":1,"range":[0,7,0,13]},
+      {"symbol":"test target().","symbol_roles":0,"range":[2,8,3,2]},
+      {"symbol":"test target().","symbol_roles":0,"range":[3,4,3,10]}
+    ]
+  }]
+}"#,
+        )
+        .unwrap();
+        build(
+            &code,
+            &graph,
+            &BuildOptions {
+                full: false,
+                scip_index: Some(index_path),
+            },
+        )
+        .unwrap();
+        let (_, shards) = load_graph(&graph).unwrap();
+        let mut edges: Vec<_> = all_edges(&shards)
+            .into_iter()
+            .filter(|edge| {
+                edge.provenance == Provenance::Scip
+                    && edge.kind == EdgeKind::References
+                    && edge.target_text.as_deref() == Some("test target().")
+            })
+            .collect();
+        edges.sort_by(|left, right| left.site.cmp(&right.site));
+        assert_eq!(edges.len(), 2);
+        assert_scip_occurrence_metadata(
+            &edges[0],
+            EdgeSite {
+                file: "src/lib.rs".to_string(),
+                line_start: 3,
+                column_start: 9,
+                line_end: 4,
+                column_end: 3,
+            },
+        );
+        assert_scip_occurrence_metadata(
+            &edges[1],
+            EdgeSite {
+                file: "src/lib.rs".to_string(),
+                line_start: 4,
+                column_start: 5,
+                line_end: 4,
+                column_end: 11,
+            },
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
     fn test_scip_emits_calls_for_method_target() {
         let (code, graph) = copy_fixture("atlas-scip-calls");
         build(
@@ -3665,13 +3775,25 @@ impl std::fmt::Display for Local {
         .unwrap();
         let (_, shards) = load_graph(&graph).unwrap();
         let mem = node(&shards, "atlas_basic::store::MemStore").unwrap();
-        assert!(
-            all_edges(&shards)
-                .iter()
-                .any(|e| e.kind == EdgeKind::UsesType
-                    && e.provenance == Provenance::Scip
-                    && e.to == mem.id),
-            "expected a scip UsesType edge to MemStore"
+        let run = node(&shards, "atlas_basic::service::run").unwrap();
+        let edge = all_edges(&shards)
+            .into_iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::UsesType
+                    && edge.provenance == Provenance::Scip
+                    && edge.from == run.id
+                    && edge.to == mem.id
+            })
+            .unwrap();
+        assert_scip_occurrence_metadata(
+            &edge,
+            EdgeSite {
+                file: "src/service.rs".to_string(),
+                line_start: 3,
+                column_start: 20,
+                line_end: 3,
+                column_end: 28,
+            },
         );
         fs::remove_dir_all(code.parent().unwrap()).ok();
     }
@@ -3695,15 +3817,25 @@ impl std::fmt::Display for Local {
             .flat_map(|s| s.nodes.iter())
             .find(|n| n.kind == NodeKind::Impl)
             .unwrap();
-        assert!(
-            all_edges(&shards)
-                .iter()
-                .any(|e| e.kind == EdgeKind::ImplsTrait
-                    && e.provenance == Provenance::Scip
-                    && e.resolution == EdgeResolution::Resolved
-                    && e.from == impl_node.id
-                    && e.to == store.id),
-            "expected a resolved scip ImplsTrait edge impl→Store"
+        let edge = all_edges(&shards)
+            .into_iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::ImplsTrait
+                    && edge.provenance == Provenance::Scip
+                    && edge.resolution == EdgeResolution::Resolved
+                    && edge.from == impl_node.id
+                    && edge.to == store.id
+            })
+            .unwrap();
+        assert_scip_occurrence_metadata(
+            &edge,
+            EdgeSite {
+                file: "src/store.rs".to_string(),
+                line_start: 7,
+                column_start: 6,
+                line_end: 7,
+                column_end: 11,
+            },
         );
         fs::remove_dir_all(code.parent().unwrap()).ok();
     }
