@@ -21,21 +21,17 @@ pub struct QueryIndex {
     pub outgoing: BTreeMap<String, Vec<usize>>,
 }
 
-impl QueryIndex {
-    fn from_graph(meta: &Meta, shards: &[Shard]) -> Self {
-        let mut nodes: Vec<Node> = shards
-            .iter()
-            .flat_map(|shard| shard.nodes.iter().cloned())
-            .collect();
-        nodes.sort_by(|left, right| left.id.cmp(&right.id));
+#[derive(Debug, PartialEq, Eq)]
+struct Locators {
+    id: BTreeMap<String, Vec<usize>>,
+    symbol: BTreeMap<String, Vec<usize>>,
+    file: BTreeMap<String, Vec<usize>>,
+    incoming: BTreeMap<String, Vec<usize>>,
+    outgoing: BTreeMap<String, Vec<usize>>,
+}
 
-        let edges: Vec<Edge> = shards
-            .iter()
-            .flat_map(|shard| shard.edges.iter().cloned())
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
-
+impl Locators {
+    fn from_tables(nodes: &[Node], edges: &[Edge]) -> Self {
         let mut id = BTreeMap::new();
         let mut symbol = BTreeMap::new();
         let mut file = BTreeMap::new();
@@ -53,16 +49,63 @@ impl QueryIndex {
         }
 
         Self {
-            schema_version: meta.schema_version,
-            graph_fingerprint: meta.graph_fingerprint.clone(),
-            nodes,
-            edges,
             id,
             symbol,
             file,
             incoming,
             outgoing,
         }
+    }
+}
+
+impl QueryIndex {
+    fn from_graph(meta: &Meta, shards: &[Shard]) -> Self {
+        let mut nodes: Vec<Node> = shards
+            .iter()
+            .flat_map(|shard| shard.nodes.iter().cloned())
+            .collect();
+        nodes.sort_by(|left, right| left.id.cmp(&right.id));
+
+        let edges: Vec<Edge> = shards
+            .iter()
+            .flat_map(|shard| shard.edges.iter().cloned())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+
+        let locators = Locators::from_tables(&nodes, &edges);
+
+        Self {
+            schema_version: meta.schema_version,
+            graph_fingerprint: meta.graph_fingerprint.clone(),
+            nodes,
+            edges,
+            id: locators.id,
+            symbol: locators.symbol,
+            file: locators.file,
+            incoming: locators.incoming,
+            outgoing: locators.outgoing,
+        }
+    }
+
+    fn validate_locators(&self) -> Result<(), AtlasError> {
+        let expected = Locators::from_tables(&self.nodes, &self.edges);
+        for (name, persisted_matches) in [
+            ("id", self.id == expected.id),
+            ("symbol", self.symbol == expected.symbol),
+            ("file", self.file == expected.file),
+            ("incoming", self.incoming == expected.incoming),
+            ("outgoing", self.outgoing == expected.outgoing),
+        ] {
+            if !persisted_matches {
+                return Err(AtlasError::QueryIndexCorrupt {
+                    detail: format!(
+                        "{name} locator does not exactly cover its canonical value table"
+                    ),
+                });
+            }
+        }
+        Ok(())
     }
 
     pub fn matching_nodes(&self, value: &str) -> Vec<&Node> {
@@ -136,18 +179,41 @@ fn insert_locator(locator: &mut BTreeMap<String, Vec<usize>>, key: &str, positio
 struct CanonicalGraph<'a> {
     schema_version: u32,
     package: &'a str,
+    packages: &'a [String],
     roots: &'a [String],
     capability: &'a Capability,
     files: &'a BTreeMap<String, String>,
+    shards: &'a [Shard],
 }
 
-pub fn canonical_graph_fingerprint(meta: &Meta) -> Result<String, AtlasError> {
+#[derive(Deserialize)]
+struct QueryIndexHeader {
+    schema_version: u32,
+}
+
+pub fn canonical_graph_fingerprint(meta: &Meta, shards: &[Shard]) -> Result<String, AtlasError> {
+    let mut canonical_shards = shards.to_vec();
+    for shard in &mut canonical_shards {
+        shard.nodes.sort_by(|left, right| {
+            left.id
+                .cmp(&right.id)
+                .then_with(|| left.symbol.cmp(&right.symbol))
+                .then_with(|| left.file.cmp(&right.file))
+                .then_with(|| left.line_start.cmp(&right.line_start))
+                .then_with(|| left.line_end.cmp(&right.line_end))
+        });
+        shard.edges.sort();
+    }
+    canonical_shards.sort_by(|left, right| left.file.cmp(&right.file));
+
     let canonical = CanonicalGraph {
         schema_version: meta.schema_version,
         package: &meta.package,
+        packages: &meta.packages,
         roots: &meta.roots,
         capability: &meta.capability,
         files: &meta.files,
+        shards: &canonical_shards,
     };
     let bytes =
         serde_json::to_vec(&canonical).map_err(|error| AtlasError::Io(error.to_string()))?;
@@ -175,20 +241,27 @@ pub fn load_query_index(graph_dir: &Path, meta: &Meta) -> Result<QueryIndex, Atl
             AtlasError::Io(error.to_string())
         }
     })?;
-    let index: QueryIndex =
-        serde_json::from_str(&text).map_err(|error| AtlasError::Io(error.to_string()))?;
-    if index.schema_version != SCHEMA_VERSION {
+    let header: QueryIndexHeader =
+        serde_json::from_str(&text).map_err(|error| AtlasError::QueryIndexCorrupt {
+            detail: format!("invalid query index header: {error}"),
+        })?;
+    if header.schema_version != SCHEMA_VERSION {
         return Err(AtlasError::QueryIndexSchema {
-            found: index.schema_version,
+            found: header.schema_version,
             expected: SCHEMA_VERSION,
         });
     }
+    let index: QueryIndex =
+        serde_json::from_str(&text).map_err(|error| AtlasError::QueryIndexCorrupt {
+            detail: format!("invalid query index body: {error}"),
+        })?;
     if index.graph_fingerprint != meta.graph_fingerprint {
         return Err(AtlasError::QueryIndexStale {
             found: index.graph_fingerprint,
             expected: meta.graph_fingerprint.clone(),
         });
     }
+    index.validate_locators()?;
     Ok(index)
 }
 
@@ -249,7 +322,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use crate::{
-        AtlasError, BuildOptions, Capability, Meta, QueryIndex, SCHEMA_VERSION, build,
+        AtlasError, BuildOptions, Capability, EdgeSite, Meta, QueryIndex, SCHEMA_VERSION, build,
         canonical_graph_fingerprint, load_graph, load_query_index, read_meta, write_json_atomic,
     };
 
@@ -332,21 +405,57 @@ mod tests {
     #[test]
     fn test_graph_fingerprint_excludes_itself_and_is_canonical() {
         let mut meta = sample_meta();
-        let first = canonical_graph_fingerprint(&meta).unwrap();
+        let first = canonical_graph_fingerprint(&meta, &[]).unwrap();
         meta.graph_fingerprint = "a previous fingerprint".to_string();
-        let second = canonical_graph_fingerprint(&meta).unwrap();
+        let second = canonical_graph_fingerprint(&meta, &[]).unwrap();
         assert_eq!(first, second);
 
         meta.files = BTreeMap::from([
             ("src/z.rs".to_string(), "z".to_string()),
             ("src/a.rs".to_string(), "a".to_string()),
         ]);
-        let ordered = canonical_graph_fingerprint(&meta).unwrap();
+        let ordered = canonical_graph_fingerprint(&meta, &[]).unwrap();
         meta.files = BTreeMap::from([
             ("src/a.rs".to_string(), "a".to_string()),
             ("src/z.rs".to_string(), "z".to_string()),
         ]);
-        assert_eq!(ordered, canonical_graph_fingerprint(&meta).unwrap());
+        assert_eq!(ordered, canonical_graph_fingerprint(&meta, &[]).unwrap());
+    }
+
+    #[test]
+    fn test_graph_fingerprint_changes_with_edge_site_and_evidence() {
+        let (code, graph) = build_fixture("atlas-query-index-fingerprint-facts");
+        let (meta, shards) = load_graph(&graph).unwrap();
+        let original = canonical_graph_fingerprint(&meta, &shards).unwrap();
+
+        let mut evidence_changed = shards.clone();
+        evidence_changed
+            .iter_mut()
+            .find_map(|shard| shard.edges.first_mut())
+            .unwrap()
+            .evidence = Some("different evidence".to_string());
+        assert_ne!(
+            original,
+            canonical_graph_fingerprint(&meta, &evidence_changed).unwrap()
+        );
+
+        let mut site_changed = shards.clone();
+        site_changed
+            .iter_mut()
+            .find_map(|shard| shard.edges.first_mut())
+            .unwrap()
+            .site = Some(EdgeSite {
+            file: "src/lib.rs".to_string(),
+            line_start: 1,
+            column_start: 1,
+            line_end: 1,
+            column_end: 2,
+        });
+        assert_ne!(
+            original,
+            canonical_graph_fingerprint(&meta, &site_changed).unwrap()
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
     }
 
     #[test]
@@ -412,6 +521,112 @@ mod tests {
                 meta.graph_fingerprint
             )
         );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    fn assert_locator_corrupt(
+        name: &str,
+        update: impl FnOnce(&mut serde_json::Value),
+    ) -> AtlasError {
+        let (code, graph) = build_fixture(name);
+        let meta = read_meta(&graph).unwrap();
+        rewrite_index(&graph, update);
+        let error = load_query_index(&graph, &meta).unwrap_err();
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+        error
+    }
+
+    #[test]
+    fn test_load_query_index_rejects_out_of_bounds_locator() {
+        let error = assert_locator_corrupt("atlas-query-index-locator-bounds", |value| {
+            let positions = value["outgoing"]
+                .as_object_mut()
+                .unwrap()
+                .values_mut()
+                .next()
+                .unwrap()
+                .as_array_mut()
+                .unwrap();
+            positions[0] = serde_json::json!(usize::MAX);
+        });
+        assert!(matches!(error, AtlasError::QueryIndexCorrupt { .. }));
+        assert!(error.to_string().contains("atlas-query-index-corrupt"));
+        assert!(error.to_string().contains("atlas build"));
+    }
+
+    #[test]
+    fn test_load_query_index_rejects_wrong_locator_key() {
+        let error = assert_locator_corrupt("atlas-query-index-locator-key", |value| {
+            let locator = value["id"].as_object_mut().unwrap();
+            let key = locator.keys().next().unwrap().clone();
+            let positions = locator.remove(&key).unwrap();
+            locator.insert(format!("{key}-wrong"), positions);
+        });
+        assert!(matches!(error, AtlasError::QueryIndexCorrupt { .. }));
+    }
+
+    #[test]
+    fn test_load_query_index_rejects_missing_locator_entry() {
+        let error = assert_locator_corrupt("atlas-query-index-locator-missing", |value| {
+            let locator = value["file"].as_object_mut().unwrap();
+            let key = locator.keys().next().unwrap().clone();
+            locator.remove(&key);
+        });
+        assert!(matches!(error, AtlasError::QueryIndexCorrupt { .. }));
+    }
+
+    #[test]
+    fn test_load_query_index_rejects_duplicate_locator_position() {
+        let error = assert_locator_corrupt("atlas-query-index-locator-duplicate", |value| {
+            let positions = value["symbol"]
+                .as_object_mut()
+                .unwrap()
+                .values_mut()
+                .next()
+                .unwrap()
+                .as_array_mut()
+                .unwrap();
+            positions.push(positions[0].clone());
+        });
+        assert!(matches!(error, AtlasError::QueryIndexCorrupt { .. }));
+    }
+
+    #[test]
+    fn test_old_schema_precedes_incompatible_query_index_body() {
+        let (code, graph) = build_fixture("atlas-query-index-old-schema-body");
+        let meta = read_meta(&graph).unwrap();
+        fs::write(
+            graph.join("query-index.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "schema_version": SCHEMA_VERSION - 1,
+                "nodes": "incompatible",
+                "edges": false
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let error = load_query_index(&graph, &meta).unwrap_err();
+        assert!(matches!(error, AtlasError::QueryIndexSchema { .. }));
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_current_schema_malformed_query_index_is_corrupt() {
+        let (code, graph) = build_fixture("atlas-query-index-current-schema-body");
+        let meta = read_meta(&graph).unwrap();
+        fs::write(
+            graph.join("query-index.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "schema_version": SCHEMA_VERSION,
+                "nodes": "incompatible"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let error = load_query_index(&graph, &meta).unwrap_err();
+        assert!(matches!(error, AtlasError::QueryIndexCorrupt { .. }));
         fs::remove_dir_all(code.parent().unwrap()).ok();
     }
 

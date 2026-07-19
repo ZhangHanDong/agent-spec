@@ -60,6 +60,8 @@ pub enum AtlasError {
          rebuild with `atlas build`"
     )]
     QueryIndexStale { found: String, expected: String },
+    #[error("atlas-query-index-corrupt: {detail}; rebuild with `atlas build`")]
+    QueryIndexCorrupt { detail: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -340,11 +342,11 @@ pub fn build(
         files,
         graph_fingerprint: String::new(),
     };
-    meta.graph_fingerprint = canonical_graph_fingerprint(&meta)?;
     let mut shards = Vec::new();
     for rel in meta.files.keys() {
         shards.push(read_shard(&shards_dir, rel)?);
     }
+    meta.graph_fingerprint = canonical_graph_fingerprint(&meta, &shards)?;
     write_json_atomic(&graph_dir.join("meta.json"), &meta)?;
     rebuild_query_index(graph_dir, &meta, &shards)?;
     Ok(BuildReport {
