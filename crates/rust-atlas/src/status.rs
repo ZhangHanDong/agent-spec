@@ -251,7 +251,10 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
 
-    use crate::{AtlasError, BuildOptions, LayerState, QueryOptions, build, impls};
+    use crate::{
+        AtlasError, BuildOptions, EdgeKind, EdgeSite, LayerState, Provenance, QueryOptions, build,
+        impls,
+    };
 
     fn fixture_root() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/atlas/basic")
@@ -443,6 +446,14 @@ mod tests {
             serde_json::from_str(&fs::read_to_string(&index).unwrap()).unwrap();
         changed_index["metadata"]["tool_info"]["version"] =
             serde_json::json!("2026-07-20-authority-regression");
+        changed_index["documents"][0]["occurrences"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "symbol": "rust-analyzer cargo atlas-basic 0.1.0 store/Store#",
+                "symbol_roles": 0,
+                "range": [6, 5, 6, 10]
+            }));
         fs::write(&index, serde_json::to_vec_pretty(&changed_index).unwrap()).unwrap();
         let service = code.join("src/service.rs");
         fs::write(
@@ -451,7 +462,40 @@ mod tests {
         )
         .unwrap();
 
-        impls(&code, &graph, "Store", &QueryOptions::default()).unwrap();
+        let refreshed_impls = impls(&code, &graph, "Store", &QueryOptions::default()).unwrap();
+        let relation = refreshed_impls
+            .edges
+            .iter()
+            .find(|edge| edge.kind == EdgeKind::ImplsTrait)
+            .unwrap();
+        let (_, refreshed_shards) = crate::load_graph(&graph).unwrap();
+        let refreshed_scip_edge = refreshed_shards
+            .iter()
+            .flat_map(|shard| &shard.edges)
+            .find(|edge| {
+                edge.from == relation.from
+                    && edge.to == relation.to
+                    && edge.kind == EdgeKind::References
+                    && edge.provenance == Provenance::Scip
+            })
+            .unwrap();
+        assert_eq!(
+            refreshed_scip_edge.site,
+            Some(EdgeSite {
+                file: "src/store.rs".to_string(),
+                line_start: 7,
+                column_start: 6,
+                line_end: 7,
+                column_end: 11,
+            })
+        );
+        assert_eq!(
+            refreshed_scip_edge.evidence.as_deref(),
+            Some(
+                "rust-analyzer-scip occurrence at src/store.rs:7:6-7:11 for \
+                 `rust-analyzer cargo atlas-basic 0.1.0 store/Store#`: one target"
+            )
+        );
 
         let persisted = crate::load_graph(&graph).unwrap().0.capability;
         assert_eq!(
