@@ -5,6 +5,7 @@ use std::path::Path;
 pub const CORPUS_SCHEMA: &str = "agent-spec/atlas-eval/corpus-v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Corpus {
     pub schema: String,
     pub model: String,
@@ -13,6 +14,7 @@ pub struct Corpus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Case {
     pub id: String,
     pub size: WorkspaceSize,
@@ -114,7 +116,7 @@ pub fn load_corpus(path: &Path) -> Result<Corpus, EvalError> {
     })?;
     let corpus = serde_json::from_slice(&bytes).map_err(|error| {
         EvalError::new(
-            "atlas-eval-load",
+            "atlas-eval-corpus",
             format!("failed to parse {}: {error}", path.display()),
         )
     })?;
@@ -216,13 +218,84 @@ mod tests {
 
     #[test]
     fn test_atlas_eval_plan_pairs_arms_and_trials() {
-        let corpus = valid_corpus(3);
+        let mut corpus = valid_corpus(3);
+        corpus.model = "pinned-model".to_string();
+        corpus.prompt = "pinned prompt".to_string();
+        let mut second = corpus.cases[0].clone();
+        second.id = "impact-analysis".to_string();
+        second.repository = "fixtures/atlas/medium".to_string();
+        second.revision = "b86d85f".to_string();
+        second.permissions = Permissions::WorkspaceWrite;
+        second.cache_condition = CacheCondition::Warm;
+        corpus.cases.push(second);
+
         let plan = compile_plan(&corpus).expect("valid plan");
         assert_eq!(plan.runs.len(), corpus.cases.len() * 2 * 3);
-        assert!(plan.runs.chunks_exact(6).all(|runs| {
-            runs.iter().filter(|run| run.arm == Arm::Atlas).count() == 3
-                && runs.iter().filter(|run| run.arm == Arm::Baseline).count() == 3
-        }));
+        let expected_trials = [
+            (Arm::Atlas, 1),
+            (Arm::Atlas, 2),
+            (Arm::Atlas, 3),
+            (Arm::Baseline, 1),
+            (Arm::Baseline, 2),
+            (Arm::Baseline, 3),
+        ];
+        for (case, runs) in corpus.cases.iter().zip(plan.runs.chunks_exact(6)) {
+            for (run, (arm, trial)) in runs.iter().zip(expected_trials) {
+                assert_eq!(run.case_id, case.id);
+                assert_eq!(run.arm, arm);
+                assert_eq!(run.trial, trial);
+                assert_eq!(run.model, corpus.model);
+                assert_eq!(run.prompt, corpus.prompt);
+                assert_eq!(run.repository, case.repository);
+                assert_eq!(run.revision, case.revision);
+                assert_eq!(run.permissions, case.permissions);
+                assert_eq!(run.cache_condition, case.cache_condition);
+            }
+        }
+
+        let second_plan = compile_plan(&corpus).expect("same corpus compiles twice");
+        assert_eq!(
+            serde_json::to_vec(&plan).unwrap(),
+            serde_json::to_vec(&second_plan).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_atlas_eval_rejects_unknown_top_level_field() {
+        let path = std::env::temp_dir().join(format!(
+            "atlas-eval-unknown-top-level-{}.json",
+            std::process::id()
+        ));
+        let mut value = serde_json::to_value(valid_corpus(3)).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .insert("unexpected".to_string(), serde_json::json!(true));
+        std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+
+        let result = load_corpus(&path);
+        std::fs::remove_file(path).unwrap();
+
+        assert_eq!(result.unwrap_err().code(), "atlas-eval-corpus");
+    }
+
+    #[test]
+    fn test_atlas_eval_rejects_unknown_case_field() {
+        let path = std::env::temp_dir().join(format!(
+            "atlas-eval-unknown-case-{}.json",
+            std::process::id()
+        ));
+        let mut value = serde_json::to_value(valid_corpus(3)).unwrap();
+        value["cases"][0]
+            .as_object_mut()
+            .unwrap()
+            .insert("unexpected".to_string(), serde_json::json!(true));
+        std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+
+        let result = load_corpus(&path);
+        std::fs::remove_file(path).unwrap();
+
+        assert_eq!(result.unwrap_err().code(), "atlas-eval-corpus");
     }
 
     #[test]
