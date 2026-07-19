@@ -273,7 +273,7 @@ Scenario: Lifecycle enforces declared QA classes
   Then it reports the missing evidence or rejects the invalid value
 
 Scenario: Zero-match Cargo filters are skipped rather than passed
-  Test: test_zero_match_cargo_test_is_skip
+  Test: test_cargo_test_executed_count_distinguishes_zero_match_from_mixed_targets
   Given Cargo output reports zero executed tests for a selector
   When the test verifier counts executed test targets
   Then the selector is distinguished from output where at least one test ran
