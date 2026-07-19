@@ -409,6 +409,11 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum AtlasCommands {
+    /// Reproducible Atlas agent evaluation utilities
+    Benchmark {
+        #[command(subcommand)]
+        action: AtlasBenchmarkCommands,
+    },
     /// Build or incrementally refresh the graph
     Build {
         #[arg(long, default_value = ".")]
@@ -484,6 +489,29 @@ enum AtlasCommands {
         code: PathBuf,
         #[arg(long, default_value = ".agent-spec/graph")]
         graph: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum AtlasBenchmarkCommands {
+    /// Validate an evaluation corpus
+    Validate {
+        #[arg(long)]
+        corpus: PathBuf,
+    },
+    /// Compile an evaluation corpus into a paired run plan
+    Plan {
+        #[arg(long)]
+        corpus: PathBuf,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Summarize JSON-array or NDJSON run receipts
+    Summarize {
+        #[arg(long)]
+        receipts: PathBuf,
+        #[arg(long)]
+        out: Option<PathBuf>,
     },
 }
 
@@ -3280,6 +3308,7 @@ fn cmd_atlas(action: AtlasCommands) -> Result<(), Box<dyn std::error::Error>> {
     }
     let frozen_opts = |frozen: bool| rust_atlas::QueryOptions { frozen };
     match action {
+        AtlasCommands::Benchmark { action } => cmd_atlas_benchmark(action),
         AtlasCommands::Build {
             code,
             graph,
@@ -3351,6 +3380,52 @@ fn cmd_atlas(action: AtlasCommands) -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 Err(format!("atlas graph is stale: {}", stale.join(", ")).into())
             }
+        }
+    }
+}
+
+fn cmd_atlas_benchmark(action: AtlasBenchmarkCommands) -> Result<(), Box<dyn std::error::Error>> {
+    let stdout = std::io::stdout();
+    cmd_atlas_benchmark_with_writer(action, &mut stdout.lock())
+}
+
+fn cmd_atlas_benchmark_with_writer(
+    action: AtlasBenchmarkCommands,
+    stdout: &mut dyn std::io::Write,
+) -> Result<(), Box<dyn std::error::Error>> {
+    fn emit<T: serde::Serialize>(
+        value: &T,
+        out: Option<&Path>,
+        stdout: &mut dyn std::io::Write,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(path) = out {
+            crate::atlas_eval::write_json_atomic(path, value)?;
+        } else {
+            let bytes = serde_json::to_vec_pretty(value)?;
+            stdout.write_all(&bytes)?;
+            stdout.write_all(b"\n")?;
+        }
+        Ok(())
+    }
+
+    match action {
+        AtlasBenchmarkCommands::Validate { corpus } => {
+            let corpus = crate::atlas_eval::load_corpus(&corpus)?;
+            emit(
+                &serde_json::json!({ "valid": true, "cases": corpus.cases.len() }),
+                None,
+                stdout,
+            )
+        }
+        AtlasBenchmarkCommands::Plan { corpus, out } => {
+            let corpus = crate::atlas_eval::load_corpus(&corpus)?;
+            let plan = crate::atlas_eval::compile_plan(&corpus)?;
+            emit(&plan, out.as_deref(), stdout)
+        }
+        AtlasBenchmarkCommands::Summarize { receipts, out } => {
+            let receipts = crate::atlas_eval::load_receipts(&receipts)?;
+            let summary = crate::atlas_eval::summarize(&receipts)?;
+            emit(&summary, out.as_deref(), stdout)
         }
     }
 }
@@ -10964,6 +11039,140 @@ Scenario: pass
             fs::copy(fixture.join(rel), code.join(rel)).unwrap();
         }
         (code, base.join("graph"))
+    }
+
+    #[test]
+    fn test_atlas_benchmark_cli_parses_nested_actions() {
+        let cli = super::Cli::parse_from([
+            "agent-spec",
+            "atlas",
+            "benchmark",
+            "plan",
+            "--corpus",
+            "benchmarks/atlas/corpus.json",
+            "--out",
+            "plan.json",
+        ]);
+
+        match cli.command {
+            super::Commands::Atlas {
+                action:
+                    super::AtlasCommands::Benchmark {
+                        action: super::AtlasBenchmarkCommands::Plan { corpus, out },
+                    },
+            } => {
+                assert_eq!(corpus, PathBuf::from("benchmarks/atlas/corpus.json"));
+                assert_eq!(out, Some(PathBuf::from("plan.json")));
+            }
+            _ => panic!("expected atlas benchmark plan"),
+        }
+    }
+
+    fn run_atlas_benchmark_cli(
+        args: &[&str],
+        stdout: &mut Vec<u8>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let cli = super::Cli::parse_from(args);
+        match cli.command {
+            super::Commands::Atlas {
+                action: super::AtlasCommands::Benchmark { action },
+            } => super::cmd_atlas_benchmark_with_writer(action, stdout),
+            _ => panic!("expected atlas benchmark command"),
+        }
+    }
+
+    #[test]
+    fn test_atlas_benchmark_commands_respect_stdout_contract() {
+        let dir = make_temp_dir("atlas-benchmark-cli");
+        let corpus = repo_root().join("benchmarks/atlas/corpus.json");
+        let plan = dir.join("plan.json");
+        let receipts = dir.join("receipts.json");
+        let summary = dir.join("summary.json");
+        fs::write(
+            &receipts,
+            r#"[{"case_id":"symbol-lookup","arm":"atlas","trial":1,"correctness":{"passed":true},"file_reads":1,"graph_calls":1,"tool_calls":2,"duration_ms":10,"context_bytes":100,"cost_usd":null}]"#,
+        )
+        .unwrap();
+
+        let corpus_arg = corpus.to_str().unwrap();
+        let plan_arg = plan.to_str().unwrap();
+        let receipts_arg = receipts.to_str().unwrap();
+        let summary_arg = summary.to_str().unwrap();
+
+        let mut validate_stdout = Vec::new();
+        run_atlas_benchmark_cli(
+            &[
+                "agent-spec",
+                "atlas",
+                "benchmark",
+                "validate",
+                "--corpus",
+                corpus_arg,
+            ],
+            &mut validate_stdout,
+        )
+        .unwrap();
+        let validation: serde_json::Value = serde_json::from_slice(&validate_stdout).unwrap();
+        assert_eq!(validation["valid"], true);
+
+        let mut plan_stdout = Vec::new();
+        run_atlas_benchmark_cli(
+            &[
+                "agent-spec",
+                "atlas",
+                "benchmark",
+                "plan",
+                "--corpus",
+                corpus_arg,
+                "--out",
+                plan_arg,
+            ],
+            &mut plan_stdout,
+        )
+        .unwrap();
+        assert!(plan_stdout.is_empty());
+        let parsed_plan: crate::atlas_eval::RunPlan =
+            serde_json::from_str(&fs::read_to_string(&plan).unwrap()).unwrap();
+        assert!(!parsed_plan.runs.is_empty());
+
+        let mut summary_stdout = Vec::new();
+        run_atlas_benchmark_cli(
+            &[
+                "agent-spec",
+                "atlas",
+                "benchmark",
+                "summarize",
+                "--receipts",
+                receipts_arg,
+                "--out",
+                summary_arg,
+            ],
+            &mut summary_stdout,
+        )
+        .unwrap();
+        assert!(summary_stdout.is_empty());
+        let parsed_summary: crate::atlas_eval::EvalSummary =
+            serde_json::from_str(&fs::read_to_string(&summary).unwrap()).unwrap();
+        assert_eq!(parsed_summary.receipts, 1);
+
+        let invalid_corpus = dir.join("invalid-corpus.json");
+        fs::write(&invalid_corpus, "{\"unknown\":true}").unwrap();
+        let mut failure_stdout = Vec::new();
+        let result = run_atlas_benchmark_cli(
+            &[
+                "agent-spec",
+                "atlas",
+                "benchmark",
+                "validate",
+                "--corpus",
+                invalid_corpus.to_str().unwrap(),
+            ],
+            &mut failure_stdout,
+        );
+        assert!(result.is_err(), "failure must map to a non-zero CLI exit");
+        assert!(failure_stdout.is_empty());
+
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

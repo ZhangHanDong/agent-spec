@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
-use std::path::Path;
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
 pub const CORPUS_SCHEMA: &str = "agent-spec/atlas-eval/corpus-v1";
+pub const RUN_PLAN_SCHEMA: &str = "agent-spec/atlas-eval/run-plan-v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -62,19 +64,22 @@ pub enum CacheCondition {
     Warm,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Arm {
     Atlas,
     Baseline,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RunPlan {
+    pub schema: String,
     pub runs: Vec<Run>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Run {
     pub case_id: String,
     pub arm: Arm,
@@ -85,6 +90,77 @@ pub struct Run {
     pub revision: String,
     pub permissions: Permissions,
     pub cache_condition: CacheCondition,
+}
+
+/// The rubric verdict recorded for one benchmark run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Correctness {
+    pub passed: bool,
+}
+
+/// Measurements and correctness evidence produced by one benchmark run.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RunReceipt {
+    pub case_id: String,
+    pub arm: Arm,
+    pub trial: u32,
+    pub correctness: Option<Correctness>,
+    pub file_reads: u64,
+    pub graph_calls: u64,
+    pub tool_calls: u64,
+    pub duration_ms: u64,
+    pub context_bytes: u64,
+    pub cost_usd: Option<f64>,
+}
+
+/// Robust distribution statistics for one metric.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetricSummary {
+    pub samples: usize,
+    pub median: f64,
+    pub mad: f64,
+}
+
+/// Summary of all numeric measurements in a receipt set.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetricsSummary {
+    pub file_reads: MetricSummary,
+    pub graph_calls: MetricSummary,
+    pub tool_calls: MetricSummary,
+    pub duration_ms: MetricSummary,
+    pub context_bytes: MetricSummary,
+    pub cost_usd: Option<MetricSummary>,
+}
+
+/// Count of correctness verdicts represented in a summary.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CorrectnessSummary {
+    pub passed: usize,
+    pub failed: usize,
+}
+
+/// Per-arm evaluation summary, retained so baseline and Atlas remain comparable.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArmSummary {
+    pub receipts: usize,
+    pub correctness: CorrectnessSummary,
+    pub metrics: MetricsSummary,
+}
+
+/// Aggregate evaluation results for fully graded receipts only.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvalSummary {
+    pub receipts: usize,
+    pub correctness: CorrectnessSummary,
+    pub metrics: MetricsSummary,
+    pub arms: BTreeMap<Arm, ArmSummary>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -145,7 +221,259 @@ pub fn compile_plan(corpus: &Corpus) -> Result<RunPlan, EvalError> {
             }
         }
     }
-    Ok(RunPlan { runs })
+    Ok(RunPlan {
+        schema: RUN_PLAN_SCHEMA.to_string(),
+        runs,
+    })
+}
+
+/// Loads either a JSON array or newline-delimited JSON receipts.
+pub fn load_receipts(path: &Path) -> Result<Vec<RunReceipt>, EvalError> {
+    let bytes = std::fs::read(path).map_err(|error| {
+        EvalError::new(
+            "atlas-eval-load",
+            format!("failed to read {}: {error}", path.display()),
+        )
+    })?;
+    let text = std::str::from_utf8(&bytes).map_err(|error| {
+        EvalError::new(
+            "atlas-eval-receipt",
+            format!("receipts {} are not UTF-8: {error}", path.display()),
+        )
+    })?;
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err(EvalError::new(
+            "atlas-eval-receipt",
+            "receipt input is empty",
+        ));
+    }
+    if trimmed.starts_with('[') {
+        return serde_json::from_str(trimmed).map_err(|error| {
+            EvalError::new(
+                "atlas-eval-receipt",
+                format!("failed to parse receipt array {}: {error}", path.display()),
+            )
+        });
+    }
+
+    text.lines()
+        .enumerate()
+        .filter(|(_, line)| !line.trim().is_empty())
+        .map(|(index, line)| {
+            serde_json::from_str(line).map_err(|error| {
+                EvalError::new(
+                    "atlas-eval-receipt",
+                    format!(
+                        "failed to parse receipt line {} in {}: {error}",
+                        index + 1,
+                        path.display()
+                    ),
+                )
+            })
+        })
+        .collect()
+}
+
+/// Summarizes graded receipts with median and median absolute deviation.
+pub fn summarize(receipts: &[RunReceipt]) -> Result<EvalSummary, EvalError> {
+    if receipts.is_empty() {
+        return Err(EvalError::new(
+            "atlas-eval-receipt",
+            "receipt input is empty",
+        ));
+    }
+
+    // Correctness is a hard precondition: never publish a performance aggregate
+    // whose underlying runs have not all been graded.
+    for receipt in receipts {
+        if receipt.correctness.is_none() {
+            return Err(EvalError::new(
+                "atlas-eval-receipt",
+                format!(
+                    "receipt {} {} trial {} is missing correctness",
+                    receipt.case_id,
+                    match receipt.arm {
+                        Arm::Atlas => "atlas",
+                        Arm::Baseline => "baseline",
+                    },
+                    receipt.trial
+                ),
+            ));
+        }
+        if receipt.case_id.trim().is_empty() || receipt.trial == 0 {
+            return Err(EvalError::new(
+                "atlas-eval-receipt",
+                "receipt case_id must not be empty and trial must be positive",
+            ));
+        }
+        if receipt
+            .cost_usd
+            .is_some_and(|cost| !cost.is_finite() || cost < 0.0)
+        {
+            return Err(EvalError::new(
+                "atlas-eval-receipt",
+                "receipt cost_usd must be finite and non-negative",
+            ));
+        }
+    }
+
+    let mut arms = BTreeMap::new();
+    for arm in [Arm::Atlas, Arm::Baseline] {
+        let arm_receipts: Vec<_> = receipts
+            .iter()
+            .filter(|receipt| receipt.arm == arm)
+            .cloned()
+            .collect();
+        if !arm_receipts.is_empty() {
+            arms.insert(arm, summarize_arm(&arm_receipts));
+        }
+    }
+
+    Ok(EvalSummary {
+        receipts: receipts.len(),
+        correctness: summarize_correctness(receipts),
+        metrics: summarize_metrics(receipts),
+        arms,
+    })
+}
+
+/// Atomically writes JSON without exposing a partial target file.
+pub fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), EvalError> {
+    let bytes = serde_json::to_vec_pretty(value).map_err(|error| {
+        EvalError::new(
+            "atlas-eval-output",
+            format!("JSON serialization failed: {error}"),
+        )
+    })?;
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            EvalError::new(
+                "atlas-eval-output",
+                format!("output path has no file name: {}", path.display()),
+            )
+        })?;
+    let temp = temporary_path(parent, name);
+    let result = (|| {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+            .map_err(|error| {
+                EvalError::new(
+                    "atlas-eval-output",
+                    format!("failed to create {}: {error}", temp.display()),
+                )
+            })?;
+        file.write_all(&bytes).map_err(|error| {
+            EvalError::new(
+                "atlas-eval-output",
+                format!("failed to write {}: {error}", temp.display()),
+            )
+        })?;
+        file.write_all(b"\n").map_err(|error| {
+            EvalError::new(
+                "atlas-eval-output",
+                format!("failed to write {}: {error}", temp.display()),
+            )
+        })?;
+        file.sync_all().map_err(|error| {
+            EvalError::new(
+                "atlas-eval-output",
+                format!("failed to sync {}: {error}", temp.display()),
+            )
+        })?;
+        std::fs::rename(&temp, path).map_err(|error| {
+            EvalError::new(
+                "atlas-eval-output",
+                format!("failed to replace {}: {error}", path.display()),
+            )
+        })
+    })();
+    if result.is_err() {
+        std::fs::remove_file(&temp).ok();
+    }
+    result
+}
+
+fn temporary_path(parent: &Path, name: &str) -> PathBuf {
+    parent.join(format!(
+        ".{name}.{}-{}.tmp",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ))
+}
+
+fn summarize_arm(receipts: &[RunReceipt]) -> ArmSummary {
+    ArmSummary {
+        receipts: receipts.len(),
+        correctness: summarize_correctness(receipts),
+        metrics: summarize_metrics(receipts),
+    }
+}
+
+fn summarize_correctness(receipts: &[RunReceipt]) -> CorrectnessSummary {
+    let passed = receipts
+        .iter()
+        .filter(|receipt| {
+            receipt
+                .correctness
+                .is_some_and(|correctness| correctness.passed)
+        })
+        .count();
+    CorrectnessSummary {
+        passed,
+        failed: receipts.len() - passed,
+    }
+}
+
+fn summarize_metrics(receipts: &[RunReceipt]) -> MetricsSummary {
+    MetricsSummary {
+        file_reads: metric(receipts.iter().map(|receipt| receipt.file_reads as f64)),
+        graph_calls: metric(receipts.iter().map(|receipt| receipt.graph_calls as f64)),
+        tool_calls: metric(receipts.iter().map(|receipt| receipt.tool_calls as f64)),
+        duration_ms: metric(receipts.iter().map(|receipt| receipt.duration_ms as f64)),
+        context_bytes: metric(receipts.iter().map(|receipt| receipt.context_bytes as f64)),
+        cost_usd: optional_metric(receipts.iter().filter_map(|receipt| receipt.cost_usd)),
+    }
+}
+
+fn metric(values: impl Iterator<Item = f64>) -> MetricSummary {
+    let mut values: Vec<_> = values.collect();
+    values.sort_by(f64::total_cmp);
+    let median = median(&values);
+    let deviations = values.iter().map(|value| (value - median).abs());
+    MetricSummary {
+        samples: values.len(),
+        median,
+        mad: median_of(deviations),
+    }
+}
+
+fn optional_metric(values: impl Iterator<Item = f64>) -> Option<MetricSummary> {
+    let values: Vec<_> = values.collect();
+    (!values.is_empty()).then(|| metric(values.into_iter()))
+}
+
+fn median_of(values: impl Iterator<Item = f64>) -> f64 {
+    let mut values: Vec<_> = values.collect();
+    values.sort_by(f64::total_cmp);
+    median(&values)
+}
+
+fn median(values: &[f64]) -> f64 {
+    let middle = values.len() / 2;
+    if values.len().is_multiple_of(2) {
+        (values[middle - 1] + values[middle]) / 2.0
+    } else {
+        values[middle]
+    }
 }
 
 fn validate_corpus(corpus: &Corpus) -> Result<(), EvalError> {
@@ -197,6 +525,34 @@ fn validate_corpus(corpus: &Corpus) -> Result<(), EvalError> {
 mod tests {
     use super::*;
 
+    fn receipt(correctness: Option<Correctness>) -> RunReceipt {
+        RunReceipt {
+            case_id: "workspace-navigation".to_string(),
+            arm: Arm::Atlas,
+            trial: 1,
+            correctness,
+            file_reads: 3,
+            graph_calls: 2,
+            tool_calls: 5,
+            duration_ms: 120,
+            context_bytes: 1024,
+            cost_usd: Some(0.12),
+        }
+    }
+
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&path).unwrap();
+        path
+    }
+
     fn valid_corpus(trials_per_arm: u32) -> Corpus {
         Corpus {
             schema: "agent-spec/atlas-eval/corpus-v1".to_string(),
@@ -230,6 +586,7 @@ mod tests {
         corpus.cases.push(second);
 
         let plan = compile_plan(&corpus).expect("valid plan");
+        assert_eq!(plan.schema, RUN_PLAN_SCHEMA);
         assert_eq!(plan.runs.len(), corpus.cases.len() * 2 * 3);
         let expected_trials = [
             (Arm::Atlas, 1),
@@ -429,5 +786,251 @@ mod tests {
             assert_eq!(run.permissions, case.permissions);
             assert_eq!(run.cache_condition, case.cache_condition);
         }
+    }
+
+    #[test]
+    fn test_atlas_eval_summary_rejects_missing_correctness() {
+        let receipts = vec![receipt(None)];
+        assert_eq!(
+            summarize(&receipts).unwrap_err().code(),
+            "atlas-eval-receipt"
+        );
+    }
+
+    #[test]
+    fn test_atlas_eval_plan_writes_atomic_output() {
+        let dir = temp_dir("atlas-eval-out");
+        let out = dir.join("plan.json");
+        write_json_atomic(&out, &compile_plan(&valid_corpus(3)).unwrap()).unwrap();
+        let parsed: RunPlan =
+            serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
+        assert!(!parsed.runs.is_empty());
+        assert!(!dir.join("plan.json.tmp").exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn test_atlas_eval_summary_uses_median_and_mad() {
+        let mut first = receipt(Some(Correctness { passed: true }));
+        first.file_reads = 1;
+        first.duration_ms = 10;
+        first.cost_usd = Some(0.10);
+
+        let mut second = receipt(Some(Correctness { passed: false }));
+        second.file_reads = 2;
+        second.duration_ms = 20;
+        second.cost_usd = Some(0.20);
+
+        let mut third = receipt(Some(Correctness { passed: true }));
+        third.file_reads = 100;
+        third.duration_ms = 1_000;
+        third.cost_usd = Some(10.0);
+
+        let summary = summarize(&[first, second, third]).unwrap();
+        assert_eq!(summary.correctness.passed, 2);
+        assert_eq!(summary.correctness.failed, 1);
+        assert_eq!(summary.metrics.file_reads.median, 2.0);
+        assert_eq!(summary.metrics.file_reads.mad, 1.0);
+        assert_eq!(summary.metrics.duration_ms.median, 20.0);
+        assert_eq!(summary.metrics.duration_ms.mad, 10.0);
+        assert_eq!(summary.metrics.cost_usd.unwrap().median, 0.20);
+    }
+
+    #[test]
+    fn test_atlas_eval_load_receipts_accepts_ndjson_and_rejects_unknown_fields() {
+        let dir = temp_dir("atlas-eval-receipts");
+        let receipts = dir.join("receipts.ndjson");
+        let valid = receipt(Some(Correctness { passed: true }));
+        let mut invalid = serde_json::to_value(&valid).unwrap();
+        invalid
+            .as_object_mut()
+            .unwrap()
+            .insert("unexpected".to_string(), serde_json::json!(true));
+        std::fs::write(
+            &receipts,
+            format!(
+                "{}\n{}\n",
+                serde_json::to_string(&valid).unwrap(),
+                serde_json::to_string(&invalid).unwrap()
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(
+            load_receipts(&receipts).unwrap_err().code(),
+            "atlas-eval-receipt"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_atlas_eval_opt_in_runner_requires_command() {
+        let dir = temp_dir("atlas-eval-runner");
+        let child_receipt = dir.join("child-receipt.json");
+        let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("scripts/atlas-eval/run-opt-in.sh");
+
+        let output = std::process::Command::new(script)
+            .env_remove("ATLAS_EVAL_AGENT_COMMAND")
+            .env("ATLAS_EVAL_CHILD_RECEIPT", &child_receipt)
+            .output()
+            .unwrap();
+
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        assert_eq!(
+            String::from_utf8(output.stderr).unwrap(),
+            "atlas-eval-agent-command: set ATLAS_EVAL_AGENT_COMMAND explicitly\n"
+        );
+        assert!(!child_receipt.exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_atlas_eval_opt_in_runner_rejects_malformed_and_empty_plans() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("scripts/atlas-eval/run-opt-in.sh");
+
+        for (name, plan_json) in [
+            (
+                "malformed",
+                "{\"schema\":\"agent-spec/atlas-eval/run-plan-v1\",\"runs\":[",
+            ),
+            (
+                "empty",
+                "{\"schema\":\"agent-spec/atlas-eval/run-plan-v1\",\"runs\":[]}",
+            ),
+        ] {
+            let dir = temp_dir(&format!("atlas-eval-runner-{name}"));
+            let plan = dir.join("plan.json");
+            let receipts = dir.join("receipts.ndjson");
+            let agent = dir.join("fake-agent.sh");
+            let started = dir.join("agent-started");
+            std::fs::write(&plan, plan_json).unwrap();
+            std::fs::write(
+                &agent,
+                "#!/usr/bin/env bash\nprintf started >\"$ATLAS_EVAL_STARTED\"\n",
+            )
+            .unwrap();
+            let mut permissions = std::fs::metadata(&agent).unwrap().permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&agent, permissions).unwrap();
+
+            let output = std::process::Command::new(&script)
+                .arg(&plan)
+                .arg(&receipts)
+                .env("ATLAS_EVAL_AGENT_COMMAND", &agent)
+                .env("ATLAS_EVAL_STARTED", &started)
+                .output()
+                .unwrap();
+
+            assert!(!output.status.success(), "{name} plan was accepted");
+            assert!(output.stdout.is_empty());
+            assert!(!started.exists(), "{name} plan started the agent");
+            assert!(!receipts.exists(), "{name} plan produced receipts");
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_atlas_eval_opt_in_runner_reports_missing_jq() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = temp_dir("atlas-eval-runner-no-jq");
+        let plan = dir.join("plan.json");
+        let receipts = dir.join("receipts.ndjson");
+        let agent = dir.join("fake-agent.sh");
+        write_json_atomic(&plan, &compile_plan(&valid_corpus(3)).unwrap()).unwrap();
+        std::fs::write(&agent, "#!/bin/sh\nexit 0\n").unwrap();
+        let mut permissions = std::fs::metadata(&agent).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&agent, permissions).unwrap();
+
+        let output = std::process::Command::new("/bin/bash")
+            .arg(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("scripts/atlas-eval/run-opt-in.sh"),
+            )
+            .arg(&plan)
+            .arg(&receipts)
+            .env("ATLAS_EVAL_AGENT_COMMAND", &agent)
+            .env("PATH", &dir)
+            .output()
+            .unwrap();
+
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        assert_eq!(
+            String::from_utf8(output.stderr).unwrap(),
+            "atlas-eval-jq: jq is required by the opt-in runner\n"
+        );
+        assert!(!receipts.exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_atlas_eval_opt_in_runner_passes_literal_argv_without_eval() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = temp_dir("atlas-eval-runner-argv");
+        let plan = dir.join("plan.json");
+        let receipts = dir.join("receipts.ndjson");
+        let agent = dir.join("fake-agent.sh");
+        let captured_plan = dir.join("captured-plan.txt");
+        let captured_arg = dir.join("captured-arg.txt");
+        let injected_marker = dir.join("injected-marker");
+        write_json_atomic(&plan, &compile_plan(&valid_corpus(3)).unwrap()).unwrap();
+        std::fs::write(
+            &agent,
+            r#"#!/usr/bin/env bash
+set -euo pipefail
+printf '%s' "$1" >"$ATLAS_EVAL_PLAN_CAPTURE"
+printf '%s' "$2" >"$ATLAS_EVAL_ARG_CAPTURE"
+printf '%s\n' '{"case_id":"workspace-navigation","arm":"atlas","trial":1,"correctness":{"passed":true},"file_reads":1,"graph_calls":1,"tool_calls":2,"duration_ms":10,"context_bytes":100,"cost_usd":null}'
+"#,
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&agent).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&agent, permissions).unwrap();
+        let literal_arg = format!("literal; touch {}", injected_marker.display());
+
+        let output = std::process::Command::new(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("scripts/atlas-eval/run-opt-in.sh"),
+        )
+        .arg(&plan)
+        .arg(&receipts)
+        .arg("--")
+        .arg(&literal_arg)
+        .env("ATLAS_EVAL_AGENT_COMMAND", &agent)
+        .env("ATLAS_EVAL_PLAN_CAPTURE", &captured_plan)
+        .env("ATLAS_EVAL_ARG_CAPTURE", &captured_arg)
+        .output()
+        .unwrap();
+
+        assert!(
+            output.status.success(),
+            "runner failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stdout.is_empty());
+        assert_eq!(
+            std::fs::read_to_string(captured_plan).unwrap(),
+            plan.to_str().unwrap()
+        );
+        assert_eq!(std::fs::read_to_string(captured_arg).unwrap(), literal_arg);
+        assert!(!injected_marker.exists());
+        assert_eq!(
+            std::fs::read_to_string(receipts).unwrap().lines().count(),
+            1
+        );
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
