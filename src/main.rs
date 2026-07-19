@@ -459,6 +459,18 @@ enum AtlasCommands {
         #[arg(long, default_value = "json")]
         format: String,
     },
+    /// Deterministic indexed symbol search
+    Search {
+        query: String,
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+        #[arg(long)]
+        frozen: bool,
+    },
     /// Incoming reference/call edges for a symbol
     Refs {
         symbol: String,
@@ -3350,6 +3362,21 @@ fn cmd_atlas(action: AtlasCommands) -> Result<(), Box<dyn std::error::Error>> {
         } => {
             let result = rust_atlas::query(&code, &graph, &symbol, &frozen_opts(frozen))?;
             print_value(&result, &format)
+        }
+        AtlasCommands::Search {
+            query,
+            limit,
+            code,
+            graph,
+            frozen,
+        } => {
+            let result = rust_atlas::search(
+                &code,
+                &graph,
+                &query,
+                &rust_atlas::SearchOptions { limit, frozen },
+            )?;
+            print_value(&result, "json")
         }
         AtlasCommands::Refs {
             symbol,
@@ -11207,6 +11234,82 @@ Scenario: pass
     }
 
     #[test]
+    fn test_atlas_search_cli_parses_limits_and_preserves_frozen_graph() {
+        let cli = super::Cli::parse_from([
+            "agent-spec",
+            "atlas",
+            "search",
+            "MemStore",
+            "--limit",
+            "2",
+            "--code",
+            "code",
+            "--graph",
+            "graph",
+            "--frozen",
+        ]);
+        match cli.command {
+            super::Commands::Atlas {
+                action:
+                    super::AtlasCommands::Search {
+                        query,
+                        limit,
+                        code,
+                        graph,
+                        frozen,
+                    },
+            } => {
+                assert_eq!(query, "MemStore");
+                assert_eq!(limit, 2);
+                assert_eq!(code, PathBuf::from("code"));
+                assert_eq!(graph, PathBuf::from("graph"));
+                assert!(frozen);
+            }
+            _ => panic!("expected atlas search"),
+        }
+
+        let (code, graph) = atlas_fixture_copy("atlas-search-cli-frozen");
+        rust_atlas::build(&code, &graph, &rust_atlas::BuildOptions::default()).unwrap();
+        let index_before = fs::read(graph.join("query-index.json")).unwrap();
+        let service = code.join("src/service.rs");
+        let mut source = fs::read_to_string(&service).unwrap();
+        source.push_str("\npub fn changed_for_search() {}\n");
+        fs::write(&service, source).unwrap();
+
+        super::cmd_atlas(super::AtlasCommands::Search {
+            query: "MemStore".to_string(),
+            limit: 20,
+            code: code.clone(),
+            graph: graph.clone(),
+            frozen: true,
+        })
+        .unwrap();
+        assert_eq!(
+            fs::read(graph.join("query-index.json")).unwrap(),
+            index_before
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_search_cli_rejects_invalid_limits() {
+        let (code, graph) = atlas_fixture_copy("atlas-search-cli-limits");
+        rust_atlas::build(&code, &graph, &rust_atlas::BuildOptions::default()).unwrap();
+        for limit in [0, 201] {
+            let error = super::cmd_atlas(super::AtlasCommands::Search {
+                query: "MemStore".to_string(),
+                limit,
+                code: code.clone(),
+                graph: graph.clone(),
+                frozen: true,
+            })
+            .unwrap_err();
+            assert!(error.to_string().contains("atlas-search-limit"));
+        }
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
     fn test_mcp_atlas_query_returns_symbol_json() {
         let (code, graph) = atlas_fixture_copy("atlas-mcp-query");
         rust_atlas::build(&code, &graph, &rust_atlas::BuildOptions::default()).unwrap();
@@ -11238,6 +11341,59 @@ Scenario: pass
                 .as_str()
                 .unwrap()
                 .ends_with("src/store.rs")
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_mcp_atlas_search_returns_the_frozen_library_result() {
+        let (code, graph) = atlas_fixture_copy("atlas-mcp-search");
+        rust_atlas::build(&code, &graph, &rust_atlas::BuildOptions::default()).unwrap();
+        let atlas_dir = code.join(".agent-spec");
+        fs::create_dir_all(&atlas_dir).unwrap();
+        let graph_dir = atlas_dir.join("graph");
+        fs::rename(&graph, &graph_dir).unwrap();
+        let index_before = fs::read(graph_dir.join("query-index.json")).unwrap();
+
+        let service = code.join("src/service.rs");
+        let mut source = fs::read_to_string(&service).unwrap();
+        source.push_str("\npub fn stale_for_mcp_search() {}\n");
+        fs::write(&service, source).unwrap();
+
+        let expected = rust_atlas::search(
+            &code,
+            &graph_dir,
+            "MemStore",
+            &rust_atlas::SearchOptions {
+                limit: 2,
+                frozen: true,
+            },
+        )
+        .unwrap();
+        let ctx = crate::spec_mcp::McpContext {
+            knowledge: code.join("knowledge"),
+            specs: code.join("specs"),
+            code: code.clone(),
+        };
+        let result = crate::spec_mcp::dispatch(
+            "atlas_search",
+            &serde_json::json!({"query": "MemStore", "limit": 2}),
+            &ctx,
+        )
+        .unwrap();
+
+        assert_eq!(result, serde_json::to_value(expected).unwrap());
+        assert_eq!(result["limit"], 2);
+        assert!(
+            result["stale"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|file| file == "src/service.rs")
+        );
+        assert_eq!(
+            fs::read(graph_dir.join("query-index.json")).unwrap(),
+            index_before
         );
         fs::remove_dir_all(code.parent().unwrap()).ok();
     }

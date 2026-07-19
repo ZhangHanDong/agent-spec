@@ -62,6 +62,8 @@ pub enum AtlasError {
     QueryIndexStale { found: String, expected: String },
     #[error("atlas-query-index-corrupt: {detail}; rebuild with `atlas build`")]
     QueryIndexCorrupt { detail: String },
+    #[error("atlas-search-limit: {limit} is outside the supported range 1..=200")]
+    SearchLimit { limit: usize },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -248,9 +250,82 @@ pub struct EdgeReport {
     pub stale: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MatchKind {
+    ExactId,
+    ExactSymbol,
+    CaseInsensitiveExact,
+    QualifiedSuffix,
+    SegmentedIdentifier,
+    NormalizedSubstring,
+}
+
+impl MatchKind {
+    pub(crate) fn rank(self) -> u8 {
+        match self {
+            Self::ExactId => 0,
+            Self::ExactSymbol => 1,
+            Self::CaseInsensitiveExact => 2,
+            Self::QualifiedSuffix => 3,
+            Self::SegmentedIdentifier => 4,
+            Self::NormalizedSubstring => 5,
+        }
+    }
+
+    pub(crate) fn score(self) -> u16 {
+        match self {
+            Self::ExactId => 600,
+            Self::ExactSymbol => 500,
+            Self::CaseInsensitiveExact => 400,
+            Self::QualifiedSuffix => 300,
+            Self::SegmentedIdentifier => 200,
+            Self::NormalizedSubstring => 100,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SearchHit {
+    pub match_kind: MatchKind,
+    pub score: u16,
+    pub node: Node,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SearchResult {
+    pub matches: Vec<SearchHit>,
+    pub graph_fingerprint: String,
+    pub stale: Vec<String>,
+    pub limit: usize,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct QueryOptions {
     pub frozen: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct SearchOptions {
+    pub limit: usize,
+    pub frozen: bool,
+}
+
+impl Default for SearchOptions {
+    fn default() -> Self {
+        Self {
+            limit: 20,
+            frozen: false,
+        }
+    }
+}
+
+pub fn validate_search_limit(limit: usize) -> Result<(), AtlasError> {
+    if (1..=200).contains(&limit) {
+        Ok(())
+    } else {
+        Err(AtlasError::SearchLimit { limit })
+    }
 }
 
 /// Build (or incrementally refresh) the graph for `code_root` into `graph_dir`.
@@ -439,6 +514,31 @@ pub fn query(
             .collect(),
         node,
         stale,
+    })
+}
+
+/// Deterministic indexed symbol search with fixed match precedence.
+pub fn search(
+    code_root: &Path,
+    graph_dir: &Path,
+    query: &str,
+    opts: &SearchOptions,
+) -> Result<SearchResult, AtlasError> {
+    validate_search_limit(opts.limit)?;
+    let (meta, stale) = refresh(
+        code_root,
+        graph_dir,
+        &QueryOptions {
+            frozen: opts.frozen,
+        },
+    )?;
+    let mut matches = load_query_index(graph_dir, &meta)?.search_nodes(query);
+    matches.truncate(opts.limit);
+    Ok(SearchResult {
+        matches,
+        graph_fingerprint: meta.graph_fingerprint,
+        stale,
+        limit: opts.limit,
     })
 }
 

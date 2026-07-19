@@ -4,7 +4,9 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{AtlasError, Capability, Edge, Meta, Node, SCHEMA_VERSION, Shard};
+use crate::{
+    AtlasError, Capability, Edge, MatchKind, Meta, Node, SCHEMA_VERSION, SearchHit, Shard,
+};
 
 const QUERY_INDEX_FILE: &str = "query-index.json";
 
@@ -143,6 +145,30 @@ impl QueryIndex {
         self.edges_at(&self.outgoing, node_ids)
     }
 
+    pub fn search_nodes(&self, query: &str) -> Vec<SearchHit> {
+        let mut hits: Vec<SearchHit> = self
+            .nodes
+            .iter()
+            .filter_map(|node| {
+                classify_match(node, query).map(|match_kind| SearchHit {
+                    score: match_kind.score(),
+                    match_kind,
+                    node: node.clone(),
+                })
+            })
+            .collect();
+        hits.sort_by(|left, right| {
+            left.match_kind
+                .rank()
+                .cmp(&right.match_kind.rank())
+                .then_with(|| left.node.symbol.cmp(&right.node.symbol))
+                .then_with(|| left.node.file.cmp(&right.node.file))
+                .then_with(|| left.node.line_start.cmp(&right.node.line_start))
+                .then_with(|| left.node.id.cmp(&right.node.id))
+        });
+        hits
+    }
+
     fn node_positions(&self, value: &str) -> BTreeSet<usize> {
         self.id
             .get(value)
@@ -169,6 +195,72 @@ impl QueryIndex {
             .filter_map(|position| self.edges.get(position))
             .collect()
     }
+}
+
+fn classify_match(node: &Node, query: &str) -> Option<MatchKind> {
+    if node.id == query {
+        return Some(MatchKind::ExactId);
+    }
+    if node.symbol == query {
+        return Some(MatchKind::ExactSymbol);
+    }
+    if node.id.eq_ignore_ascii_case(query) || node.symbol.eq_ignore_ascii_case(query) {
+        return Some(MatchKind::CaseInsensitiveExact);
+    }
+    if node.symbol.ends_with(&format!("::{query}")) {
+        return Some(MatchKind::QualifiedSuffix);
+    }
+    if segmented_identifier_match(&node.symbol, query) {
+        return Some(MatchKind::SegmentedIdentifier);
+    }
+    let normalized_query = normalize_identifier(query);
+    if !normalized_query.is_empty()
+        && normalize_identifier(&node.symbol).contains(&normalized_query)
+    {
+        return Some(MatchKind::NormalizedSubstring);
+    }
+    None
+}
+
+fn segmented_identifier_match(symbol: &str, query: &str) -> bool {
+    let Some(identifier) = symbol.rsplit("::").next() else {
+        return false;
+    };
+    let symbol_segments = identifier_segments(identifier);
+    let query_segments = identifier_segments(query);
+    !query_segments.is_empty() && symbol_segments == query_segments
+}
+
+fn identifier_segments(value: &str) -> Vec<String> {
+    let mut segments = Vec::new();
+    let mut current = String::new();
+    let mut previous_lowercase = false;
+    for character in value.chars() {
+        if !character.is_ascii_alphanumeric() {
+            if !current.is_empty() {
+                segments.push(std::mem::take(&mut current));
+            }
+            previous_lowercase = false;
+            continue;
+        }
+        if character.is_ascii_uppercase() && previous_lowercase && !current.is_empty() {
+            segments.push(std::mem::take(&mut current));
+        }
+        current.push(character.to_ascii_lowercase());
+        previous_lowercase = character.is_ascii_lowercase();
+    }
+    if !current.is_empty() {
+        segments.push(current);
+    }
+    segments
+}
+
+fn normalize_identifier(value: &str) -> String {
+    value
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .map(|character| character.to_ascii_lowercase())
+        .collect()
 }
 
 fn insert_locator(locator: &mut BTreeMap<String, Vec<usize>>, key: &str, position: usize) {
@@ -322,8 +414,9 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use crate::{
-        AtlasError, BuildOptions, Capability, EdgeSite, Meta, QueryIndex, SCHEMA_VERSION, build,
-        canonical_graph_fingerprint, load_graph, load_query_index, read_meta, write_json_atomic,
+        AtlasError, BuildOptions, Capability, EdgeSite, MatchKind, Meta, Node, NodeKind,
+        QueryIndex, SCHEMA_VERSION, SearchOptions, Shard, build, canonical_graph_fingerprint,
+        load_graph, load_query_index, read_meta, search, write_json_atomic,
     };
 
     fn temp_dir(name: &str) -> PathBuf {
@@ -377,6 +470,196 @@ mod tests {
             capability: Capability::default(),
             files: BTreeMap::from([("src/lib.rs".to_string(), "hash".to_string())]),
             graph_fingerprint: "ignored".to_string(),
+        }
+    }
+
+    fn search_node(id: &str, symbol: &str, file: &str, line_start: usize) -> Node {
+        Node {
+            id: id.to_string(),
+            symbol: symbol.to_string(),
+            kind: NodeKind::Fn,
+            file: file.to_string(),
+            line_start,
+            line_end: line_start,
+            visibility: "pub".to_string(),
+            signature: format!("fn {symbol}()"),
+            doc: None,
+        }
+    }
+
+    fn write_search_index(graph: &Path, nodes: Vec<Node>) {
+        let meta = read_meta(graph).unwrap();
+        let index = QueryIndex::from_graph(
+            &meta,
+            &[Shard {
+                file: "src/search.rs".to_string(),
+                hash: "search-fixture".to_string(),
+                unparsed: None,
+                nodes,
+                edges: Vec::new(),
+            }],
+        );
+        write_json_atomic(&graph.join(super::QUERY_INDEX_FILE), &index).unwrap();
+    }
+
+    type SearchIndexErrorMatcher = fn(&AtlasError) -> bool;
+    type SearchIndexErrorCase = (
+        &'static str,
+        Option<serde_json::Value>,
+        SearchIndexErrorMatcher,
+    );
+
+    #[test]
+    fn test_atlas_search_orders_exact_suffix_segment_and_fuzzy_matches() {
+        let (code, graph) = build_fixture("atlas-search-ranks");
+        write_search_index(
+            &graph,
+            vec![
+                search_node("mem_store", "pkg::id", "src/z.rs", 9),
+                search_node("symbol", "mem_store", "src/y.rs", 8),
+                search_node("case", "MEM_STORE", "src/x.rs", 7),
+                search_node("suffix", "pkg::mem_store", "src/w.rs", 6),
+                search_node("segment", "pkg::MemStore", "src/v.rs", 5),
+                search_node("fuzzy", "pkg::SomeMemStoreThing", "src/u.rs", 4),
+            ],
+        );
+
+        let options = SearchOptions {
+            limit: 20,
+            frozen: true,
+        };
+        let first = search(&code, &graph, "mem_store", &options).unwrap();
+        let kinds: Vec<_> = first.matches.iter().map(|hit| hit.match_kind).collect();
+        let scores: Vec<_> = first.matches.iter().map(|hit| hit.score).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                MatchKind::ExactId,
+                MatchKind::ExactSymbol,
+                MatchKind::CaseInsensitiveExact,
+                MatchKind::QualifiedSuffix,
+                MatchKind::SegmentedIdentifier,
+                MatchKind::NormalizedSubstring,
+            ]
+        );
+        assert_eq!(scores, vec![600, 500, 400, 300, 200, 100]);
+        assert_eq!(first.limit, 20);
+        assert_eq!(
+            first.graph_fingerprint,
+            read_meta(&graph).unwrap().graph_fingerprint
+        );
+        assert!(first.stale.is_empty());
+        assert_eq!(first.matches[0].node.id, "mem_store");
+        assert_eq!(first.matches[0].node.signature, "fn pkg::id()");
+        let second = search(&code, &graph, "mem_store", &options).unwrap();
+        assert_eq!(
+            serde_json::to_vec(&first).unwrap(),
+            serde_json::to_vec(&second).unwrap()
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_search_sorts_ties_and_truncates_to_limit() {
+        let (code, graph) = build_fixture("atlas-search-ties");
+        write_search_index(
+            &graph,
+            vec![
+                search_node("z", "pkg::MemStore", "src/z.rs", 3),
+                search_node("b", "pkg::MemStore", "src/a.rs", 2),
+                search_node("a", "pkg::MemStore", "src/a.rs", 2),
+                search_node("d", "pkg::MemStore", "src/a.rs", 1),
+                search_node("symbol-a", "a::MemStore", "src/z.rs", 9),
+                search_node("c", "pkg::AMemStore", "src/x.rs", 1),
+            ],
+        );
+
+        let result = search(
+            &code,
+            &graph,
+            "mem_store",
+            &SearchOptions {
+                limit: 5,
+                frozen: true,
+            },
+        )
+        .unwrap();
+        let ids: Vec<_> = result
+            .matches
+            .iter()
+            .map(|hit| hit.node.id.as_str())
+            .collect();
+        assert_eq!(result.limit, 5);
+        assert_eq!(ids, vec!["symbol-a", "d", "a", "b", "z"]);
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_search_rejects_limit_outside_range() {
+        assert_eq!(SearchOptions::default().limit, 20);
+        assert!(!SearchOptions::default().frozen);
+        for limit in [0, 201] {
+            let error = crate::validate_search_limit(limit).unwrap_err();
+            assert!(error.to_string().contains("atlas-search-limit"));
+        }
+    }
+
+    #[test]
+    fn test_atlas_search_propagates_index_errors_without_shard_fallback() {
+        let cases: [SearchIndexErrorCase; 4] = [
+            ("missing", None, |error| {
+                matches!(error, AtlasError::QueryIndexMissing { .. })
+            }),
+            (
+                "schema",
+                Some(serde_json::json!(SCHEMA_VERSION - 1)),
+                |error| matches!(error, AtlasError::QueryIndexSchema { .. }),
+            ),
+            ("stale", Some(serde_json::json!("wrong")), |error| {
+                matches!(error, AtlasError::QueryIndexStale { .. })
+            }),
+            (
+                "corrupt",
+                Some(serde_json::json!("not a node table")),
+                |error| matches!(error, AtlasError::QueryIndexCorrupt { .. }),
+            ),
+        ];
+
+        for (case, replacement, matches_error) in cases {
+            let (code, graph) = build_fixture(&format!("atlas-search-index-{case}"));
+            fs::write(
+                graph.join("shards").join("src%2Flib.rs.json"),
+                "not valid JSON",
+            )
+            .unwrap();
+            let index_path = graph.join(super::QUERY_INDEX_FILE);
+            match replacement {
+                None => fs::remove_file(&index_path).unwrap(),
+                Some(value) => {
+                    let mut index: serde_json::Value =
+                        serde_json::from_str(&fs::read_to_string(&index_path).unwrap()).unwrap();
+                    if case == "schema" {
+                        index["schema_version"] = value;
+                    } else if case == "stale" {
+                        index["graph_fingerprint"] = value;
+                    } else {
+                        index["nodes"] = value;
+                    }
+                    fs::write(&index_path, serde_json::to_vec_pretty(&index).unwrap()).unwrap();
+                }
+            }
+            let error = search(
+                &code,
+                &graph,
+                "anything",
+                &SearchOptions {
+                    limit: 20,
+                    frozen: true,
+                },
+            )
+            .unwrap_err();
+            assert!(matches_error(&error), "{case}: {error}");
+            fs::remove_dir_all(code.parent().unwrap()).ok();
         }
     }
 

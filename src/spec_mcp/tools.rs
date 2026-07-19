@@ -21,7 +21,7 @@ pub struct McpContext {
 
 /// Tool name -> JSON-Schema description, for `tools/list`.
 pub fn tool_specs() -> Value {
-    json!([
+    let mut specs = json!([
         { "name": "knowledge.find", "description": "Find knowledge artifacts by id, tag, or path.",
           "inputSchema": { "type": "object", "properties": {
             "id": {"type": "string"}, "tag": {"type": "string"}, "path": {"type": "string"} } } },
@@ -45,16 +45,45 @@ pub fn tool_specs() -> Value {
           "inputSchema": { "type": "object", "properties": {} } },
         { "name": "context.read", "description": "Read free-form context by path, or list all when no path is given.",
           "inputSchema": { "type": "object", "properties": { "path": {"type": "string"} } } }
-    ])
+    ]);
+    if atlas_search_enabled()
+        && let Some(specs) = specs.as_array_mut()
+    {
+        specs.push(json!({
+            "name": "atlas_search",
+            "description": "Deterministic indexed Rust symbol search.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string" },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 200 }
+                },
+                "required": ["query"]
+            }
+        }));
+    }
+    specs
+}
+
+fn atlas_search_enabled() -> bool {
+    #[cfg(test)]
+    if let Some(enabled) = ATLAS_SEARCH_TOOL_ENABLED.with(std::cell::Cell::get) {
+        return enabled;
+    }
+    std::env::var("AGENT_SPEC_MCP_ATLAS_SEARCH").is_ok_and(|value| value == "1")
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static ATLAS_SEARCH_TOOL_ENABLED: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
 }
 
 /// Dispatch a tool call. Returns the tool's structured JSON payload.
 pub fn dispatch(name: &str, args: &Value, ctx: &McpContext) -> Result<Value, String> {
     match name {
         "knowledge.find" => knowledge_find(args, ctx),
-        "atlas_tree" | "atlas_query" | "atlas_refs" | "atlas_impls" | "atlas_status" => {
-            atlas_tool(name, args, ctx)
-        }
+        "atlas_tree" | "atlas_query" | "atlas_search" | "atlas_refs" | "atlas_impls"
+        | "atlas_status" => atlas_tool(name, args, ctx),
         "knowledge.governing" => knowledge_governing(args, ctx),
         "liveness.status" => liveness_status(args, ctx),
         "spec.contract" => spec_contract(args, ctx),
@@ -287,6 +316,33 @@ fn atlas_tool(name: &str, args: &Value, ctx: &McpContext) -> Result<Value, Strin
                 .map_err(|e| e.to_string())?;
             to_value(serde_json::to_value(&result))
         }
+        "atlas_search" => {
+            let query = args
+                .get("query")
+                .and_then(|value| value.as_str())
+                .ok_or("atlas_search requires `query`")?;
+            let limit = args
+                .get("limit")
+                .map(|value| {
+                    value
+                        .as_u64()
+                        .and_then(|limit| usize::try_from(limit).ok())
+                        .ok_or("atlas_search `limit` must be an unsigned integer")
+                })
+                .transpose()?
+                .unwrap_or(20);
+            let result = rust_atlas::search(
+                &ctx.code,
+                &graph_dir,
+                query,
+                &rust_atlas::SearchOptions {
+                    limit,
+                    frozen: true,
+                },
+            )
+            .map_err(|error| error.to_string())?;
+            to_value(serde_json::to_value(&result))
+        }
         "atlas_refs" => {
             let symbol = args
                 .get("symbol")
@@ -344,6 +400,45 @@ mod tests {
             code: root.clone(),
         };
         (root, ctx)
+    }
+
+    #[test]
+    fn test_atlas_search_is_hidden_by_default_and_listed_when_opted_in() {
+        ATLAS_SEARCH_TOOL_ENABLED.with(|value| value.set(Some(false)));
+        let default_tools = tool_specs();
+        assert!(
+            default_tools
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|tool| tool["name"] != "atlas_search")
+        );
+
+        ATLAS_SEARCH_TOOL_ENABLED.with(|value| value.set(Some(true)));
+        let opted_in_tools = tool_specs();
+        let search = opted_in_tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == "atlas_search")
+            .unwrap();
+        assert_eq!(search["inputSchema"]["required"], json!(["query"]));
+
+        ATLAS_SEARCH_TOOL_ENABLED.with(|value| value.set(None));
+    }
+
+    #[test]
+    fn test_mcp_atlas_search_dispatches_and_rejects_invalid_limits() {
+        let (_root, ctx) = fixture("atlas-search-limit");
+        for limit in [0, 201] {
+            let error = dispatch(
+                "atlas_search",
+                &json!({ "query": "MemStore", "limit": limit }),
+                &ctx,
+            )
+            .unwrap_err();
+            assert!(error.contains("atlas-search-limit"), "{limit}: {error}");
+        }
     }
 
     #[test]
