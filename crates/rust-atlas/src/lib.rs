@@ -18,11 +18,13 @@ use quote::ToTokens;
 use serde::{Deserialize, Serialize};
 
 mod index;
+mod status;
 
 use index::write_json_atomic;
 pub use index::{QueryIndex, canonical_graph_fingerprint, load_query_index, rebuild_query_index};
+pub use status::{AtlasStatus, GraphIdentity, LayerState, LayerStatus, status};
 
-pub const SCHEMA_VERSION: u32 = 5;
+pub const SCHEMA_VERSION: u32 = 6;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AtlasError {
@@ -201,6 +203,9 @@ pub struct Capability {
     /// blake3 of that index file at overlay time (staleness signal).
     #[serde(default)]
     pub scip_fingerprint: Option<String>,
+    /// Source-set fingerprint captured when the current SCIP index was
+    /// explicitly overlaid. Automatic refreshes intentionally retain it.
+    pub scip_source_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -334,7 +339,7 @@ pub fn build(
     graph_dir: &Path,
     opts: &BuildOptions,
 ) -> Result<BuildReport, AtlasError> {
-    build_with_meta(code_root, graph_dir, opts, None)
+    build_with_meta(code_root, graph_dir, opts, None, false)
 }
 
 fn build_with_meta(
@@ -342,11 +347,14 @@ fn build_with_meta(
     graph_dir: &Path,
     opts: &BuildOptions,
     known_meta: Option<Meta>,
+    retain_scip_source_fingerprint: bool,
 ) -> Result<BuildReport, AtlasError> {
     // `cargo metadata` reports absolute, canonical paths; canonicalize the root
     // so the file walk and layout share one path space (otherwise `--code .`
     // yields relative walk paths that never match the absolute target dirs).
     let code_root = &std::fs::canonicalize(code_root).map_err(io_err)?;
+    std::fs::create_dir_all(graph_dir).map_err(io_err)?;
+    let identity = status::capture_identity(code_root, graph_dir)?;
     let layout = ProjectLayout::discover(code_root)?;
     let shards_dir = graph_dir.join("shards");
     std::fs::create_dir_all(&shards_dir).map_err(io_err)?;
@@ -356,6 +364,9 @@ fn build_with_meta(
         .as_ref()
         .map(|m| m.files.clone())
         .unwrap_or_default();
+    let retained_scip_source_fingerprint = old_meta
+        .as_ref()
+        .and_then(|meta| meta.capability.scip_source_fingerprint.clone());
 
     let mut files = BTreeMap::new();
     let mut rebuilt = Vec::new();
@@ -412,6 +423,11 @@ fn build_with_meta(
         capability.scip_fingerprint = std::fs::read(index_path)
             .ok()
             .map(|bytes| blake3::hash(&bytes).to_hex().to_string());
+        capability.scip_source_fingerprint = if retain_scip_source_fingerprint {
+            retained_scip_source_fingerprint
+        } else {
+            Some(status::source_fingerprint(&files)?)
+        };
     } else {
         remove_scip_edges(&shards_dir, &files)?;
     }
@@ -430,8 +446,8 @@ fn build_with_meta(
     for rel in meta.files.keys() {
         shards.push(read_shard(&shards_dir, rel)?);
     }
-    meta.graph_fingerprint = canonical_graph_fingerprint(&meta, &shards)?;
-    write_json_atomic(&graph_dir.join("meta.json"), &meta)?;
+    meta.graph_fingerprint = graph_fingerprint_with_identity(&meta, &shards, &identity)?;
+    write_persisted_meta(&graph_dir.join("meta.json"), &meta, &identity)?;
     rebuild_query_index(graph_dir, &meta, &shards)?;
     Ok(BuildReport {
         rebuilt,
@@ -443,11 +459,7 @@ fn build_with_meta(
 
 /// Report stale shard source files (content hash mismatch, deleted, or new).
 pub fn check(code_root: &Path, graph_dir: &Path) -> Result<Vec<String>, AtlasError> {
-    // Match `build`'s path space so staleness keys line up for any `code_root`
-    // form (relative, `.`, or with symlinks).
-    let code_root = &std::fs::canonicalize(code_root).map_err(io_err)?;
-    let meta = read_meta(graph_dir)?;
-    check_with_meta(code_root, &meta)
+    Ok(status(code_root, graph_dir)?.syn.stale_files)
 }
 
 fn check_with_meta(code_root: &Path, meta: &Meta) -> Result<Vec<String>, AtlasError> {
@@ -707,26 +719,75 @@ fn scip_extractor(tool: Option<&str>) -> ExtractorIdentity {
     }
 }
 
+#[derive(Deserialize)]
+struct MetaHeader {
+    schema_version: u32,
+}
+
+#[derive(Deserialize)]
+struct PersistedMeta {
+    #[serde(flatten)]
+    meta: Meta,
+    identity: GraphIdentity,
+}
+
+#[derive(Serialize)]
+struct PersistedMetaRef<'a> {
+    #[serde(flatten)]
+    meta: &'a Meta,
+    identity: &'a GraphIdentity,
+}
+
+#[derive(Serialize)]
+struct GraphFingerprint<'a> {
+    graph: String,
+    identity: &'a GraphIdentity,
+}
+
 fn read_meta(graph_dir: &Path) -> Result<Meta, AtlasError> {
+    Ok(read_persisted_meta(graph_dir)?.meta)
+}
+
+fn read_persisted_meta(graph_dir: &Path) -> Result<PersistedMeta, AtlasError> {
     #[cfg(test)]
     META_READ_COUNT.with(|count| count.set(count.get() + 1));
     let path = graph_dir.join("meta.json");
     let text = std::fs::read_to_string(&path).map_err(|_| AtlasError::MissingGraph {
         graph_dir: graph_dir.display().to_string(),
     })?;
-    let meta: Meta = serde_json::from_str(&text).map_err(|e| AtlasError::Io(e.to_string()))?;
     // Reject a graph written by a different atlas version. Without this, a
     // stale-schema graph passes `check` (which only diffs file hashes) while
     // `query` silently misreads or fails on the changed shard format — a false
     // green. `build` reads meta via `.ok()`, so a mismatch there degrades to a
     // full rebuild rather than an error.
-    if meta.schema_version != SCHEMA_VERSION {
+    let header: MetaHeader =
+        serde_json::from_str(&text).map_err(|e| AtlasError::Io(e.to_string()))?;
+    if header.schema_version != SCHEMA_VERSION {
         return Err(AtlasError::SchemaMismatch {
-            found: meta.schema_version,
+            found: header.schema_version,
             expected: SCHEMA_VERSION,
         });
     }
-    Ok(meta)
+    serde_json::from_str(&text).map_err(|e| AtlasError::Io(e.to_string()))
+}
+
+fn write_persisted_meta(
+    path: &Path,
+    meta: &Meta,
+    identity: &GraphIdentity,
+) -> Result<(), AtlasError> {
+    write_json_atomic(path, &PersistedMetaRef { meta, identity })
+}
+
+fn graph_fingerprint_with_identity(
+    meta: &Meta,
+    shards: &[Shard],
+    identity: &GraphIdentity,
+) -> Result<String, AtlasError> {
+    let graph = canonical_graph_fingerprint(meta, shards)?;
+    let bytes = serde_json::to_vec(&GraphFingerprint { graph, identity })
+        .map_err(|error| AtlasError::Io(error.to_string()))?;
+    Ok(blake3::hash(&bytes).to_hex().to_string())
 }
 
 #[cfg(test)]
@@ -973,6 +1034,7 @@ fn refresh_stale_graph(code_root: &Path, graph_dir: &Path, meta: Meta) -> Result
             scip_index,
         },
         Some(meta),
+        true,
     )?;
     read_meta(graph_dir)
 }
