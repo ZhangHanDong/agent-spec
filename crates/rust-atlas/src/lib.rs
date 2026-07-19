@@ -393,12 +393,9 @@ pub fn query(
     opts: &QueryOptions,
 ) -> Result<QueryResult, AtlasError> {
     let stale = refresh(code_root, graph_dir, opts)?;
-    let (_, shards) = load_graph(graph_dir)?;
-    let matches: Vec<&Node> = shards
-        .iter()
-        .flat_map(|s| s.nodes.iter())
-        .filter(|node| node.id == symbol || node.symbol == symbol)
-        .collect();
+    let meta = read_meta(graph_dir)?;
+    let index = load_query_index(graph_dir, &meta)?;
+    let matches = index.matching_nodes(symbol);
     let node = match matches.as_slice() {
         [] => {
             return Err(AtlasError::UnknownSymbol {
@@ -413,20 +410,22 @@ pub fn query(
             });
         }
     };
-    let mut edges_out = BTreeSet::new();
-    let mut edges_in = BTreeSet::new();
-    for edge in shards.iter().flat_map(|s| s.edges.iter()) {
-        if edge.from == node.id {
-            edges_out.insert(edge.clone());
-        }
-        if edge.to == node.id {
-            edges_in.insert(edge.clone());
-        }
-    }
     Ok(QueryResult {
+        edges_out: index
+            .outgoing_edges([node.id.as_str()])
+            .into_iter()
+            .cloned()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect(),
+        edges_in: index
+            .incoming_edges([node.id.as_str()])
+            .into_iter()
+            .cloned()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect(),
         node,
-        edges_out: edges_out.into_iter().collect(),
-        edges_in: edges_in.into_iter().collect(),
         stale,
     })
 }
@@ -506,26 +505,18 @@ pub fn refs(
     opts: &QueryOptions,
 ) -> Result<EdgeReport, AtlasError> {
     let stale = refresh(code_root, graph_dir, opts)?;
-    let (_, shards) = load_graph(graph_dir)?;
-    if !shards
-        .iter()
-        .flat_map(|s| s.nodes.iter())
-        .any(|node| node.id == symbol || node.symbol == symbol)
-    {
+    let meta = read_meta(graph_dir)?;
+    let index = load_query_index(graph_dir, &meta)?;
+    let matches = index.matching_nodes(symbol);
+    if matches.is_empty() {
         return Err(AtlasError::UnknownSymbol {
             symbol: symbol.to_string(),
         });
     }
-    let edges: BTreeSet<Edge> = shards
-        .iter()
-        .flat_map(|s| s.edges.iter())
-        .filter(|e| {
-            matches!(e.kind, EdgeKind::References | EdgeKind::Calls)
-                && shards
-                    .iter()
-                    .flat_map(|shard| &shard.nodes)
-                    .any(|node| node.id == e.to && (node.id == symbol || node.symbol == symbol))
-        })
+    let edges: BTreeSet<Edge> = index
+        .incoming_edges(matches.iter().map(|node| node.id.as_str()))
+        .into_iter()
+        .filter(|e| matches!(e.kind, EdgeKind::References | EdgeKind::Calls))
         .cloned()
         .collect();
     Ok(EdgeReport {
@@ -543,11 +534,11 @@ pub fn impls(
     opts: &QueryOptions,
 ) -> Result<EdgeReport, AtlasError> {
     let stale = refresh(code_root, graph_dir, opts)?;
-    let (_, shards) = load_graph(graph_dir)?;
-    let matching_ids: BTreeSet<&str> = shards
-        .iter()
-        .flat_map(|shard| &shard.nodes)
-        .filter(|node| node.symbol == name || node.symbol.ends_with(&format!("::{name}")))
+    let meta = read_meta(graph_dir)?;
+    let index = load_query_index(graph_dir, &meta)?;
+    let matching_ids: BTreeSet<&str> = index
+        .nodes_with_symbol_suffix(name)
+        .into_iter()
         .map(|node| node.id.as_str())
         .collect();
     // Also match edges whose target is still unresolved: the trait/type name
@@ -555,9 +546,9 @@ pub fn impls(
     // it to a node id. Without this, `impls <Trait>` returns nothing for any
     // trait referenced by an imported bare name.
     let text_matches = |value: &str| value == name || value.ends_with(&format!("::{name}"));
-    let edges: BTreeSet<Edge> = shards
+    let edges: BTreeSet<Edge> = index
+        .edges
         .iter()
-        .flat_map(|s| s.edges.iter())
         .filter(|e| {
             matches!(e.kind, EdgeKind::ImplsTrait | EdgeKind::ImplFor)
                 && (matching_ids.contains(e.to.as_str())
@@ -2582,6 +2573,9 @@ mod tests {
     use super::*;
     use std::fs;
 
+    type QueryIndexMutation = fn(&mut serde_json::Value);
+    type QueryIndexErrorMatcher = fn(&AtlasError) -> bool;
+
     fn fixture_root() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/atlas/basic")
     }
@@ -3308,6 +3302,91 @@ impl std::fmt::Display for Local {
             .collect();
         assert_eq!(shard_bytes, shard_bytes_after, "frozen must not rewrite");
         fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_low_level_queries_use_index_without_scanning_unrelated_shards() {
+        let (code, graph) = copy_fixture("atlas-indexed-low-level-queries");
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let source_before = fs::read(code.join("src/service.rs")).unwrap();
+        fs::write(
+            graph.join("shards").join(shard_file_name("src/service.rs")),
+            "not valid JSON",
+        )
+        .unwrap();
+        let frozen = QueryOptions { frozen: true };
+
+        let query_result = query(&code, &graph, "atlas_basic::store::MemStore", &frozen);
+        let refs_result = refs(&code, &graph, "atlas_basic::store::MemStore", &frozen);
+        let impls_result = impls(&code, &graph, "Store", &frozen);
+
+        assert!(query_result.is_ok(), "query: {query_result:?}");
+        assert!(refs_result.is_ok(), "refs: {refs_result:?}");
+        assert!(impls_result.is_ok(), "impls: {impls_result:?}");
+        assert_eq!(
+            source_before,
+            fs::read(code.join("src/service.rs")).unwrap()
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_low_level_queries_propagate_missing_query_index() {
+        let (code, graph) = copy_fixture("atlas-low-level-query-index-missing");
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        fs::remove_file(graph.join("query-index.json")).unwrap();
+        let frozen = QueryOptions { frozen: true };
+
+        for result in [
+            query(&code, &graph, "atlas_basic::store::MemStore", &frozen).map(|_| ()),
+            refs(&code, &graph, "atlas_basic::store::MemStore", &frozen).map(|_| ()),
+            impls(&code, &graph, "Store", &frozen).map(|_| ()),
+        ] {
+            assert!(matches!(result, Err(AtlasError::QueryIndexMissing { .. })));
+        }
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_low_level_queries_propagate_invalid_query_index_errors() {
+        let cases: [(&str, QueryIndexMutation, QueryIndexErrorMatcher); 3] = [
+            (
+                "schema",
+                |index| index["schema_version"] = serde_json::json!(SCHEMA_VERSION - 1),
+                |error| matches!(error, AtlasError::QueryIndexSchema { .. }),
+            ),
+            (
+                "stale",
+                |index| index["graph_fingerprint"] = serde_json::json!("wrong"),
+                |error| matches!(error, AtlasError::QueryIndexStale { .. }),
+            ),
+            (
+                "corrupt",
+                |index| index["nodes"] = serde_json::json!("not a node table"),
+                |error| matches!(error, AtlasError::QueryIndexCorrupt { .. }),
+            ),
+        ];
+
+        for (case, update, expected) in cases {
+            let (code, graph) = copy_fixture(&format!("atlas-low-level-query-index-{case}"));
+            build(&code, &graph, &BuildOptions::default()).unwrap();
+            let index_path = graph.join("query-index.json");
+            let mut index: serde_json::Value =
+                serde_json::from_str(&fs::read_to_string(&index_path).unwrap()).unwrap();
+            update(&mut index);
+            fs::write(&index_path, serde_json::to_vec_pretty(&index).unwrap()).unwrap();
+            let frozen = QueryOptions { frozen: true };
+
+            for result in [
+                query(&code, &graph, "atlas_basic::store::MemStore", &frozen).map(|_| ()),
+                refs(&code, &graph, "atlas_basic::store::MemStore", &frozen).map(|_| ()),
+                impls(&code, &graph, "Store", &frozen).map(|_| ()),
+            ] {
+                let error = result.unwrap_err();
+                assert!(expected(&error), "{case}: {error}");
+            }
+            fs::remove_dir_all(code.parent().unwrap()).ok();
+        }
     }
 
     #[test]
