@@ -2,6 +2,7 @@
 #![deny(unsafe_code)]
 #![allow(dead_code)]
 
+mod atlas_eval;
 mod spec_archive;
 mod spec_core;
 mod spec_gateway;

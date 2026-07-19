@@ -1,0 +1,119 @@
+{
+  "schema": "agent-spec/atlas-eval/corpus-v1",
+  "model": "offline-fixture-model",
+  "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+  "cases": [
+    {
+      "id": "symbol-lookup",
+      "size": "small",
+      "task_class": "symbol",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "trials_per_arm": 3,
+      "rubric": [
+        "Identifies the requested symbol by canonical path.",
+        "Cites the defining source file."
+      ],
+      "permissions": "read-only",
+      "cache_condition": "cold"
+    },
+    {
+      "id": "flow-trace",
+      "size": "small",
+      "task_class": "flow",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "trials_per_arm": 3,
+      "rubric": [
+        "Traces a source-level caller to callee flow.",
+        "Names the intermediate symbols in order."
+      ],
+      "permissions": "read-only",
+      "cache_condition": "warm"
+    },
+    {
+      "id": "impact-analysis",
+      "size": "medium",
+      "task_class": "impact",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "trials_per_arm": 3,
+      "rubric": [
+        "Identifies directly affected callers.",
+        "Separates source evidence from inference."
+      ],
+      "permissions": "read-only",
+      "cache_condition": "cold"
+    },
+    {
+      "id": "implementation-plan",
+      "size": "medium",
+      "task_class": "implementation",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "trials_per_arm": 3,
+      "rubric": [
+        "Names the implementation files to change.",
+        "Lists relevant tests or verification steps."
+      ],
+      "permissions": "workspace-write",
+      "cache_condition": "warm"
+    },
+    {
+      "id": "stale-graph-diagnosis",
+      "size": "medium",
+      "task_class": "stale",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "trials_per_arm": 3,
+      "rubric": [
+        "Recognizes that the graph is stale.",
+        "Names the required graph refresh action."
+      ],
+      "permissions": "read-only",
+      "cache_condition": "cold"
+    },
+    {
+      "id": "scip-unavailable-fallback",
+      "size": "large",
+      "task_class": "scip-unavailable",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "trials_per_arm": 3,
+      "rubric": [
+        "Reports the unavailable SCIP capability clearly.",
+        "Preserves the available source-derived graph evidence."
+      ],
+      "permissions": "read-only",
+      "cache_condition": "cold"
+    },
+    {
+      "id": "compile-failing-workspace",
+      "size": "large",
+      "task_class": "compile-failing",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "trials_per_arm": 3,
+      "rubric": [
+        "Reports compilation failure without inventing results.",
+        "Retains source-level findings that remain valid."
+      ],
+      "permissions": "workspace-write",
+      "cache_condition": "cold"
+    },
+    {
+      "id": "worktree-scope",
+      "size": "large",
+      "task_class": "worktree",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "trials_per_arm": 3,
+      "rubric": [
+        "Identifies the working tree files relevant to the task.",
+        "Distinguishes owned changes from unrelated modifications."
+      ],
+      "permissions": "workspace-write",
+      "cache_condition": "warm"
+    }
+  ]
+}
