@@ -259,6 +259,15 @@ pub fn build(
     graph_dir: &Path,
     opts: &BuildOptions,
 ) -> Result<BuildReport, AtlasError> {
+    build_with_meta(code_root, graph_dir, opts, None)
+}
+
+fn build_with_meta(
+    code_root: &Path,
+    graph_dir: &Path,
+    opts: &BuildOptions,
+    known_meta: Option<Meta>,
+) -> Result<BuildReport, AtlasError> {
     // `cargo metadata` reports absolute, canonical paths; canonicalize the root
     // so the file walk and layout share one path space (otherwise `--code .`
     // yields relative walk paths that never match the absolute target dirs).
@@ -267,7 +276,7 @@ pub fn build(
     let shards_dir = graph_dir.join("shards");
     std::fs::create_dir_all(&shards_dir).map_err(io_err)?;
 
-    let old_meta = read_meta(graph_dir).ok();
+    let old_meta = known_meta.or_else(|| read_meta(graph_dir).ok());
     let old_files = old_meta
         .as_ref()
         .map(|m| m.files.clone())
@@ -363,6 +372,10 @@ pub fn check(code_root: &Path, graph_dir: &Path) -> Result<Vec<String>, AtlasErr
     // form (relative, `.`, or with symlinks).
     let code_root = &std::fs::canonicalize(code_root).map_err(io_err)?;
     let meta = read_meta(graph_dir)?;
+    check_with_meta(code_root, &meta)
+}
+
+fn check_with_meta(code_root: &Path, meta: &Meta) -> Result<Vec<String>, AtlasError> {
     let mut stale = BTreeSet::new();
     let mut seen = BTreeSet::new();
     for path in walk_rs_files(code_root) {
@@ -392,8 +405,7 @@ pub fn query(
     symbol: &str,
     opts: &QueryOptions,
 ) -> Result<QueryResult, AtlasError> {
-    let stale = refresh(code_root, graph_dir, opts)?;
-    let meta = read_meta(graph_dir)?;
+    let (meta, stale) = refresh(code_root, graph_dir, opts)?;
     let index = load_query_index(graph_dir, &meta)?;
     let matches = index.matching_nodes(symbol);
     let node = match matches.as_slice() {
@@ -436,8 +448,8 @@ pub fn tree(
     graph_dir: &Path,
     opts: &QueryOptions,
 ) -> Result<TreeOutline, AtlasError> {
-    let stale = refresh(code_root, graph_dir, opts)?;
-    let (meta, shards) = load_graph(graph_dir)?;
+    let (meta, stale) = refresh(code_root, graph_dir, opts)?;
+    let shards = load_shards(graph_dir, &meta)?;
     let mut kinds = BTreeMap::new();
     let mut children: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for shard in &shards {
@@ -504,8 +516,7 @@ pub fn refs(
     symbol: &str,
     opts: &QueryOptions,
 ) -> Result<EdgeReport, AtlasError> {
-    let stale = refresh(code_root, graph_dir, opts)?;
-    let meta = read_meta(graph_dir)?;
+    let (meta, stale) = refresh(code_root, graph_dir, opts)?;
     let index = load_query_index(graph_dir, &meta)?;
     let matches = index.matching_nodes(symbol);
     if matches.is_empty() {
@@ -533,8 +544,7 @@ pub fn impls(
     name: &str,
     opts: &QueryOptions,
 ) -> Result<EdgeReport, AtlasError> {
-    let stale = refresh(code_root, graph_dir, opts)?;
-    let meta = read_meta(graph_dir)?;
+    let (meta, stale) = refresh(code_root, graph_dir, opts)?;
     let index = load_query_index(graph_dir, &meta)?;
     let matching_ids: BTreeSet<&str> = index
         .nodes_with_symbol_suffix(name)
@@ -568,11 +578,16 @@ pub fn impls(
 /// Load every shard plus meta (internal + MCP convenience).
 pub fn load_graph(graph_dir: &Path) -> Result<(Meta, Vec<Shard>), AtlasError> {
     let meta = read_meta(graph_dir)?;
+    let shards = load_shards(graph_dir, &meta)?;
+    Ok((meta, shards))
+}
+
+fn load_shards(graph_dir: &Path, meta: &Meta) -> Result<Vec<Shard>, AtlasError> {
     let mut shards = Vec::new();
     for rel in meta.files.keys() {
         shards.push(read_shard(&graph_dir.join("shards"), rel)?);
     }
-    Ok((meta, shards))
+    Ok(shards)
 }
 
 // ── internals ───────────────────────────────────────────────────────
@@ -596,6 +611,8 @@ fn scip_extractor(tool: Option<&str>) -> ExtractorIdentity {
 }
 
 fn read_meta(graph_dir: &Path) -> Result<Meta, AtlasError> {
+    #[cfg(test)]
+    META_READ_COUNT.with(|count| count.set(count.get() + 1));
     let path = graph_dir.join("meta.json");
     let text = std::fs::read_to_string(&path).map_err(|_| AtlasError::MissingGraph {
         graph_dir: graph_dir.display().to_string(),
@@ -613,6 +630,21 @@ fn read_meta(graph_dir: &Path) -> Result<Meta, AtlasError> {
         });
     }
     Ok(meta)
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static META_READ_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn reset_meta_read_count() {
+    META_READ_COUNT.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+fn meta_read_count() -> usize {
+    META_READ_COUNT.with(std::cell::Cell::get)
 }
 
 fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), AtlasError> {
@@ -793,31 +825,35 @@ fn refresh(
     code_root: &Path,
     graph_dir: &Path,
     opts: &QueryOptions,
-) -> Result<Vec<String>, AtlasError> {
-    let stale = check(code_root, graph_dir)?;
+) -> Result<(Meta, Vec<String>), AtlasError> {
+    let canonical_code_root = std::fs::canonicalize(code_root).map_err(io_err)?;
+    let meta = read_meta(graph_dir)?;
+    let stale = check_with_meta(&canonical_code_root, &meta)?;
     if stale.is_empty() {
-        return Ok(Vec::new());
+        return Ok((meta, Vec::new()));
     }
     if opts.frozen {
-        return Ok(stale);
+        return Ok((meta, stale));
     }
     // Keep the SCIP layer alive across incremental refreshes: re-overlay the
     // index recorded in the prior build if it still exists. A vanished index
     // falls back to syn (scip edges purged, capability cleared).
-    let scip_index = read_meta(graph_dir)
-        .ok()
-        .and_then(|m| m.capability.scip_index)
+    let scip_index = meta
+        .capability
+        .scip_index
+        .clone()
         .map(PathBuf::from)
         .filter(|p| p.exists());
-    build(
+    build_with_meta(
         code_root,
         graph_dir,
         &BuildOptions {
             full: false,
             scip_index,
         },
+        Some(meta),
     )?;
-    Ok(Vec::new())
+    Ok((read_meta(graph_dir)?, Vec::new()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -2575,6 +2611,7 @@ mod tests {
 
     type QueryIndexMutation = fn(&mut serde_json::Value);
     type QueryIndexErrorMatcher = fn(&AtlasError) -> bool;
+    type LowLevelQuery = fn(&Path, &Path, &QueryOptions) -> Result<(), AtlasError>;
 
     fn fixture_root() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/atlas/basic")
@@ -2617,6 +2654,23 @@ mod tests {
 
     fn all_edges(shards: &[Shard]) -> Vec<Edge> {
         shards.iter().flat_map(|s| s.edges.clone()).collect()
+    }
+
+    fn source_tree_snapshot(code: &Path) -> BTreeMap<String, Vec<u8>> {
+        walk_rs_files(code)
+            .into_iter()
+            .map(|path| (rel_path(code, &path), fs::read(path).unwrap()))
+            .collect()
+    }
+
+    fn rebuild_test_index(
+        graph: &Path,
+        update: impl FnOnce(&mut Vec<Shard>),
+    ) -> (Meta, Vec<Shard>) {
+        let (meta, mut shards) = load_graph(graph).unwrap();
+        update(&mut shards);
+        rebuild_query_index(graph, &meta, &shards).unwrap();
+        (meta, shards)
     }
 
     fn assert_scip_occurrence_metadata(edge: &Edge, expected_site: EdgeSite) {
@@ -3308,7 +3362,7 @@ impl std::fmt::Display for Local {
     fn test_atlas_low_level_queries_use_index_without_scanning_unrelated_shards() {
         let (code, graph) = copy_fixture("atlas-indexed-low-level-queries");
         build(&code, &graph, &BuildOptions::default()).unwrap();
-        let source_before = fs::read(code.join("src/service.rs")).unwrap();
+        let source_before = source_tree_snapshot(&code);
         fs::write(
             graph.join("shards").join(shard_file_name("src/service.rs")),
             "not valid JSON",
@@ -3316,17 +3370,197 @@ impl std::fmt::Display for Local {
         .unwrap();
         let frozen = QueryOptions { frozen: true };
 
-        let query_result = query(&code, &graph, "atlas_basic::store::MemStore", &frozen);
-        let refs_result = refs(&code, &graph, "atlas_basic::store::MemStore", &frozen);
-        let impls_result = impls(&code, &graph, "Store", &frozen);
-
-        assert!(query_result.is_ok(), "query: {query_result:?}");
-        assert!(refs_result.is_ok(), "refs: {refs_result:?}");
-        assert!(impls_result.is_ok(), "impls: {impls_result:?}");
-        assert_eq!(
-            source_before,
-            fs::read(code.join("src/service.rs")).unwrap()
+        let query_result = query(&code, &graph, "atlas_basic::store::MemStore", &frozen).unwrap();
+        assert_eq!(query_result.node.symbol, "atlas_basic::store::MemStore");
+        assert_eq!(query_result.node.kind, NodeKind::Struct);
+        assert_eq!(query_result.node.file, "src/store.rs");
+        assert!(query_result.stale.is_empty());
+        assert!(
+            query_result
+                .edges_in
+                .iter()
+                .any(|edge| { edge.kind == EdgeKind::Contains && edge.to == query_result.node.id })
         );
+
+        let refs_result = refs(&code, &graph, "atlas_basic::store::MemStore", &frozen).unwrap();
+        assert_eq!(refs_result.symbol, "atlas_basic::store::MemStore");
+        assert!(refs_result.edges.is_empty());
+        assert!(refs_result.stale.is_empty());
+
+        let impls_result = impls(&code, &graph, "Store", &frozen).unwrap();
+        assert_eq!(impls_result.symbol, "Store");
+        assert_eq!(impls_result.edges.len(), 1);
+        assert_eq!(impls_result.edges[0].kind, EdgeKind::ImplsTrait);
+        assert_eq!(
+            impls_result.edges[0].target_text.as_deref(),
+            Some("atlas_basic::store::Store")
+        );
+        assert!(impls_result.stale.is_empty());
+
+        assert_eq!(source_before, source_tree_snapshot(&code));
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_low_level_queries_reuse_refresh_meta() {
+        let (code, graph) = copy_fixture("atlas-low-level-query-meta-reads");
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let operations: [(&str, LowLevelQuery); 3] = [
+            ("query", |code, graph, opts| {
+                query(code, graph, "atlas_basic::store::MemStore", opts).map(|_| ())
+            }),
+            ("refs", |code, graph, opts| {
+                refs(code, graph, "atlas_basic::store::MemStore", opts).map(|_| ())
+            }),
+            ("impls", |code, graph, opts| {
+                impls(code, graph, "Store", opts).map(|_| ())
+            }),
+        ];
+
+        for (name, operation) in operations {
+            reset_meta_read_count();
+            operation(&code, &graph, &QueryOptions::default()).unwrap();
+            assert_eq!(meta_read_count(), 1, "normal {name}");
+        }
+
+        let service = code.join("src/service.rs");
+        let mut source = fs::read_to_string(&service).unwrap();
+        source.push_str("\n// stale for frozen queries\n");
+        fs::write(&service, source).unwrap();
+        for (name, operation) in operations {
+            reset_meta_read_count();
+            operation(&code, &graph, &QueryOptions { frozen: true }).unwrap();
+            assert_eq!(meta_read_count(), 1, "frozen {name}");
+        }
+
+        reset_meta_read_count();
+        query(
+            &code,
+            &graph,
+            "atlas_basic::store::MemStore",
+            &QueryOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(meta_read_count(), 2, "non-frozen stale query");
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_query_exact_id_symbol_and_ambiguity() {
+        let (code, graph) = copy_fixture("atlas-query-id-symbol-ambiguity");
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let (_, shards) = load_graph(&graph).unwrap();
+        let target = node(&shards, "atlas_basic::store::MemStore")
+            .cloned()
+            .unwrap();
+
+        let by_symbol = query(&code, &graph, &target.symbol, &QueryOptions::default()).unwrap();
+        let by_id = query(&code, &graph, &target.id, &QueryOptions::default()).unwrap();
+        assert_eq!(by_symbol.node, target);
+        assert_eq!(by_id.node, target);
+
+        let mut duplicate = target.clone();
+        duplicate.id = format!("{}~duplicate", target.id);
+        rebuild_test_index(&graph, |shards| {
+            shards
+                .iter_mut()
+                .find(|shard| shard.file == duplicate.file)
+                .unwrap()
+                .nodes
+                .push(duplicate.clone());
+        });
+
+        let error = query(&code, &graph, &target.symbol, &QueryOptions::default()).unwrap_err();
+        assert!(matches!(
+            error,
+            AtlasError::AmbiguousSymbol {
+                ref symbol,
+                declarations: 2
+            } if symbol == &target.symbol
+        ));
+        let by_id = query(&code, &graph, &target.id, &QueryOptions::default()).unwrap();
+        assert_eq!(by_id.node, target);
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_refs_aggregate_declarations_filter_and_sort() {
+        let (code, graph) = copy_fixture("atlas-refs-multi-declaration");
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let (_, original_shards) = load_graph(&graph).unwrap();
+        let target = node(&original_shards, "atlas_basic::store::MemStore")
+            .cloned()
+            .unwrap();
+        let mut duplicate = target.clone();
+        duplicate.id = format!("{}~duplicate", target.id);
+        let first_source = node(&original_shards, "atlas_basic::open_default")
+            .unwrap()
+            .id
+            .clone();
+        let second_source = node(&original_shards, "atlas_basic::service::run")
+            .unwrap()
+            .id
+            .clone();
+        let mut reference = edge(&second_source, &target.id, EdgeKind::References);
+        reference.provenance = Provenance::Scip;
+        let mut call = edge(&first_source, &duplicate.id, EdgeKind::Calls);
+        call.provenance = Provenance::Scip;
+        let uses_type = edge(&first_source, &target.id, EdgeKind::UsesType);
+
+        rebuild_test_index(&graph, |shards| {
+            let shard = shards
+                .iter_mut()
+                .find(|shard| shard.file == target.file)
+                .unwrap();
+            shard.nodes.push(duplicate.clone());
+            shard
+                .edges
+                .extend([reference.clone(), call.clone(), uses_type]);
+        });
+
+        let report = refs(&code, &graph, &target.symbol, &QueryOptions::default()).unwrap();
+        let expected: Vec<Edge> = BTreeSet::from([reference, call]).into_iter().collect();
+        assert_eq!(report.symbol, target.symbol);
+        assert_eq!(report.edges, expected);
+        assert!(report.edges.windows(2).all(|pair| pair[0] < pair[1]));
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_impls_suffix_unresolved_fallback_and_sort() {
+        let (code, graph) = copy_fixture("atlas-impls-indexed-behavior");
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let (_, original_shards) = load_graph(&graph).unwrap();
+        let suffix_match = all_edges(&original_shards)
+            .into_iter()
+            .find(|edge| edge.kind == EdgeKind::ImplsTrait)
+            .unwrap();
+        let mut unresolved = edge("impl-unresolved", "not-store", EdgeKind::ImplsTrait);
+        unresolved.target_text = Some("external::Store".to_string());
+        unresolved.resolution = EdgeResolution::Unresolved;
+        unresolved.confidence = None;
+        let mut to_fallback = edge("impl-fallback", "external::Store", EdgeKind::ImplsTrait);
+        to_fallback.resolution = EdgeResolution::Unresolved;
+        to_fallback.confidence = None;
+        let excluded = edge(
+            "impl-excluded",
+            "external::Storehouse",
+            EdgeKind::ImplsTrait,
+        );
+
+        rebuild_test_index(&graph, |shards| {
+            shards[0]
+                .edges
+                .extend([unresolved.clone(), to_fallback.clone(), excluded]);
+        });
+
+        let report = impls(&code, &graph, "Store", &QueryOptions::default()).unwrap();
+        let expected: Vec<Edge> = BTreeSet::from([suffix_match, unresolved, to_fallback])
+            .into_iter()
+            .collect();
+        assert_eq!(report.symbol, "Store");
+        assert_eq!(report.edges, expected);
+        assert!(report.edges.windows(2).all(|pair| pair[0] < pair[1]));
         fs::remove_dir_all(code.parent().unwrap()).ok();
     }
 
