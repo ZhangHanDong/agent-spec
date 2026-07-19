@@ -662,7 +662,11 @@ Expected: FAIL because queries and bindings currently accept the graph.
 
 - [ ] **Step 3: Route every consumer through shared status**
 
-Before definitive query/index access, reject identity mismatch. `atlas status` itself returns successfully with both identities and the mismatch diagnostic. Replace provider-local file-hash freshness interpretation with `rust_atlas::status`; provider fingerprint is blake3 over canonical JSON containing schema, identity, toolchain, source set, and layer fingerprints.
+Before any automatic refresh or definitive query/index access, compute shared status from the already validated `Meta` and reject identity mismatch with `AtlasError::WorktreeMismatch`; a borrowed graph MUST NOT be rebuilt or mutated. `atlas status` itself returns successfully with both identities and the mismatch diagnostic. Frozen read queries may continue to return explicitly stale facts, but code binding and Contract symbol validation reject worktree mismatch, stale syn, or any stale semantic layer. An unavailable SCIP or MIR layer does not block syn-only evidence.
+
+Add the same serialized `AtlasStatus` to tree, query, refs, impls, and search results. Keep the existing top-level `stale` arrays for this wave as compatibility mirrors of `status.syn.stale_files`; test that they cannot diverge. A successful non-frozen refresh recomputes status before returning. CLI and MCP wrappers serialize these library results directly, and `atlas status` calls the same library entry point rather than rebuilding a local summary.
+
+Replace provider-local file-hash freshness interpretation with `rust_atlas::status`. The provider fingerprint is blake3 over canonical JSON containing schema version, recorded graph identity, explicit toolchain identity, recorded source-set fingerprint, graph fingerprint, and each available layer's recorded fingerprint. Diagnostics, current worktree, and display ordering are not fingerprint inputs. Atlas provider, binding, and Contract verifier share one authority-gate helper rather than independently interpreting layer states.
 
 - [ ] **Step 4: Preserve schema-mismatch precedence**
 
