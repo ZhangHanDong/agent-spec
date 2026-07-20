@@ -584,18 +584,20 @@ Intent Compiler loop:
 4. Run `agent-spec requirements plan --knowledge knowledge --specs specs --format json --gate`.
 5. Run `agent-spec requirements test-obligations --knowledge knowledge --specs specs --format json --out .agent-spec/test_obligations.json`.
 6. Run `agent-spec requirements worktrees --knowledge knowledge --specs specs --base main --path-prefix ../agent-spec-worktrees --out .agent-spec/worktrees.json`.
-7. Run `agent-spec requirements replay REQ-*`, `requirements explain-failure REQ-*`, or `requirements trace-graph REQ-*` when debugging requirement liveness.
-8. Run `agent-spec requirements questions --knowledge knowledge --specs specs --format json`.
-9. Use the reverse interview skill only to resolve emitted questions.
-10. Generate or refine task specs with `satisfies: [REQ-*]`.
-11. Run `agent-spec lifecycle`, `agent-spec guard`, and `agent-spec trace REQ-*`.
-12. For agent-spec's own development, dogfood this loop on the repository's own KLL requirement and task spec before treating example fixtures as validation.
-13. After contract acceptance, run `agent-spec archive --run-log-dir . --dry-run` to prepare a compressed historical summary for completed specs whose latest lifecycle evidence matches the current spec path and content fingerprint and is still passing.
+7. Run `agent-spec requirements affected` and `requirements affected-bundle` after code grounding or a change; only explicit Contract selectors are authoritative tests, and selected providers retain argv-safe execution configuration.
+8. After lifecycle and quality execution, run `agent-spec requirements affected-record` with the same stable `run_id` to persist trace ledger v2 evidence.
+9. Run `agent-spec requirements replay REQ-*`, `requirements explain-failure REQ-*`, or `requirements trace-graph REQ-*` when debugging requirement liveness; replay never reruns providers, tools, skills, or models.
+10. Run `agent-spec requirements questions --knowledge knowledge --specs specs --format json`.
+11. Use the reverse interview skill only to resolve emitted questions.
+12. Generate or refine task specs with `satisfies: [REQ-*]`.
+13. Run `agent-spec lifecycle`, `agent-spec guard`, and `agent-spec trace REQ-*`.
+14. For agent-spec's own development, dogfood this loop on the repository's own KLL requirement and task spec before treating example fixtures as validation.
+15. After contract acceptance, run `agent-spec archive --run-log-dir . --dry-run` to prepare a compressed historical summary for completed specs whose latest lifecycle evidence matches the current spec path and content fingerprint and is still passing.
 
 The CLI is deterministic and model-free. AI may draft candidate KLL artifacts and ask clarification questions, but it does not replace KLL lint, plan gate, lifecycle, or human acceptance.
 The test-obligations manifest is the DORA Stream-D bridge: tests are derived from requirements/specs instead of code. QA class and state-machine lint keep high-risk lifecycle/protocol work from relying only on prose review.
 The worktree manifest is a scheduling artifact. It does not run `git worktree add`; it tells humans or orchestration tools which ready work units can safely map to branches and directories.
-The requirement trace ledger is a debugging and audit surface. It reports the latest stored evidence chain and marks unknown code targets explicitly instead of guessing.
+The requirement trace ledger is a debugging and audit surface. V2 stores intent-impact, paths and spans, affected execution planning, normalized quality outcomes, worktree, and VCS beside lifecycle records. Replay and trace graph use only stored evidence; same-run partial updates preserve existing evidence and conflicting immutable updates fail. V1 remains readable with an explicit missing-context gap.
 Example fixtures are demonstrations. The dogfood proof for agent-spec itself is the self-hosting KLL requirement, task spec, lifecycle evidence, replay, and trace graph in this repository.
 Archived specs are not active contracts by default. Archive requires a `done` or `completed` tag plus latest passing lifecycle evidence bound to the current spec path and content fingerprint; missing, failing, or stale evidence is reported as an archive diagnostic. Keep active specs small enough for `guard`, `trace`, and `requirements plan` to remain useful.
 

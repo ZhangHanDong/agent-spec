@@ -5,6 +5,8 @@
       "requirement_id": "REQ-NOTE-CREATE",
       "scenario_name": "Create note",
       "suggested_selector": "note_create_adds_note",
+      "explicit_selector": "note_create_adds_note",
+      "selector_authority": "explicit",
       "verification_strength": "contract",
       "spec_path": "fixtures/requirements-noteapp/specs/task-req-note-create.spec.md",
       "required_evidence": [
@@ -15,6 +17,8 @@
       "requirement_id": "REQ-NOTE-LIST",
       "scenario_name": "List notes",
       "suggested_selector": "note_list_returns_created_notes",
+      "explicit_selector": "note_list_returns_created_notes",
+      "selector_authority": "explicit",
       "verification_strength": "contract",
       "spec_path": "fixtures/requirements-noteapp/specs/task-req-note-list.spec.md",
       "required_evidence": [

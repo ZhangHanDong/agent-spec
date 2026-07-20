@@ -113,7 +113,8 @@ changes only with a major version:
   `mcp`, `plan`, `wiki *`, `atlas *`, and the `requirements` family
   (`import|export|transition|supersede|status|graph|work-units|plan|
   test-obligations|worktrees|draft-specs|questions|replay|explain-failure|
-  trace-graph|traceability|verify-run|compile|bind|bundle`).
+  trace-graph|traceability|verify-run|compile|bind|bundle|affected|
+  affected-bundle|affected-record`).
 - **Machine formats**: lifecycle/verify JSON top-level keys, the five verdicts
   (`pass`, `fail`, `skip`, `uncertain`, `pending_review`) and `is_passing`
   semantics, schema `$id` URIs under `agent-spec/intent-compiler/`, the
@@ -849,13 +850,13 @@ This means the quality of your Contract matters as much as the quality of your c
 >
 > Acknowledgement: the intent compiler's borrowed validation invariants (requirement tree, dependency DAG, scenario grounding, test-first obligations, traceability) draw on the ARC (Agentic Requirement Compiler) reference project; this note is the repository's only reference to that name, and `docs/intent-compiler/reference-validation-matrix.md` records the invariant mapping.
 
-The requirements workflow is a compiler pipeline. `requirements graph` validates the KLL requirement graph, `requirements work-units` lowers graph nodes into executable or blocked work, `requirements plan` joins requirement, work-unit, and spec nodes into one DAG with explicit `satisfies` and `spec_depends` edges, `requirements test-obligations` emits spec-derived test obligations independently of implementation code, `requirements worktrees` maps ready work units to git worktree execution entries for parallel agents, `requirements trace`/`requirements replay`/`requirements explain-failure`/`requirements trace-graph` expose the latest requirement-to-scenario-to-test-to-code evidence chain, and `requirements questions` emits deterministic clarification prompts for unresolved ambiguity. The CLI does not call an AI model; AI-assisted PRD translation and reverse interviewing live in skills that write reviewed KLL artifacts back to disk.
+The requirements workflow is a compiler pipeline. `requirements graph` validates the KLL requirement graph, `requirements work-units` lowers graph nodes into executable or blocked work, `requirements plan` joins requirement, work-unit, and spec nodes into one DAG with explicit `satisfies` and `spec_depends` edges, `requirements test-obligations` emits spec-derived test obligations independently of implementation code, and `requirements worktrees` maps ready work units to git worktree execution entries for parallel agents. After code grounding, `requirements affected` joins provider-neutral impact to requirements, scenarios, explicit selectors, obligations, worktrees, and VCS; missing links remain typed gaps. `requirements affected-bundle` applies the risk A/B/C policy and preserves selected provider executable, argv, cwd, timeout, and output-limit configuration. `requirements affected-record` stores the completed chain. `requirements trace`/`requirements replay`/`requirements explain-failure`/`requirements trace-graph` expose stored lifecycle and affected evidence, while `requirements questions` emits deterministic clarification prompts. The CLI does not call an AI model; AI-assisted PRD translation and reverse interviewing live in skills that write reviewed KLL artifacts back to disk.
 
 Compiler inputs are strict trust boundaries. Requirement ids must be safe stable identifiers, frontmatter must begin on the first line and contain no malformed or duplicate keys, declared kind must match the `knowledge/` subdirectory, required roots must exist, and recursive compilation rejects symlinks. Missing or malformed inputs are diagnostics, never an empty successful graph.
 
 DORA-inspired gates: specs may declare `risk: A`, `risk: B`, or `risk: C`. This is the QA class gate. Class A work requires lifecycle, trace, targeted tests, and adversarial review evidence; Class B requires lifecycle and trace; Class C requires lifecycle. Requirements with protocol or lifecycle behavior should use a `## State Machine` section so state-machine lint can check transition coverage.
 
-Requirement replay is evidence replay, not deterministic LLM replay. It reconstructs every scenario in the latest stored run from requirement id to work unit, spec, lifecycle scenario, test selector, code target, worktree, and VCS reference. A single-requirement spec owns all its scenarios; multi-requirement specs use KLL scenario names for disambiguation instead of producing a requirement-by-scenario Cartesian product. When no code target is known, the command reports `unknown` instead of inferring ownership from filenames or natural language.
+Requirement replay is evidence replay, not deterministic LLM replay. Trace ledger v2 can store the complete intent-impact report, its digest, an affected execution bundle, normalized quality outcomes, paths and source spans, worktree, and observed VCS reference beside lifecycle records for the same `run_id`. Replay, failure explanation, and trace graph read only stored evidence; they never rerun Atlas, Git diff, tests, quality tools, skills, or a model. Re-recording the same run preserves omitted bundle or quality evidence and rejects conflicting immutable evidence. V1 ledgers remain readable and return an explicit `affected-trace-missing` gap instead of guessing affected paths. A single-requirement spec owns all its scenarios; multi-requirement specs use KLL scenario names for disambiguation.
 
 agent-spec development dogfoods this workflow on its own repository. The self-hosting gate uses `knowledge/requirements/req-requirements-compiler-plan-dag.md` and `specs/task-requirements-compiler-plan-dag.spec.md` as the primary proof that requirements remain guarded by code. Example fixtures demonstrate the workflow for other projects; they do not replace the self-hosting dogfood gate.
 
@@ -867,12 +868,22 @@ Use `requirements questions` as the deterministic input to the reverse interview
 agent-spec requirements plan --knowledge knowledge --specs specs --format json --gate
 agent-spec requirements test-obligations --knowledge knowledge --specs specs --format json --out .agent-spec/test_obligations.json
 agent-spec requirements worktrees --knowledge knowledge --specs specs --base main --path-prefix ../agent-spec-worktrees --out .agent-spec/worktrees.json
+agent-spec requirements affected --path src/lib.rs --knowledge knowledge --specs specs --out .agent-spec/intent-impact.json
+agent-spec requirements affected-bundle --impact .agent-spec/intent-impact.json --knowledge knowledge --out .agent-spec/affected-bundle.json
+agent-spec requirements affected-record --impact .agent-spec/intent-impact.json --bundle .agent-spec/affected-bundle.json --quality-outcomes .agent-spec/quality-outcomes.json --run-id "$RUN_ID" --timestamp "$TIMESTAMP"
 agent-spec requirements replay REQ-123 --format text
 agent-spec requirements explain-failure REQ-123 --format json
 agent-spec requirements trace-graph REQ-123 --format mermaid
 agent-spec requirements questions --knowledge knowledge --specs specs --format json
 agent-spec archive --spec-dir specs --archive-dir .agent-spec/archive/specs --summary knowledge/context/spec-archives.md --run-log-dir . --dry-run
 ```
+
+`affected-record` is a recorder, not an executor. Its optional
+`--quality-outcomes` file is a JSON array such as
+`[{"provider_id":"cargo-clippy","outcome":{"outcome":"pass"},"summary":"workspace clippy passed"}]`.
+Use the same `run_id` as lifecycle so both evidence classes merge without
+overwriting one another. Repeating the command with an omitted optional artifact
+preserves previously recorded evidence; conflicting values for the same run fail.
 
 ### Documentation Engineering
 

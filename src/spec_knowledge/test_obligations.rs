@@ -16,7 +16,11 @@ pub struct TestObligationSet {
 pub struct TestObligation {
     pub requirement_id: String,
     pub scenario_name: String,
+    /// Selector shown to an author. It is authoritative only when
+    /// `selector_authority == "explicit"`.
     pub suggested_selector: String,
+    pub explicit_selector: Option<String>,
+    pub selector_authority: String,
     pub verification_strength: String,
     pub spec_path: Option<PathBuf>,
     pub required_evidence: Vec<QaEvidenceKind>,
@@ -79,14 +83,20 @@ pub fn build_test_obligations(knowledge_dir: &Path, specs_dir: &Path) -> TestObl
             .unwrap_or_default();
 
         for scenario in node.scenarios {
-            let suggested_selector = selectors
-                .get(&scenario.name)
-                .cloned()
+            let explicit_selector = selectors.get(&scenario.name).cloned();
+            let suggested_selector = explicit_selector
+                .clone()
                 .unwrap_or_else(|| selector_from_scenario(&scenario.name));
             obligations.push(TestObligation {
                 requirement_id: node.id.clone(),
                 scenario_name: scenario.name.clone(),
                 suggested_selector,
+                selector_authority: if explicit_selector.is_some() {
+                    "explicit".into()
+                } else {
+                    "candidate".into()
+                },
+                explicit_selector,
                 verification_strength: "contract".into(),
                 spec_path: spec_paths.first().cloned(),
                 required_evidence: required_evidence_for(qa_class),
@@ -186,6 +196,11 @@ mod tests {
         assert_eq!(obligation.requirement_id, "REQ-NOTE-CREATE");
         assert_eq!(obligation.scenario_name, "Create note");
         assert_eq!(obligation.suggested_selector, "note_create_adds_note");
+        assert_eq!(
+            obligation.explicit_selector.as_deref(),
+            Some("note_create_adds_note")
+        );
+        assert_eq!(obligation.selector_authority, "explicit");
         assert_eq!(obligation.verification_strength, "contract");
         assert_eq!(
             obligation.required_evidence,
@@ -197,6 +212,30 @@ mod tests {
             ]
         );
 
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn test_test_obligations_mark_generated_selectors_as_candidates() {
+        let dir = make_temp_dir("test-obligations-candidate-selector");
+        let knowledge = dir.join("knowledge");
+        let specs = dir.join("specs");
+        fs::create_dir_all(knowledge.join("requirements")).unwrap();
+        fs::create_dir_all(&specs).unwrap();
+        fs::write(
+            knowledge.join("requirements/req-candidate.md"),
+            "---\nkind: requirement\nid: REQ-CANDIDATE\ntitle: \"Candidate\"\nstatus: accepted\nliveness: auto\n---\n## Problem\np\n## Requirements\n[REQ-CANDIDATE-ONE] The system MUST preserve authority.\n## Scenarios\nScenario: Missing explicit selector\n  Given a scenario\n  When obligations are built\n  Then authority remains explicit\n",
+        )
+        .unwrap();
+
+        let obligations = build_test_obligations(&knowledge, &specs);
+        let obligation = &obligations.obligations[0];
+        assert_eq!(
+            obligation.suggested_selector,
+            "test_missing_explicit_selector"
+        );
+        assert_eq!(obligation.explicit_selector, None);
+        assert_eq!(obligation.selector_authority, "candidate");
         fs::remove_dir_all(dir).ok();
     }
 

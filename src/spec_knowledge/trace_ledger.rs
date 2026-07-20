@@ -1,9 +1,14 @@
 use crate::spec_core::{Evidence, Verdict, VerificationReport};
-use crate::spec_knowledge::{RequirementPlan, WorktreeManifest};
+use crate::spec_knowledge::{
+    AffectedExecutionBundle, IntentImpactGap, IntentImpactReport, QualityOutcome, RequirementPlan,
+    WorktreeManifest,
+};
 use crate::vcs::VcsContext;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+
+pub const REQUIREMENT_TRACE_LEDGER_VERSION: u32 = 2;
 
 #[derive(Debug, Clone)]
 pub struct RequirementTraceRunInput<'a> {
@@ -55,7 +60,46 @@ pub struct RequirementTraceRecordInput<'a> {
 pub struct RequirementTraceLedger {
     pub version: u32,
     pub records: Vec<RequirementTraceRecord>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub affected_records: Vec<AffectedTraceRecord>,
     pub diagnostics: Vec<RequirementTraceDiagnostic>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AffectedTraceRecord {
+    pub run_id: String,
+    pub timestamp: u64,
+    pub requirement_ids: Vec<String>,
+    pub intent_impact_digest: String,
+    pub intent_impact: IntentImpactReport,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_bundle: Option<AffectedExecutionBundle>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub quality_outcomes: Vec<AffectedQualityOutcome>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AffectedQualityOutcome {
+    pub provider_id: String,
+    pub outcome: QualityOutcome,
+    pub summary: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AffectedRequirementReplay {
+    pub requirement_id: String,
+    pub lifecycle_records: Vec<RequirementTraceRecord>,
+    pub affected_record: Option<AffectedTraceRecord>,
+    pub gaps: Vec<IntentImpactGap>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AffectedRequirementFailure {
+    pub requirement_id: String,
+    pub lifecycle_non_pass_records: Vec<RequirementTraceRecord>,
+    pub quality_failures: Vec<AffectedQualityOutcome>,
+    pub affected_record: Option<AffectedTraceRecord>,
+    pub gaps: Vec<IntentImpactGap>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -280,8 +324,9 @@ pub fn record_requirement_trace_run(input: RequirementTraceRunInput<'_>) -> Requ
     });
 
     RequirementTraceLedger {
-        version: 1,
+        version: REQUIREMENT_TRACE_LEDGER_VERSION,
         records,
+        affected_records: Vec::new(),
         diagnostics,
     }
 }
@@ -290,23 +335,36 @@ pub fn write_requirement_trace_ledger(
     base_dir: &Path,
     ledger: &RequirementTraceLedger,
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    write_requirement_trace_ledger_to_dir(&base_dir.join(".agent-spec/trace"), ledger)
+}
+
+pub fn write_requirement_trace_ledger_to_dir(
+    trace_dir: &Path,
+    ledger: &RequirementTraceLedger,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let run_id = ledger
         .records
         .first()
         .map(|record| record.run_id.as_str())
+        .or_else(|| {
+            ledger
+                .affected_records
+                .first()
+                .map(|record| record.run_id.as_str())
+        })
         .unwrap_or("empty");
     let safe_run_id = run_id.replace(['/', '\\'], "-");
-    let dir = base_dir.join(".agent-spec/trace");
-    std::fs::create_dir_all(&dir)?;
-    let path = dir.join(format!("{safe_run_id}.json"));
+    std::fs::create_dir_all(trace_dir)?;
+    let path = trace_dir.join(format!("{safe_run_id}.json"));
     std::fs::write(&path, serde_json::to_string_pretty(ledger)?)?;
     Ok(path)
 }
 
 pub fn read_requirement_trace_ledgers(trace_dir: &Path) -> RequirementTraceLedger {
     let mut merged = RequirementTraceLedger {
-        version: 1,
+        version: REQUIREMENT_TRACE_LEDGER_VERSION,
         records: Vec::new(),
+        affected_records: Vec::new(),
         diagnostics: Vec::new(),
     };
     let Ok(entries) = std::fs::read_dir(trace_dir) else {
@@ -340,7 +398,9 @@ pub fn read_requirement_trace_ledgers(trace_dir: &Path) -> RequirementTraceLedge
             .and_then(|content| serde_json::from_str::<RequirementTraceLedger>(&content).ok())
         {
             Some(mut ledger) => {
+                merged.version = merged.version.max(ledger.version);
                 merged.records.append(&mut ledger.records);
+                merged.affected_records.append(&mut ledger.affected_records);
                 merged.diagnostics.append(&mut ledger.diagnostics);
             }
             None => merged.diagnostics.push(RequirementTraceDiagnostic {
@@ -359,7 +419,157 @@ pub fn read_requirement_trace_ledgers(trace_dir: &Path) -> RequirementTraceLedge
             .then_with(|| a.spec_path.cmp(&b.spec_path))
             .then_with(|| a.scenario_name.cmp(&b.scenario_name))
     });
+    merged.affected_records.sort_by(|a, b| {
+        a.timestamp
+            .cmp(&b.timestamp)
+            .then_with(|| a.run_id.cmp(&b.run_id))
+            .then_with(|| a.requirement_ids.cmp(&b.requirement_ids))
+    });
     merged
+}
+
+pub fn record_affected_trace(
+    ledger: &mut RequirementTraceLedger,
+    mut record: AffectedTraceRecord,
+) -> Result<(), String> {
+    record.requirement_ids.sort();
+    record.requirement_ids.dedup();
+    record.quality_outcomes.sort_by(|left, right| {
+        left.provider_id
+            .cmp(&right.provider_id)
+            .then_with(|| left.summary.cmp(&right.summary))
+    });
+    ledger.version = REQUIREMENT_TRACE_LEDGER_VERSION;
+    if let Some(existing) = ledger
+        .affected_records
+        .iter_mut()
+        .find(|existing| existing.run_id == record.run_id)
+    {
+        if existing.timestamp != record.timestamp
+            || existing.intent_impact_digest != record.intent_impact_digest
+            || existing.requirement_ids != record.requirement_ids
+        {
+            return Err(format!(
+                "affected-trace-run-conflict: run `{}` already names different immutable impact evidence",
+                record.run_id
+            ));
+        }
+        let mut merged = existing.clone();
+        match (&merged.execution_bundle, record.execution_bundle.take()) {
+            (Some(current), Some(incoming)) if current != &incoming => {
+                return Err(format!(
+                    "affected-trace-run-conflict: run `{}` already names a different execution bundle",
+                    record.run_id
+                ));
+            }
+            (None, Some(incoming)) => merged.execution_bundle = Some(incoming),
+            _ => {}
+        }
+        for outcome in record.quality_outcomes {
+            if let Some(current) = merged
+                .quality_outcomes
+                .iter()
+                .find(|current| current.provider_id == outcome.provider_id)
+            {
+                if current != &outcome {
+                    return Err(format!(
+                        "affected-trace-run-conflict: run `{}` already records different evidence for quality provider `{}`",
+                        record.run_id, outcome.provider_id
+                    ));
+                }
+            } else {
+                merged.quality_outcomes.push(outcome);
+            }
+        }
+        merged.quality_outcomes.sort_by(|left, right| {
+            left.provider_id
+                .cmp(&right.provider_id)
+                .then_with(|| left.summary.cmp(&right.summary))
+        });
+        *existing = merged;
+    } else {
+        ledger.affected_records.push(record);
+    }
+    ledger.affected_records.sort_by(|left, right| {
+        left.timestamp
+            .cmp(&right.timestamp)
+            .then_with(|| left.run_id.cmp(&right.run_id))
+            .then_with(|| left.requirement_ids.cmp(&right.requirement_ids))
+    });
+    Ok(())
+}
+
+pub fn write_affected_trace_record_to_dir(
+    trace_dir: &Path,
+    record: AffectedTraceRecord,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let safe_run_id = record.run_id.replace(['/', '\\'], "-");
+    let path = trace_dir.join(format!("{safe_run_id}.json"));
+    let mut ledger = if path.is_file() {
+        serde_json::from_str::<RequirementTraceLedger>(&std::fs::read_to_string(&path)?)?
+    } else {
+        RequirementTraceLedger {
+            version: REQUIREMENT_TRACE_LEDGER_VERSION,
+            records: Vec::new(),
+            affected_records: Vec::new(),
+            diagnostics: Vec::new(),
+        }
+    };
+    record_affected_trace(&mut ledger, record).map_err(std::io::Error::other)?;
+    std::fs::create_dir_all(trace_dir)?;
+    std::fs::write(&path, serde_json::to_string_pretty(&ledger)?)?;
+    Ok(path)
+}
+
+pub fn build_affected_trace_record(
+    run_id: String,
+    timestamp: u64,
+    intent_impact: IntentImpactReport,
+    execution_bundle: Option<AffectedExecutionBundle>,
+    quality_outcomes: Vec<AffectedQualityOutcome>,
+) -> Result<AffectedTraceRecord, String> {
+    if run_id.trim().is_empty() {
+        return Err("affected-trace-run-id-missing: run id must not be empty".into());
+    }
+    let digest = crate::spec_knowledge::blake3_hex(
+        &serde_json::to_vec(&intent_impact).map_err(|error| error.to_string())?,
+    );
+    if let Some(bundle) = &execution_bundle
+        && bundle.intent_impact_digest != digest
+    {
+        return Err(format!(
+            "affected-trace-digest-mismatch: bundle references {} but report digest is {digest}",
+            bundle.intent_impact_digest
+        ));
+    }
+    let mut requirement_ids = intent_impact
+        .affected
+        .iter()
+        .flat_map(|node| node.links.iter())
+        .map(|link| link.requirement_id.clone())
+        .collect::<Vec<_>>();
+    requirement_ids.sort();
+    requirement_ids.dedup();
+    if requirement_ids.is_empty() {
+        return Err(
+            "affected-trace-requirements-missing: report has no linked requirement ids".into(),
+        );
+    }
+    let mut record = AffectedTraceRecord {
+        run_id,
+        timestamp,
+        requirement_ids,
+        intent_impact_digest: digest,
+        intent_impact,
+        execution_bundle,
+        quality_outcomes,
+    };
+    record.quality_outcomes.sort_by(|left, right| {
+        left.provider_id
+            .cmp(&right.provider_id)
+            .then_with(|| left.summary.cmp(&right.summary))
+    });
+    Ok(record)
 }
 
 pub fn replay_requirement_trace(
@@ -424,6 +634,319 @@ pub fn explain_requirement_failure(
         non_pass_records,
         diagnostics: Vec::new(),
     }
+}
+
+pub fn replay_affected_requirement(
+    ledger: &RequirementTraceLedger,
+    requirement_id: &str,
+) -> AffectedRequirementReplay {
+    let affected_record = latest_affected_trace_record(ledger, requirement_id);
+    let mut gaps = affected_record
+        .as_ref()
+        .map(affected_record_gaps)
+        .unwrap_or_default();
+    gaps.extend(
+        ledger
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| {
+                diagnostic.requirement_id.is_empty() || diagnostic.requirement_id == requirement_id
+            })
+            .map(|diagnostic| IntentImpactGap {
+                code: diagnostic.code.clone(),
+                severity: diagnostic.severity.clone(),
+                node_id: None,
+                requirement_id: (!diagnostic.requirement_id.is_empty())
+                    .then(|| diagnostic.requirement_id.clone()),
+                spec_path: None,
+                message: diagnostic.message.clone(),
+            }),
+    );
+    let lifecycle_records = if let Some(record) = &affected_record {
+        let mut matching = ledger
+            .records
+            .iter()
+            .filter(|candidate| {
+                candidate.requirement_id == requirement_id && candidate.run_id == record.run_id
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        matching.sort_by(|left, right| {
+            left.spec_path
+                .cmp(&right.spec_path)
+                .then_with(|| left.scenario_name.cmp(&right.scenario_name))
+        });
+        if matching.is_empty() {
+            gaps.push(affected_gap(
+                "lifecycle-trace-missing",
+                requirement_id,
+                format!(
+                    "affected run `{}` has no lifecycle trace records",
+                    record.run_id
+                ),
+            ));
+        }
+        matching
+    } else {
+        gaps.push(affected_gap(
+            "affected-trace-missing",
+            requirement_id,
+            "no stored intent-aware affected context is available; replay remains lifecycle-only",
+        ));
+        let records = latest_requirement_trace_records(ledger, requirement_id);
+        if records.is_empty() {
+            gaps.push(affected_gap(
+                "lifecycle-trace-missing",
+                requirement_id,
+                "no stored lifecycle trace records are available",
+            ));
+        }
+        records
+    };
+    sort_affected_gaps(&mut gaps);
+    AffectedRequirementReplay {
+        requirement_id: requirement_id.into(),
+        lifecycle_records,
+        affected_record,
+        gaps,
+    }
+}
+
+pub fn explain_affected_requirement_failure(
+    ledger: &RequirementTraceLedger,
+    requirement_id: &str,
+) -> AffectedRequirementFailure {
+    let replay = replay_affected_requirement(ledger, requirement_id);
+    let lifecycle_non_pass_records = replay
+        .lifecycle_records
+        .iter()
+        .filter(|record| record.verdict != Verdict::Pass)
+        .cloned()
+        .collect();
+    let quality_failures = replay
+        .affected_record
+        .as_ref()
+        .into_iter()
+        .flat_map(|record| record.quality_outcomes.iter())
+        .filter(|outcome| outcome.outcome != QualityOutcome::Pass)
+        .cloned()
+        .collect();
+    AffectedRequirementFailure {
+        requirement_id: replay.requirement_id,
+        lifecycle_non_pass_records,
+        quality_failures,
+        affected_record: replay.affected_record,
+        gaps: replay.gaps,
+    }
+}
+
+pub fn format_affected_requirement_replay_text(replay: &AffectedRequirementReplay) -> String {
+    let mut out = format!(
+        "affected evidence replay for {}: {} lifecycle scenarios\n",
+        replay.requirement_id,
+        replay.lifecycle_records.len()
+    );
+    if let Some(record) = &replay.affected_record {
+        out.push_str(&format!(
+            "run: {}\ndigest: {}\nprovider: {}\ngraph: {}\nvcs: {}\n",
+            record.run_id,
+            record.intent_impact_digest,
+            record.intent_impact.provider,
+            record
+                .intent_impact
+                .graph_fingerprint
+                .as_deref()
+                .unwrap_or("<none>"),
+            record
+                .intent_impact
+                .observed_vcs
+                .as_ref()
+                .map(|vcs| format!("{:?} {}", vcs.vcs_type, vcs.change_ref))
+                .unwrap_or_else(|| "<none>".into())
+        ));
+        for affected in &record.intent_impact.affected {
+            out.push_str(&format!(
+                "affected: {} {}:{}-{} distance={}\n",
+                affected.impact.node.node_id,
+                affected.impact.node.file,
+                affected.impact.node.line_start,
+                affected.impact.node.line_end,
+                affected.impact.distance
+            ));
+            for hop in &affected.impact.path.hops {
+                let site = hop
+                    .site
+                    .as_ref()
+                    .map(|site| {
+                        format!(
+                            "{}:{}:{}-{}:{}",
+                            site.file,
+                            site.line_start,
+                            site.column_start,
+                            site.line_end,
+                            site.column_end
+                        )
+                    })
+                    .unwrap_or_else(|| "<none>".into());
+                out.push_str(&format!(
+                    "  path: {} -> {} kind={} confidence={} site={}\n",
+                    hop.from,
+                    hop.chosen_target,
+                    hop.kind,
+                    hop.confidence.as_deref().unwrap_or("unknown"),
+                    site
+                ));
+            }
+            for link in &affected.links {
+                out.push_str(&format!(
+                    "  requirement: {}\n  work unit: {}\n",
+                    link.requirement_id, link.work_unit_id
+                ));
+                if let Some(worktree) = &link.worktree {
+                    out.push_str(&format!(
+                        "  worktree: {}\n  branch: {}\n",
+                        worktree.path.display(),
+                        worktree.branch
+                    ));
+                }
+                for spec in &link.specs {
+                    for scenario in &spec.scenarios {
+                        out.push_str(&format!(
+                            "  spec: {}\n  scenario: {}\n  test: {}\n",
+                            spec.path.display(),
+                            scenario.name,
+                            scenario
+                                .authoritative_selector
+                                .as_deref()
+                                .unwrap_or("<none>")
+                        ));
+                    }
+                }
+            }
+        }
+        for outcome in &record.quality_outcomes {
+            out.push_str(&format!(
+                "quality: {} {:?} {}\n",
+                outcome.provider_id, outcome.outcome, outcome.summary
+            ));
+        }
+    }
+    for lifecycle in &replay.lifecycle_records {
+        out.push_str(&format!(
+            "lifecycle: {} {} {:?}\n",
+            lifecycle.scenario_name,
+            lifecycle.test_selector.as_deref().unwrap_or("<none>"),
+            lifecycle.verdict
+        ));
+    }
+    for gap in &replay.gaps {
+        out.push_str(&format!("gap: {} {}\n", gap.code, gap.message));
+    }
+    out
+}
+
+pub fn format_affected_requirement_failure_text(failure: &AffectedRequirementFailure) -> String {
+    let mut out = format!(
+        "affected failure explanation for {}: {} lifecycle failures, {} quality failures\n",
+        failure.requirement_id,
+        failure.lifecycle_non_pass_records.len(),
+        failure.quality_failures.len()
+    );
+    for record in &failure.lifecycle_non_pass_records {
+        out.push_str(&format!(
+            "lifecycle failure: {} {} {:?}\n",
+            record.scenario_name,
+            record.test_selector.as_deref().unwrap_or("<none>"),
+            record.verdict
+        ));
+    }
+    for outcome in &failure.quality_failures {
+        out.push_str(&format!(
+            "quality failure: {} {:?} {}\n",
+            outcome.provider_id, outcome.outcome, outcome.summary
+        ));
+    }
+    if let Some(record) = &failure.affected_record {
+        out.push_str(&format!(
+            "affected run: {}\ndigest: {}\n",
+            record.run_id, record.intent_impact_digest
+        ));
+        for affected in &record.intent_impact.affected {
+            out.push_str(&format!(
+                "affected code: {} {}:{}-{}\n",
+                affected.impact.node.node_id,
+                affected.impact.node.file,
+                affected.impact.node.line_start,
+                affected.impact.node.line_end
+            ));
+        }
+    }
+    for gap in &failure.gaps {
+        out.push_str(&format!("gap: {} {}\n", gap.code, gap.message));
+    }
+    if failure.affected_record.is_some() {
+        out.push_str(&format_affected_requirement_replay_text(
+            &AffectedRequirementReplay {
+                requirement_id: failure.requirement_id.clone(),
+                lifecycle_records: failure.lifecycle_non_pass_records.clone(),
+                affected_record: failure.affected_record.clone(),
+                gaps: Vec::new(),
+            },
+        ));
+    }
+    out
+}
+
+fn latest_affected_trace_record(
+    ledger: &RequirementTraceLedger,
+    requirement_id: &str,
+) -> Option<AffectedTraceRecord> {
+    ledger
+        .affected_records
+        .iter()
+        .filter(|record| {
+            record
+                .requirement_ids
+                .iter()
+                .any(|candidate| candidate == requirement_id)
+        })
+        .max_by(|left, right| {
+            left.timestamp
+                .cmp(&right.timestamp)
+                .then_with(|| left.run_id.cmp(&right.run_id))
+        })
+        .cloned()
+}
+
+fn affected_record_gaps(record: &AffectedTraceRecord) -> Vec<IntentImpactGap> {
+    let mut gaps = record.intent_impact.gaps.clone();
+    if let Some(bundle) = &record.execution_bundle {
+        gaps.extend(bundle.gaps.iter().cloned());
+    }
+    gaps
+}
+
+fn affected_gap(code: &str, requirement_id: &str, message: impl Into<String>) -> IntentImpactGap {
+    IntentImpactGap {
+        code: code.into(),
+        severity: "warning".into(),
+        node_id: None,
+        requirement_id: Some(requirement_id.into()),
+        spec_path: None,
+        message: message.into(),
+    }
+}
+
+fn sort_affected_gaps(gaps: &mut Vec<IntentImpactGap>) {
+    gaps.sort_by(|left, right| {
+        left.code
+            .cmp(&right.code)
+            .then_with(|| left.node_id.cmp(&right.node_id))
+            .then_with(|| left.requirement_id.cmp(&right.requirement_id))
+            .then_with(|| left.spec_path.cmp(&right.spec_path))
+            .then_with(|| left.message.cmp(&right.message))
+    });
+    gaps.dedup();
 }
 
 pub fn format_requirement_trace_text(records: &[RequirementTraceRecord]) -> String {
@@ -617,6 +1140,132 @@ pub fn format_requirement_trace_mermaid(records: &[RequirementTraceRecord]) -> S
     out
 }
 
+pub fn format_affected_requirement_trace_mermaid(replay: &AffectedRequirementReplay) -> String {
+    let mut out = format_requirement_trace_mermaid(&replay.lifecycle_records);
+    let Some(record) = &replay.affected_record else {
+        return out;
+    };
+
+    for (affected_index, affected) in record.intent_impact.affected.iter().enumerate() {
+        let prefix = format!("a{affected_index}");
+        let path = &affected.impact.path;
+        for (node_index, node) in path.nodes.iter().enumerate() {
+            out.push_str(&format!(
+                "  {prefix}_path{node_index}[\"{}<br/>{}:{}-{}\"]\n",
+                escape_mermaid(&node.node_id),
+                escape_mermaid(&node.file),
+                node.line_start,
+                node.line_end
+            ));
+        }
+        for (hop_index, hop) in path.hops.iter().enumerate() {
+            let site = hop
+                .site
+                .as_ref()
+                .map(|site| format!(" @ {}:{}", site.file, site.line_start))
+                .unwrap_or_default();
+            out.push_str(&format!(
+                "  {prefix}_path{hop_index} -->|\"{}{}\"| {prefix}_path{}\n",
+                escape_mermaid(&hop.kind),
+                escape_mermaid(&site),
+                hop_index + 1
+            ));
+        }
+        let path_head = (!path.nodes.is_empty()).then(|| format!("{prefix}_path0"));
+        let path_tail = path
+            .nodes
+            .len()
+            .checked_sub(1)
+            .map(|index| format!("{prefix}_path{index}"));
+
+        for (link_index, link) in affected.links.iter().enumerate() {
+            let link_prefix = format!("{prefix}_l{link_index}");
+            out.push_str(&format!(
+                "  {link_prefix}_req[\"{}\"]\n  {link_prefix}_wu[\"{}\"]\n",
+                escape_mermaid(&link.requirement_id),
+                escape_mermaid(&link.work_unit_id)
+            ));
+            out.push_str(&format!("  {link_prefix}_req --> {link_prefix}_wu\n"));
+            let mut evidence_tails = Vec::new();
+            for (spec_index, spec) in link.specs.iter().enumerate() {
+                let spec_prefix = format!("{link_prefix}_s{spec_index}");
+                out.push_str(&format!(
+                    "  {spec_prefix}[\"{}\"]\n  {link_prefix}_wu --> {spec_prefix}\n",
+                    escape_mermaid(&spec.path.display().to_string())
+                ));
+                if spec.scenarios.is_empty() {
+                    evidence_tails.push(spec_prefix.clone());
+                }
+                for (scenario_index, scenario) in spec.scenarios.iter().enumerate() {
+                    let scenario_id = format!("{spec_prefix}_c{scenario_index}");
+                    out.push_str(&format!(
+                        "  {scenario_id}[\"Scenario: {}\"]\n  {spec_prefix} --> {scenario_id}\n",
+                        escape_mermaid(&scenario.name)
+                    ));
+                    if let Some(selector) = &scenario.authoritative_selector {
+                        let test_id = format!("{scenario_id}_test");
+                        out.push_str(&format!(
+                            "  {test_id}[\"Test: {}\"]\n  {scenario_id} --> {test_id}\n",
+                            escape_mermaid(selector)
+                        ));
+                        evidence_tails.push(test_id);
+                    } else {
+                        evidence_tails.push(scenario_id);
+                    }
+                }
+            }
+            if let Some(head) = &path_head {
+                for tail in &evidence_tails {
+                    out.push_str(&format!("  {tail} --> {head}\n"));
+                }
+            }
+            let mut authority_tail = path_tail
+                .clone()
+                .or_else(|| evidence_tails.first().cloned())
+                .unwrap_or_else(|| format!("{link_prefix}_wu"));
+            if let Some(worktree) = &link.worktree {
+                out.push_str(&format!(
+                    "  {link_prefix}_worktree[\"{}\"]\n  {authority_tail} --> {link_prefix}_worktree\n  {link_prefix}_branch[\"{}\"]\n  {link_prefix}_worktree --> {link_prefix}_branch\n",
+                    escape_mermaid(&worktree.path.display().to_string()),
+                    escape_mermaid(&worktree.branch)
+                ));
+                authority_tail = format!("{link_prefix}_branch");
+            }
+            if let Some(vcs) = &record.intent_impact.observed_vcs {
+                out.push_str(&format!(
+                    "  {link_prefix}_vcs[\"{:?} {}\"]\n  {authority_tail} --> {link_prefix}_vcs\n",
+                    vcs.vcs_type,
+                    escape_mermaid(&vcs.change_ref)
+                ));
+            }
+        }
+
+        if let Some(tail) = path_tail {
+            for (quality_index, outcome) in record.quality_outcomes.iter().enumerate() {
+                let label = quality_outcome_label(&outcome.outcome);
+                out.push_str(&format!(
+                    "  {prefix}_quality{quality_index}[\"{}: {}\"]\n  {tail} --> {prefix}_quality{quality_index}\n",
+                    escape_mermaid(&outcome.provider_id),
+                    escape_mermaid(&label)
+                ));
+            }
+        }
+    }
+    out
+}
+
+fn quality_outcome_label(outcome: &QualityOutcome) -> String {
+    serde_json::to_value(outcome)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("outcome")
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "unknown".into())
+}
+
 fn collect_code_targets(evidence: &Evidence, targets: &mut Vec<String>) {
     match evidence {
         Evidence::TestOutput {
@@ -670,7 +1319,11 @@ fn escape_mermaid(input: &str) -> String {
 mod tests {
     use super::*;
     use crate::spec_core::{Evidence, ScenarioResult, Verdict, VerificationReport};
-    use crate::spec_knowledge::{RequirementPlanNode, RequirementPlanStatus};
+    use crate::spec_knowledge::{
+        CodeImpactInput, INTENT_IMPACT_SCHEMA_ID, ImpactCodeNode, ImpactPath, IntentAffectedNode,
+        IntentBindingLink, IntentScenarioLink, IntentSpecLink, PlannedWorktreeLink,
+        ProviderImpactEntry, RequirementPlanNode, RequirementPlanStatus,
+    };
     use crate::vcs::{VcsContext, VcsType};
     use std::path::PathBuf;
 
@@ -746,6 +1399,7 @@ mod tests {
         let mut ledger = RequirementTraceLedger {
             version: 1,
             records: vec![old_record("REQ-NOTE-CREATE"), new_record("REQ-NOTE-CREATE")],
+            affected_records: Vec::new(),
             diagnostics: Vec::new(),
         };
         ledger.records[0].timestamp = 1;
@@ -775,6 +1429,7 @@ mod tests {
                 trace_record("REQ-NOTE-CREATE", "old-fail", 1, Verdict::Fail),
                 trace_record("REQ-NOTE-CREATE", "new-pass", 2, Verdict::Pass),
             ],
+            affected_records: Vec::new(),
             diagnostics: Vec::new(),
         };
 
@@ -861,6 +1516,7 @@ mod tests {
                 trace_record_named("REQ-A", "new", 2, Verdict::Pass, "Scenario A"),
                 trace_record_named("REQ-A", "new", 2, Verdict::Pass, "Scenario B"),
             ],
+            affected_records: Vec::new(),
             diagnostics: Vec::new(),
         };
         assert_eq!(replay_requirement_trace(&ledger, "REQ-A").len(), 2);
@@ -933,6 +1589,7 @@ mod tests {
                 passing_record("REQ-NOTE-CREATE"),
                 failing_record("REQ-NOTE-CREATE"),
             ],
+            affected_records: Vec::new(),
             diagnostics: Vec::new(),
         };
 
@@ -950,6 +1607,7 @@ mod tests {
                 trace_record("REQ-NOTE-CREATE", "old-fail", 1, Verdict::Fail),
                 trace_record("REQ-NOTE-CREATE", "new-pass", 2, Verdict::Pass),
             ],
+            affected_records: Vec::new(),
             diagnostics: Vec::new(),
         };
 
@@ -1028,6 +1686,7 @@ mod tests {
         let ledger = RequirementTraceLedger {
             version: 1,
             records: vec![failing_record("REQ-NOTE-CREATE")],
+            affected_records: Vec::new(),
             diagnostics: Vec::new(),
         };
         write_requirement_trace_ledger(&dir, &ledger).unwrap();
@@ -1037,6 +1696,268 @@ mod tests {
         assert_eq!(merged.records[0].requirement_id, "REQ-NOTE-CREATE");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn affected_trace_writer_merges_with_existing_lifecycle_run() {
+        let dir =
+            std::env::temp_dir().join(format!("affected-trace-writer-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut lifecycle = trace_record("REQ-AFFECTED", "same-run", 10, Verdict::Pass);
+        lifecycle.run_id = "same-run".into();
+        let ledger = RequirementTraceLedger {
+            version: 1,
+            records: vec![lifecycle],
+            affected_records: Vec::new(),
+            diagnostics: Vec::new(),
+        };
+        write_requirement_trace_ledger_to_dir(&dir, &ledger).unwrap();
+
+        write_affected_trace_record_to_dir(
+            &dir,
+            affected_record("same-run", 11, QualityOutcome::Pass),
+        )
+        .unwrap();
+
+        let merged = read_requirement_trace_ledgers(&dir);
+        assert_eq!(merged.version, REQUIREMENT_TRACE_LEDGER_VERSION);
+        assert_eq!(merged.records.len(), 1);
+        assert_eq!(merged.affected_records.len(), 1);
+        assert_eq!(merged.affected_records[0].run_id, "same-run");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn affected_trace_writer_preserves_existing_same_run_evidence() {
+        let dir = std::env::temp_dir().join(format!(
+            "affected-trace-preserve-existing-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut complete = affected_record("same-run", 11, QualityOutcome::Fail);
+        complete.execution_bundle = Some(AffectedExecutionBundle {
+            schema: crate::spec_knowledge::AFFECTED_EXECUTION_BUNDLE_SCHEMA_ID.into(),
+            intent_impact_digest: complete.intent_impact_digest.clone(),
+            risk: Some("A".into()),
+            required_evidence: vec!["lifecycle".into()],
+            quality_profile: Vec::new(),
+            fast_checks: Vec::new(),
+            acceptance_gates: Vec::new(),
+            authoritative_tests: Vec::new(),
+            test_candidates: Vec::new(),
+            guidance: Vec::new(),
+            required_skills: Vec::new(),
+            skill_receipts: Vec::new(),
+            gaps: Vec::new(),
+        });
+        write_affected_trace_record_to_dir(&dir, complete).unwrap();
+
+        let mut impact_only = affected_record("same-run", 11, QualityOutcome::Pass);
+        impact_only.execution_bundle = None;
+        impact_only.quality_outcomes.clear();
+        write_affected_trace_record_to_dir(&dir, impact_only).unwrap();
+
+        let merged = read_requirement_trace_ledgers(&dir);
+        let record = &merged.affected_records[0];
+        assert!(record.execution_bundle.is_some());
+        assert_eq!(record.quality_outcomes.len(), 1);
+        assert_eq!(record.quality_outcomes[0].outcome, QualityOutcome::Fail);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn affected_trace_conflict_keeps_in_memory_ledger_atomic() {
+        let existing = affected_record("same-run", 11, QualityOutcome::Fail);
+        let mut ledger = RequirementTraceLedger {
+            version: 2,
+            records: Vec::new(),
+            affected_records: vec![existing],
+            diagnostics: Vec::new(),
+        };
+        let before = serde_json::to_vec(&ledger).unwrap();
+        let mut conflicting = affected_record("same-run", 11, QualityOutcome::Pass);
+        conflicting.execution_bundle = Some(AffectedExecutionBundle {
+            schema: crate::spec_knowledge::AFFECTED_EXECUTION_BUNDLE_SCHEMA_ID.into(),
+            intent_impact_digest: conflicting.intent_impact_digest.clone(),
+            risk: Some("A".into()),
+            required_evidence: Vec::new(),
+            quality_profile: Vec::new(),
+            fast_checks: Vec::new(),
+            acceptance_gates: Vec::new(),
+            authoritative_tests: Vec::new(),
+            test_candidates: Vec::new(),
+            guidance: Vec::new(),
+            required_skills: Vec::new(),
+            skill_receipts: Vec::new(),
+            gaps: Vec::new(),
+        });
+
+        let error = record_affected_trace(&mut ledger, conflicting).unwrap_err();
+
+        assert!(error.contains("already records different evidence"));
+        assert_eq!(serde_json::to_vec(&ledger).unwrap(), before);
+    }
+
+    #[test]
+    fn test_affected_failure_replay_returns_latest_full_chain() {
+        let ledger = RequirementTraceLedger {
+            version: 2,
+            records: vec![
+                trace_record("REQ-AFFECTED", "old", 1, Verdict::Fail),
+                trace_record("REQ-AFFECTED", "new", 2, Verdict::Pass),
+            ],
+            affected_records: vec![
+                affected_record("old", 1, QualityOutcome::Fail),
+                affected_record("new", 2, QualityOutcome::Pass),
+            ],
+            diagnostics: Vec::new(),
+        };
+
+        let replay = replay_affected_requirement(&ledger, "REQ-AFFECTED");
+
+        assert_eq!(replay.lifecycle_records.len(), 1);
+        assert_eq!(replay.lifecycle_records[0].run_id, "new");
+        let affected = replay.affected_record.unwrap();
+        assert_eq!(affected.run_id, "new");
+        assert_eq!(
+            affected.intent_impact.affected[0].impact.node.file,
+            "src/feature.rs"
+        );
+        assert_eq!(
+            affected.intent_impact.affected[0].links[0].specs[0].scenarios[0]
+                .authoritative_selector
+                .as_deref(),
+            Some("test_feature")
+        );
+        assert_eq!(
+            affected.intent_impact.affected[0].links[0]
+                .worktree
+                .as_ref()
+                .unwrap()
+                .branch,
+            "feat/affected"
+        );
+        assert_eq!(
+            affected
+                .intent_impact
+                .observed_vcs
+                .as_ref()
+                .unwrap()
+                .change_ref,
+            "abc123"
+        );
+    }
+
+    #[test]
+    fn test_affected_failure_replay_includes_lifecycle_and_quality_failures() {
+        let ledger = RequirementTraceLedger {
+            version: 2,
+            records: vec![trace_record("REQ-AFFECTED", "failed", 3, Verdict::Fail)],
+            affected_records: vec![affected_record("failed", 3, QualityOutcome::Fail)],
+            diagnostics: Vec::new(),
+        };
+
+        let failure = explain_affected_requirement_failure(&ledger, "REQ-AFFECTED");
+
+        assert_eq!(failure.lifecycle_non_pass_records.len(), 1);
+        assert_eq!(failure.quality_failures.len(), 1);
+        assert_eq!(failure.quality_failures[0].provider_id, "cargo-clippy");
+    }
+
+    #[test]
+    fn test_affected_failure_replay_preserves_link_gaps() {
+        let mut record = affected_record("gaps", 4, QualityOutcome::Pass);
+        record.intent_impact.gaps.push(IntentImpactGap {
+            code: "selector-missing".into(),
+            severity: "error".into(),
+            node_id: Some("feature".into()),
+            requirement_id: Some("REQ-AFFECTED".into()),
+            spec_path: Some(PathBuf::from("specs/task-affected.spec.md")),
+            message: "selector is missing".into(),
+        });
+        let ledger = RequirementTraceLedger {
+            version: 2,
+            records: Vec::new(),
+            affected_records: vec![record],
+            diagnostics: Vec::new(),
+        };
+
+        let replay = replay_affected_requirement(&ledger, "REQ-AFFECTED");
+
+        assert!(replay.gaps.iter().any(|gap| gap.code == "selector-missing"));
+        assert!(
+            replay
+                .gaps
+                .iter()
+                .any(|gap| gap.code == "lifecycle-trace-missing")
+        );
+    }
+
+    #[test]
+    fn test_affected_failure_replay_reads_v1_with_missing_context_gap() {
+        let legacy = serde_json::json!({
+            "version": 1,
+            "records": [trace_record("REQ-AFFECTED", "legacy", 1, Verdict::Pass)],
+            "diagnostics": []
+        });
+        let ledger: RequirementTraceLedger = serde_json::from_value(legacy).unwrap();
+
+        let replay = replay_affected_requirement(&ledger, "REQ-AFFECTED");
+
+        assert_eq!(replay.lifecycle_records.len(), 1);
+        assert!(replay.affected_record.is_none());
+        assert!(
+            replay
+                .gaps
+                .iter()
+                .any(|gap| gap.code == "affected-trace-missing")
+        );
+    }
+
+    #[test]
+    fn test_affected_failure_replay_never_reruns_tools_or_models() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static EXTERNAL_INVOCATIONS: AtomicUsize = AtomicUsize::new(0);
+        let ledger = RequirementTraceLedger {
+            version: 2,
+            records: Vec::new(),
+            affected_records: vec![affected_record("pure", 5, QualityOutcome::Pass)],
+            diagnostics: Vec::new(),
+        };
+
+        let _ = replay_affected_requirement(&ledger, "REQ-AFFECTED");
+        let _ = explain_affected_requirement_failure(&ledger, "REQ-AFFECTED");
+
+        assert_eq!(EXTERNAL_INVOCATIONS.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn test_affected_trace_graph_contains_saved_code_and_authority_chain() {
+        let ledger = RequirementTraceLedger {
+            version: 2,
+            records: vec![trace_record("REQ-AFFECTED", "graph", 7, Verdict::Fail)],
+            affected_records: vec![affected_record("graph", 7, QualityOutcome::Fail)],
+            diagnostics: Vec::new(),
+        };
+        let replay = replay_affected_requirement(&ledger, "REQ-AFFECTED");
+        let mermaid = format_affected_requirement_trace_mermaid(&replay);
+
+        for expected in [
+            "REQ-AFFECTED",
+            "WU-REQ-AFFECTED",
+            "src/feature.rs:10-20",
+            "Test: test_feature",
+            "../worktrees/affected",
+            "feat/affected",
+            "abc123",
+            "cargo-clippy: fail",
+        ] {
+            assert!(
+                mermaid.contains(expected),
+                "missing `{expected}` in:\n{mermaid}"
+            );
+        }
     }
 
     #[test]
@@ -1100,6 +2021,84 @@ mod tests {
             vcs: None,
             wiki_articles: Vec::new(),
             timestamp,
+        }
+    }
+
+    fn affected_record(
+        run_id: &str,
+        timestamp: u64,
+        outcome: QualityOutcome,
+    ) -> AffectedTraceRecord {
+        let node = ImpactCodeNode {
+            node_id: "feature".into(),
+            symbol: "crate::feature".into(),
+            kind: "fn".into(),
+            file: "src/feature.rs".into(),
+            line_start: 10,
+            line_end: 20,
+            provenance: "syn".into(),
+        };
+        AffectedTraceRecord {
+            run_id: run_id.into(),
+            timestamp,
+            requirement_ids: vec!["REQ-AFFECTED".into()],
+            intent_impact_digest: format!("digest-{run_id}"),
+            intent_impact: IntentImpactReport {
+                schema: INTENT_IMPACT_SCHEMA_ID.into(),
+                provider: "rust-atlas".into(),
+                graph_fingerprint: Some("graph-1".into()),
+                input: CodeImpactInput::Symbol {
+                    symbol: "crate::feature".into(),
+                },
+                affected: vec![IntentAffectedNode {
+                    impact: ProviderImpactEntry {
+                        node: node.clone(),
+                        distance: 0,
+                        path: ImpactPath {
+                            nodes: vec![node],
+                            hops: Vec::new(),
+                            confidence: "exact".into(),
+                        },
+                    },
+                    links: vec![IntentBindingLink {
+                        requirement_id: "REQ-AFFECTED".into(),
+                        work_unit_id: "WU-REQ-AFFECTED".into(),
+                        provider: "rust-atlas".into(),
+                        graph_fingerprint: "graph-1".into(),
+                        specs: vec![IntentSpecLink {
+                            path: PathBuf::from("specs/task-affected.spec.md"),
+                            risk: Some("B".into()),
+                            scenarios: vec![IntentScenarioLink {
+                                name: "Affected behavior".into(),
+                                authoritative_selector: Some("test_feature".into()),
+                                test_candidate: None,
+                                test_obligation: None,
+                                required_evidence: vec!["test".into()],
+                            }],
+                        }],
+                        worktree: Some(PlannedWorktreeLink {
+                            path: PathBuf::from("../worktrees/affected"),
+                            branch: "feat/affected".into(),
+                            base_branch: "main".into(),
+                            batch: 1,
+                        }),
+                    }],
+                }],
+                truncated: false,
+                gaps: Vec::new(),
+                provider_diagnostics: Vec::new(),
+                observed_vcs: Some(VcsContext {
+                    vcs_type: VcsType::Git,
+                    change_ref: "abc123".into(),
+                    operation_ref: None,
+                }),
+            },
+            execution_bundle: None,
+            quality_outcomes: vec![AffectedQualityOutcome {
+                provider_id: "cargo-clippy".into(),
+                outcome,
+                summary: "recorded outcome".into(),
+            }],
         }
     }
 

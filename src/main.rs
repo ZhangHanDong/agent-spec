@@ -821,6 +821,36 @@ enum RequirementCommands {
         #[arg(long, default_value = ".agent-spec/code-bindings.json")]
         out: PathBuf,
     },
+    /// Join provider-neutral code impact to requirements, work units,
+    /// contracts, scenarios, explicit tests, worktrees, and VCS evidence
+    Affected {
+        /// Changed repository path; repeat for multiple paths
+        #[arg(long = "path")]
+        paths: Vec<PathBuf>,
+        /// Changed canonical symbol; mutually exclusive with --path
+        #[arg(long)]
+        symbol: Option<String>,
+        #[arg(long, default_value = "knowledge")]
+        knowledge: PathBuf,
+        #[arg(long, default_value = "specs")]
+        specs: PathBuf,
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+        #[arg(long, default_value = ".agent-spec/code-bindings.json")]
+        bindings: PathBuf,
+        #[arg(long, default_value = ".agent-spec/worktrees.json")]
+        worktrees: PathBuf,
+        #[arg(long, default_value_t = 3)]
+        max_depth: usize,
+        #[arg(long, default_value_t = 200)]
+        max_nodes: usize,
+        #[arg(long, default_value = "json")]
+        format: String,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
     /// Compile per-requirement bundles (requirement doc, draft spec,
     /// traceability, compilation manifest) into a target directory
     Compile {
@@ -858,6 +888,35 @@ enum RequirementCommands {
         /// Bundle target (.json)
         #[arg(long)]
         out: PathBuf,
+    },
+    /// Compile an intent-impact report into justified checks, tests, gates,
+    /// scoped guidance, and immutable skill receipts
+    AffectedBundle {
+        /// Saved intent-impact-v1 JSON from `requirements affected`
+        #[arg(long)]
+        impact: PathBuf,
+        #[arg(long, default_value = "knowledge")]
+        knowledge: PathBuf,
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Persist a saved affected report, bundle, and normalized quality outcomes
+    /// as trace schema v2 without rerunning any provider or tool
+    AffectedRecord {
+        #[arg(long)]
+        impact: PathBuf,
+        #[arg(long)]
+        bundle: Option<PathBuf>,
+        #[arg(long)]
+        quality_outcomes: Option<PathBuf>,
+        #[arg(long)]
+        run_id: String,
+        #[arg(long)]
+        timestamp: u64,
+        #[arg(long, default_value = ".agent-spec/trace")]
+        trace_dir: PathBuf,
     },
     /// Replay a recorded compilation-run manifest and byte-compare outputs
     VerifyRun {
@@ -4219,6 +4278,77 @@ fn cmd_requirements(action: RequirementCommands) -> Result<(), Box<dyn std::erro
             );
             Ok(())
         }
+        RequirementCommands::Affected {
+            paths,
+            symbol,
+            knowledge,
+            specs,
+            code,
+            graph,
+            bindings,
+            worktrees,
+            max_depth,
+            max_nodes,
+            format,
+            out,
+        } => {
+            if format != "json" {
+                return Err(format!(
+                    "requirements-affected-format: expected json, found `{format}`"
+                )
+                .into());
+            }
+            let input = match (paths.is_empty(), symbol) {
+                (false, None) => crate::spec_knowledge::CodeImpactInput::Paths {
+                    paths: paths
+                        .iter()
+                        .map(|path| path.to_string_lossy().replace('\\', "/"))
+                        .collect(),
+                },
+                (true, Some(symbol)) if !symbol.trim().is_empty() => {
+                    crate::spec_knowledge::CodeImpactInput::Symbol { symbol }
+                }
+                _ => {
+                    return Err(
+                        "requirements-affected-input: choose exactly one of --path or --symbol"
+                            .into(),
+                    );
+                }
+            };
+            let provider = crate::spec_knowledge::AtlasProvider {
+                code_root: code.clone(),
+                graph_dir: graph,
+            };
+            let provider_result = crate::spec_knowledge::CodeImpactProvider::impact(
+                &provider,
+                &input,
+                &crate::spec_knowledge::CodeImpactOptions {
+                    max_depth,
+                    max_nodes,
+                },
+            );
+            let report = crate::spec_knowledge::build_intent_impact(
+                "rust-atlas",
+                input,
+                provider_result,
+                &knowledge,
+                &specs,
+                &bindings,
+                Some(worktrees.as_path()),
+                vcs::get_vcs_context(&code),
+            )?;
+            let rendered = crate::spec_knowledge::render_intent_impact(&report)?;
+            if let Some(out) = out {
+                if let Some(parent) = out.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(&out, rendered)?;
+                println!("intent impact written: {}", out.display());
+            } else {
+                print!("{rendered}");
+            }
+            Ok(())
+        }
         RequirementCommands::Compile {
             knowledge,
             specs,
@@ -4265,6 +4395,69 @@ fn cmd_requirements(action: RequirementCommands) -> Result<(), Box<dyn std::erro
                 bundle.code_bindings.len(),
                 bundle.acceptance_gates.len()
             );
+            Ok(())
+        }
+        RequirementCommands::AffectedBundle {
+            impact,
+            knowledge,
+            code,
+            out,
+        } => {
+            let text = std::fs::read_to_string(&impact)?;
+            let report: crate::spec_knowledge::IntentImpactReport = serde_json::from_str(&text)?;
+            let bundle = crate::spec_knowledge::build_affected_execution_bundle(
+                &report,
+                &knowledge,
+                &code,
+                &crate::spec_knowledge::baseline_quality_profile(),
+            )?;
+            let rendered = crate::spec_knowledge::render_affected_execution_bundle(&bundle)?;
+            if let Some(parent) = out.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&out, rendered)?;
+            println!(
+                "affected execution bundle written: {} ({} tests, {} candidates, {} gates)",
+                out.display(),
+                bundle.authoritative_tests.len(),
+                bundle.test_candidates.len(),
+                bundle.acceptance_gates.len()
+            );
+            Ok(())
+        }
+        RequirementCommands::AffectedRecord {
+            impact,
+            bundle,
+            quality_outcomes,
+            run_id,
+            timestamp,
+            trace_dir,
+        } => {
+            let report: crate::spec_knowledge::IntentImpactReport =
+                serde_json::from_str(&std::fs::read_to_string(&impact)?)?;
+            let bundle = bundle
+                .as_deref()
+                .map(std::fs::read_to_string)
+                .transpose()?
+                .map(|text| serde_json::from_str(&text))
+                .transpose()?;
+            let quality_outcomes = quality_outcomes
+                .as_deref()
+                .map(std::fs::read_to_string)
+                .transpose()?
+                .map(|text| serde_json::from_str(&text))
+                .transpose()?
+                .unwrap_or_default();
+            let record = crate::spec_knowledge::build_affected_trace_record(
+                run_id,
+                timestamp,
+                report,
+                bundle,
+                quality_outcomes,
+            )?;
+            let path =
+                crate::spec_knowledge::write_affected_trace_record_to_dir(&trace_dir, record)?;
+            println!("affected trace written: {}", path.display());
             Ok(())
         }
         RequirementCommands::VerifyRun { manifest, format } => {
@@ -4541,15 +4734,12 @@ fn cmd_requirements_replay(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ledger = crate::spec_knowledge::read_requirement_trace_ledgers(trace_dir);
     let target = id.to_ascii_uppercase();
-    let records = crate::spec_knowledge::replay_requirement_trace(&ledger, &target);
-    if records.is_empty() {
-        return Err(format!("no requirement trace record found for {target}").into());
-    }
+    let replay = crate::spec_knowledge::replay_affected_requirement(&ledger, &target);
     match format {
-        "json" => println!("{}", serde_json::to_string_pretty(&records)?),
+        "json" => println!("{}", serde_json::to_string_pretty(&replay)?),
         _ => print!(
             "{}",
-            crate::spec_knowledge::format_requirement_replay_text(&records)
+            crate::spec_knowledge::format_affected_requirement_replay_text(&replay)
         ),
     }
     Ok(())
@@ -4564,13 +4754,14 @@ fn cmd_requirements_explain_failure(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ledger = crate::spec_knowledge::read_requirement_trace_ledgers(trace_dir);
     let target = id.to_ascii_uppercase();
-    let mut explanation = crate::spec_knowledge::explain_requirement_failure(&ledger, &target);
-    attach_wiki_articles_to_failure_explanation(&mut explanation, code, wiki);
+    let mut explanation =
+        crate::spec_knowledge::explain_affected_requirement_failure(&ledger, &target);
+    attach_wiki_articles_to_trace_records(&mut explanation.lifecycle_non_pass_records, code, wiki);
     match format {
         "json" => println!("{}", serde_json::to_string_pretty(&explanation)?),
         _ => print!(
             "{}",
-            crate::spec_knowledge::format_requirement_failure_text(&explanation)
+            crate::spec_knowledge::format_affected_requirement_failure_text(&explanation)
         ),
     }
     Ok(())
@@ -4619,12 +4810,12 @@ fn cmd_requirements_trace_graph(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ledger = crate::spec_knowledge::read_requirement_trace_ledgers(trace_dir);
     let target = id.to_ascii_uppercase();
-    let records = crate::spec_knowledge::latest_requirement_trace_records(&ledger, &target);
+    let replay = crate::spec_knowledge::replay_affected_requirement(&ledger, &target);
     match format {
-        "json" => println!("{}", serde_json::to_string_pretty(&records)?),
+        "json" => println!("{}", serde_json::to_string_pretty(&replay)?),
         _ => print!(
             "{}",
-            crate::spec_knowledge::format_requirement_trace_mermaid(&records)
+            crate::spec_knowledge::format_affected_requirement_trace_mermaid(&replay)
         ),
     }
     Ok(())
@@ -7264,6 +7455,55 @@ name: "退款"
     }
 
     #[test]
+    fn test_requirements_affected_record_cli_parses_evidence_inputs() {
+        let cli = super::Cli::parse_from([
+            "agent-spec",
+            "requirements",
+            "affected-record",
+            "--impact",
+            ".agent-spec/intent-impact.json",
+            "--bundle",
+            ".agent-spec/affected-bundle.json",
+            "--quality-outcomes",
+            ".agent-spec/quality-outcomes.json",
+            "--run-id",
+            "run-42",
+            "--timestamp",
+            "42",
+            "--trace-dir",
+            ".agent-spec/trace",
+        ]);
+
+        match cli.command {
+            super::Commands::Requirements {
+                action:
+                    super::RequirementCommands::AffectedRecord {
+                        impact,
+                        bundle,
+                        quality_outcomes,
+                        run_id,
+                        timestamp,
+                        trace_dir,
+                    },
+            } => {
+                assert_eq!(impact, PathBuf::from(".agent-spec/intent-impact.json"));
+                assert_eq!(
+                    bundle,
+                    Some(PathBuf::from(".agent-spec/affected-bundle.json"))
+                );
+                assert_eq!(
+                    quality_outcomes,
+                    Some(PathBuf::from(".agent-spec/quality-outcomes.json"))
+                );
+                assert_eq!(run_id, "run-42");
+                assert_eq!(timestamp, 42);
+                assert_eq!(trace_dir, PathBuf::from(".agent-spec/trace"));
+            }
+            _ => panic!("expected requirements affected-record command"),
+        }
+    }
+
+    #[test]
     fn test_wiki_project_map_cli_parses_nested_subcommand() {
         let cli = super::Cli::parse_from([
             "agent-spec",
@@ -7555,6 +7795,9 @@ name: "退款"
             ("worktree-manifest-v1.schema.json", "object"),
             ("clarification-questions-v1.schema.json", "array"),
             ("requirement-trace-ledger-v1.schema.json", "object"),
+            ("intent-impact-v1.schema.json", "object"),
+            ("affected-execution-bundle-v1.schema.json", "object"),
+            ("requirement-trace-ledger-v2.schema.json", "object"),
         ] {
             let schema_path = schema_dir.join(file_name);
             let schema_json: serde_json::Value =

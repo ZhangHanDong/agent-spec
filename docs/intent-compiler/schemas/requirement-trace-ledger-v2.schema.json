@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-spec.dev/schemas/agent-spec/intent-compiler/requirement-trace-ledger-v2.schema.json",
+  "title": "agent-spec requirement trace ledger v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "records",
+    "diagnostics"
+  ],
+  "properties": {
+    "version": {
+      "const": 2
+    },
+    "records": {
+      "type": "array",
+      "items": {
+        "$ref": "requirement-trace-ledger-v1.schema.json#/$defs/record"
+      }
+    },
+    "affected_records": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/affected_record"
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "$ref": "requirement-trace-ledger-v1.schema.json#/$defs/diagnostic"
+      }
+    }
+  },
+  "$defs": {
+    "affected_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_id",
+        "timestamp",
+        "requirement_ids",
+        "intent_impact_digest",
+        "intent_impact"
+      ],
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timestamp": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "requirement_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^REQ-[A-Z0-9][A-Z0-9-]*$"
+          }
+        },
+        "intent_impact_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "intent_impact": {
+          "$ref": "intent-impact-v1.schema.json"
+        },
+        "execution_bundle": {
+          "$ref": "affected-execution-bundle-v1.schema.json"
+        },
+        "quality_outcomes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/quality_outcome"
+          }
+        }
+      }
+    },
+    "quality_outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider_id",
+        "outcome",
+        "summary"
+      ],
+      "properties": {
+        "provider_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "outcome": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "outcome"
+              ],
+              "properties": {
+                "outcome": {
+                  "enum": [
+                    "pass",
+                    "fail",
+                    "unavailable",
+                    "error"
+                  ]
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "outcome",
+                "policy"
+              ],
+              "properties": {
+                "outcome": {
+                  "const": "skip"
+                },
+                "policy": {
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        },
+        "summary": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

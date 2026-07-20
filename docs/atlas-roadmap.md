@@ -1,8 +1,9 @@
 # Rust Atlas Roadmap：从可信 Rust 图到意图感知的代码智能
 
 > 当前正典 roadmap，修订于 2026-07-20。状态基线：`agent-spec` 1.1.0、
-> `rust-atlas` 0.2.0、代码基线 `bdc2b4c`。Wave 1 的 E0、A2/B1、D1 与 Wave 2 的
-> B2/B3/B4 已交付；后续 track 的实现状态仍以本文件各条目为准。
+> `rust-atlas` 0.2.0、Atlas 查询基线 `44e2f71`。Wave 1 的 E0、A2/B1、D1，Wave 2 的
+> B2/B3/B4，以及 Track C 的 C1/C2/C3 已交付；后续 track 的实现状态仍以本文件
+> 各条目为准。
 >
 > 本文用能力轨道替代旧的单序列 Phase 编号。历史合约保留原名称以维持 trace 稳定，
 > 但其中的 `Phase 2`、`Phase 3` 不再代表当前排期。
@@ -92,6 +93,8 @@ Task Contract。
 | provider-neutral Code Graph IR 与 binding | 已交付 | `REQ-CODE-GRAPH-IR`、`specs/task-code-graph-ir-bindings.spec.md` |
 | Contract 符号与 typed trace 集成 | 已交付 | `REQ-INTENT-CODE-LINKER`、`specs/task-atlas-kll-integration.spec.md` |
 | Quality Planning 与 Execution Bundle | 已交付 | `REQ-QUALITY-PLANNING`、`specs/task-quality-planning-bundles.spec.md` |
+| Intent-aware affected 与 execution bundle | 已交付 | `REQ-INTENT-AWARE-AFFECTED`、`REQ-AFFECTED-EXECUTION-BUNDLE` |
+| Affected trace v2 与 failure replay | 已交付 | `REQ-AFFECTED-FAILURE-REPLAY`、`specs/task-affected-failure-replay.spec.md` |
 
 当前图能力包括：
 
@@ -118,7 +121,7 @@ Task Contract。
 
 | 缺口 | 后果 |
 |---|---|
-| 影响分析仍停留在代码事实 | 代码变更还不能直接追到需求、scenario、测试和质量门禁 |
+| 非 Rust provider 仍只有消费合约 | 多语言项目需要另行实现 provider-neutral impact adapter |
 | MIR 与 dynamic-dispatch enricher 尚未交付 | 编译器级控制流与部分运行时分派仍只能报告缺失能力或 bounded candidate |
 | 尚无真实 Agent A/B 执行结果 | 离线 corpus、run plan 和 receipt summarization 不能证明 Atlas 带来性能改善 |
 | 零变更 rebuild 仍有明显全图地板 | 直接上 daemon 只会隐藏低效 resolve/validate，而不是解决它 |
@@ -263,7 +266,8 @@ atlas flow --through <symbol>
 
 #### B4. Code impact 与 affected test
 
-状态：Wave 2 已交付 code impact；Intent-Code Linker 与 test obligation 连接仍在 C1/C2。
+状态：Wave 2 已交付 code impact；C1/C2 已将其连接到 Intent-Code Linker、显式 Contract
+selector、test obligation 与质量策略。
 
 ```text
 atlas impact <symbol> --depth <n>
@@ -291,7 +295,7 @@ git diff --name-only | atlas affected --stdin
 
 #### C1. Intent-aware `affected`
 
-状态：B4 之后的下一步。
+状态：已交付（在 B4 之后）。
 
 将 code impact subgraph 与 agent-spec 已有工件连接：
 
@@ -307,24 +311,33 @@ changed file or symbol
 ```
 
 machine-readable result 必须列出链路缺口，例如 affected node 没有 binding、scenario 没有
-test selector，或者 required provider 不可用。不得静默丢弃这些路径。
+test selector 或 test obligation、worktree manifest/VCS 未观察到，或者 required provider
+不可用。不得静默丢弃这些路径。
 
-计划合约：`task-intent-aware-affected`。
+交付合约：`task-intent-aware-affected`。CLI：`requirements affected`；schema：
+`intent-impact-v1.schema.json`。
 
 #### C2. Affected execution bundle
 
-状态：C1 之后。
+状态：已交付（在 C1 之后）。
 
 - 根据 graph impact 和 requirement risk 为一个 work unit 选择 fast check 与 acceptance
   gate。
+- risk A 要求 lifecycle、trace、targeted tests 与 adversarial review；risk B 要求 lifecycle
+  与 trace；risk C 只要求 lifecycle。
+- 所选 quality provider 保留 executable、argv、cwd、timeout 与 output limit，bundle 不退化
+  为不可执行的 provider id 列表。
 - 通过显式 Test selector 和 test obligation 选择测试；文件名 heuristic 只能提议候选。
 - 从 project guidance 解析 required skill，记录 immutable skill receipt，但不把 receipt
   当作通过证据。
 - 解释每个 tool、test、skill 被纳入的原因。
 
+交付合约：`task-affected-execution-bundle`。CLI：`requirements affected-bundle`；schema：
+`affected-execution-bundle-v1.schema.json`。
+
 #### C3. Failure explanation 与 replay 增强
 
-状态：C1 之后。
+状态：已交付（在 C1/C2 之后）。
 
 扩展 failure/replay surface，使一次查询能回答：
 
@@ -339,6 +352,14 @@ test selector，或者 required provider 不可用。不得静默丢弃这些路
 
 Replay 仍是对已保存确定性记录的 evidence replay，不是 LLM rerun，也不承诺模型能重新
 生成完全相同的代码。
+
+`requirements affected-record` 将已保存 intent-impact、可选 affected bundle 与归一化
+quality outcomes 合并进 trace ledger v2；同一 `run_id` 的 lifecycle records 保留在同一
+ledger 文件中。重复的 partial record 保留已有 bundle/quality evidence，冲突的 immutable
+evidence 响亮拒绝。`requirements replay`、`requirements explain-failure` 和
+`requirements trace-graph` 只读取这些记录，不会重跑 Atlas、Git diff、测试、quality
+provider、skill 或模型。v1 ledger 继续可读，但返回 `affected-trace-missing` gap。schema：
+`requirement-trace-ledger-v2.schema.json`。
 
 ### Track D：Live Runtime and Large Workspaces
 
@@ -485,7 +506,7 @@ adapter。它们投影到同一 Code Graph IR，并通过 provider conformance t
 | 3 | D1 worktree 与 layered freshness | 已交付 stale model | Wave 1 已交付 identity、layer status 与 provider/binding authority gate |
 | 4 | B2/B3 explore 与 flow（已交付） | E0、A2、B1、D1 | 给 Agent 一个内容充分的架构查询并延续离线评测契约 |
 | 5 | B4 impact 与 affected code（已交付） | E0、B1、B3 | 提供确定性反向遍历与同一 receipt 指标 |
-| 6 | C1/C2 intent-aware affected bundle | B4、已交付 binding/quality planning | 连接代码变更、需求、测试、工具和 skill |
+| 6 | C1/C2/C3 intent-aware affected、bundle 与 replay（已交付） | B4、已交付 binding/quality planning | 连接代码变更、需求、测试、工具、skill 与同 run evidence |
 | 7 | A3 MIR overlay | A2、B1 | 为已经可消费的 flow 增加精度 |
 | 8 | D2 incremental hardening | B1、D1 | 移除全图 rebuild 地板 |
 | 9 | D3 watch 与 daemon | D2 | 在不隐藏 stale 的前提下增加实时性能 |
@@ -497,9 +518,9 @@ adapter。它们投影到同一 Code Graph IR，并通过 provider conformance t
 2. `REQ-ATLAS-EDGE-EVIDENCE-INDEX` → `task-atlas-edge-evidence-index`
 3. `REQ-ATLAS-WORKTREE-FRESHNESS` → `task-atlas-worktree-layered-freshness`
 
-三份 requirement 均为 `accepted`，并由当前 lifecycle、replay、trace 和治理门禁形成 Wave 1
-证据。完成范围严格限于 E0、A2/B1、D1：`task-atlas-explore-flow-impact` 以及 B2+、A3、D2+
-仍是后续工作，不能从本轮交付推断为已实现。
+三份 requirement 均为 `accepted`，并由 lifecycle、replay、trace 和治理门禁形成 Wave 1
+证据。Wave 1 当时的完成范围严格限于 E0、A2/B1、D1；后续交付状态由下面各轮记录与
+能力轨道条目覆盖。
 
 第二轮实施使用一个聚合消费层合约：
 
@@ -509,6 +530,18 @@ adapter。它们投影到同一 Code Graph IR，并通过 provider conformance t
 `atlas_explore` MCP，以及 response bytes、read-back、后续查询和 truncation 的离线 receipt
 指标。Contract lifecycle、requirement replay 与 trace graph 是本轮交付证据；真实 Agent A/B
 仍未执行，因此默认 MCP surface 不变。
+
+第三轮实施使用三个 Intent-Aware 合约：
+
+1. `REQ-INTENT-AWARE-AFFECTED` → `task-intent-aware-affected`
+2. `REQ-AFFECTED-EXECUTION-BUNDLE` → `task-affected-execution-bundle`
+3. `REQ-AFFECTED-FAILURE-REPLAY` → `task-affected-failure-replay`
+
+三份 requirement 均为 `accepted`。C1 将 provider-neutral code impact 与 requirement、leaf
+work unit、Task Contract、scenario、显式 test selector 和 worktree/VCS 证据连接；C2 生成
+可执行但不把候选测试冒充权威测试的 affected bundle；C3 以同一稳定 `run_id` 持久化并
+重放 intent-impact、quality outcome 与 lifecycle evidence。风险 A lifecycle、独立复审和
+requirement governance gate 是本轮交付证据。
 
 ## 7. 旧 Phase 映射
 
