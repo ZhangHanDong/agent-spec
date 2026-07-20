@@ -26,7 +26,9 @@
       "trials_per_arm": 3,
       "rubric": [
         "Traces a source-level caller to callee flow.",
-        "Names the intermediate symbols in order."
+        "Names the intermediate symbols in order.",
+        "Provides a complete source-evidence path for every reported flow.",
+        "Discloses whether traversal or response limits truncated the result."
       ],
       "permissions": "read-only",
       "cache_condition": "warm"
@@ -40,7 +42,9 @@
       "trials_per_arm": 3,
       "rubric": [
         "Identifies directly affected callers.",
-        "Separates source evidence from inference."
+        "Separates source evidence from inference.",
+        "Provides a complete evidence path from the changed symbol to every reported impact.",
+        "Discloses whether traversal or response limits truncated the result."
       ],
       "permissions": "read-only",
       "cache_condition": "cold"

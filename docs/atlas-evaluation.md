@@ -105,21 +105,39 @@ are rejected. A receipt has this shape:
   "tool_calls": 9,
   "duration_ms": 842,
   "context_bytes": 12000,
-  "cost_usd": 0.04
+  "cost_usd": 0.04,
+  "response_bytes": 24000,
+  "read_back_calls": 1,
+  "follow_up_queries": 2,
+  "truncated_queries": 0
 }
 ```
 
 `arm` is `atlas` or `baseline`; `trial` is a positive integer. The
 `correctness` object is required for summarization and contains `passed`.
 `cost_usd` is optional, but when present it must be finite and non-negative.
-The remaining measurements are unsigned integers.
+The remaining measurements are unsigned integers. Current external agent
+commands must emit all four query measurements, including explicit zeroes:
+
+| Field | Meaning |
+|---|---|
+| `response_bytes` | Total raw bytes returned by exploration and query tools during the run. |
+| `read_back_calls` | Source-read calls made after an `atlas explore` response to retrieve source already represented by that response. |
+| `follow_up_queries` | Exploration or graph queries issued after the run's initial exploration query. |
+| `truncated_queries` | Query responses that reported truncation or another response limit. |
+
+For backward compatibility, receipts created before these fields were added
+deserialize omitted query measurements as zero. Omission is reserved for those
+legacy receipts; new producers must report the measured values explicitly.
 
 The result contains total `receipts`, total `correctness` counts, aggregate
 `metrics`, and an `arms` object keyed by the populated arms. Each metric has
 `samples`, `median`, and `mad` (median absolute deviation). Metrics are
 `file_reads`, `graph_calls`, `tool_calls`, `duration_ms`, `context_bytes`, and
-optional `cost_usd`. The optional cost metric is absent when no receipt reports
-a cost. Aggregate and per-arm metrics use the same calculation.
+optional `cost_usd`, plus `response_bytes`, `read_back_calls`,
+`follow_up_queries`, and `truncated_queries`. The optional cost metric is absent
+when no receipt reports a cost. Aggregate and per-arm metrics use the same
+calculation.
 
 ## Output Contract
 
@@ -163,8 +181,8 @@ a missing `jq`, and a malformed or empty run plan. It passes the plan path and
 any literal arguments supplied after `--` to the executable, captures its
 stdout in a temporary file, and atomically moves that file to the receipt path
 only when the executable succeeds. The saved stdout is a receipt candidate. The
-runner validates only the run plan; it does not parse, validate, or reconcile
-receipt output against that plan.
+runner preserves those stdout bytes without parsing, adding default query
+measurements, validating, or reconciling receipt output against that plan.
 
 `atlas benchmark summarize` is the validated receipt boundary. It typed-parses
 the candidate as a JSON array or NDJSON, rejects unknown fields and empty input,

@@ -113,6 +113,14 @@ pub struct RunReceipt {
     pub duration_ms: u64,
     pub context_bytes: u64,
     pub cost_usd: Option<f64>,
+    #[serde(default)]
+    pub response_bytes: u64,
+    #[serde(default)]
+    pub read_back_calls: u64,
+    #[serde(default)]
+    pub follow_up_queries: u64,
+    #[serde(default)]
+    pub truncated_queries: u64,
 }
 
 /// Robust distribution statistics for one metric.
@@ -134,6 +142,10 @@ pub struct MetricsSummary {
     pub duration_ms: MetricSummary,
     pub context_bytes: MetricSummary,
     pub cost_usd: Option<MetricSummary>,
+    pub response_bytes: MetricSummary,
+    pub read_back_calls: MetricSummary,
+    pub follow_up_queries: MetricSummary,
+    pub truncated_queries: MetricSummary,
 }
 
 /// Count of correctness verdicts represented in a summary.
@@ -441,6 +453,22 @@ fn summarize_metrics(receipts: &[RunReceipt]) -> MetricsSummary {
         duration_ms: metric(receipts.iter().map(|receipt| receipt.duration_ms as f64)),
         context_bytes: metric(receipts.iter().map(|receipt| receipt.context_bytes as f64)),
         cost_usd: optional_metric(receipts.iter().filter_map(|receipt| receipt.cost_usd)),
+        response_bytes: metric(receipts.iter().map(|receipt| receipt.response_bytes as f64)),
+        read_back_calls: metric(
+            receipts
+                .iter()
+                .map(|receipt| receipt.read_back_calls as f64),
+        ),
+        follow_up_queries: metric(
+            receipts
+                .iter()
+                .map(|receipt| receipt.follow_up_queries as f64),
+        ),
+        truncated_queries: metric(
+            receipts
+                .iter()
+                .map(|receipt| receipt.truncated_queries as f64),
+        ),
     }
 }
 
@@ -525,19 +553,75 @@ fn validate_corpus(corpus: &Corpus) -> Result<(), EvalError> {
 mod tests {
     use super::*;
 
-    fn receipt(correctness: Option<Correctness>) -> RunReceipt {
+    const LEGACY_RECEIPT_JSON: &str = r#"{
+        "case_id": "workspace-navigation",
+        "arm": "baseline",
+        "trial": 1,
+        "correctness": { "passed": true },
+        "file_reads": 3,
+        "graph_calls": 2,
+        "tool_calls": 5,
+        "duration_ms": 120,
+        "context_bytes": 1024,
+        "cost_usd": 0.12
+    }"#;
+
+    fn receipt(arm: Arm, trial: u32) -> RunReceipt {
         RunReceipt {
             case_id: "workspace-navigation".to_string(),
-            arm: Arm::Atlas,
-            trial: 1,
-            correctness,
+            arm,
+            trial,
+            correctness: Some(Correctness { passed: true }),
             file_reads: 3,
             graph_calls: 2,
             tool_calls: 5,
             duration_ms: 120,
             context_bytes: 1024,
             cost_usd: Some(0.12),
+            response_bytes: 0,
+            read_back_calls: 0,
+            follow_up_queries: 0,
+            truncated_queries: 0,
         }
+    }
+
+    fn receipt_with_correctness(correctness: Option<Correctness>) -> RunReceipt {
+        RunReceipt {
+            correctness,
+            ..receipt(Arm::Atlas, 1)
+        }
+    }
+
+    trait ReceiptTestExt {
+        fn with_query_metrics(
+            self,
+            response_bytes: u64,
+            read_back_calls: u64,
+            follow_up_queries: u64,
+            truncated_queries: u64,
+        ) -> Self;
+    }
+
+    impl ReceiptTestExt for RunReceipt {
+        fn with_query_metrics(
+            mut self,
+            response_bytes: u64,
+            read_back_calls: u64,
+            follow_up_queries: u64,
+            truncated_queries: u64,
+        ) -> Self {
+            self.response_bytes = response_bytes;
+            self.read_back_calls = read_back_calls;
+            self.follow_up_queries = follow_up_queries;
+            self.truncated_queries = truncated_queries;
+            self
+        }
+    }
+
+    fn assert_metric(metric: &MetricSummary, median: f64, mad: f64, samples: usize) {
+        assert_eq!(metric.median, median);
+        assert_eq!(metric.mad, mad);
+        assert_eq!(metric.samples, samples);
     }
 
     fn temp_dir(name: &str) -> std::path::PathBuf {
@@ -790,7 +874,7 @@ mod tests {
 
     #[test]
     fn test_atlas_eval_summary_rejects_missing_correctness() {
-        let receipts = vec![receipt(None)];
+        let receipts = vec![receipt_with_correctness(None)];
         assert_eq!(
             summarize(&receipts).unwrap_err().code(),
             "atlas-eval-receipt"
@@ -811,17 +895,17 @@ mod tests {
 
     #[test]
     fn test_atlas_eval_summary_uses_median_and_mad() {
-        let mut first = receipt(Some(Correctness { passed: true }));
+        let mut first = receipt_with_correctness(Some(Correctness { passed: true }));
         first.file_reads = 1;
         first.duration_ms = 10;
         first.cost_usd = Some(0.10);
 
-        let mut second = receipt(Some(Correctness { passed: false }));
+        let mut second = receipt_with_correctness(Some(Correctness { passed: false }));
         second.file_reads = 2;
         second.duration_ms = 20;
         second.cost_usd = Some(0.20);
 
-        let mut third = receipt(Some(Correctness { passed: true }));
+        let mut third = receipt_with_correctness(Some(Correctness { passed: true }));
         third.file_reads = 100;
         third.duration_ms = 1_000;
         third.cost_usd = Some(10.0);
@@ -837,10 +921,51 @@ mod tests {
     }
 
     #[test]
+    fn test_atlas_eval_receipts_measure_explore_readback_and_response_bytes() {
+        let receipts = vec![
+            receipt(Arm::Atlas, 1).with_query_metrics(12_000, 0, 1, 0),
+            receipt(Arm::Atlas, 2).with_query_metrics(16_000, 1, 2, 1),
+            receipt(Arm::Baseline, 1),
+        ];
+        let summary = summarize(&receipts).unwrap();
+        assert_metric(&summary.metrics.response_bytes, 12_000.0, 4_000.0, 3);
+        assert_metric(&summary.metrics.read_back_calls, 0.0, 0.0, 3);
+        assert_metric(&summary.metrics.follow_up_queries, 1.0, 1.0, 3);
+        assert_metric(&summary.metrics.truncated_queries, 0.0, 0.0, 3);
+
+        let atlas = &summary.arms[&Arm::Atlas].metrics;
+        assert_metric(&atlas.response_bytes, 14_000.0, 2_000.0, 2);
+        assert_metric(&atlas.read_back_calls, 0.5, 0.5, 2);
+        assert_metric(&atlas.follow_up_queries, 1.5, 0.5, 2);
+        assert_metric(&atlas.truncated_queries, 0.5, 0.5, 2);
+
+        let baseline = &summary.arms[&Arm::Baseline].metrics;
+        for metric in [
+            &baseline.response_bytes,
+            &baseline.read_back_calls,
+            &baseline.follow_up_queries,
+            &baseline.truncated_queries,
+        ] {
+            assert_metric(metric, 0.0, 0.0, 1);
+        }
+
+        let legacy: RunReceipt = serde_json::from_str(LEGACY_RECEIPT_JSON).unwrap();
+        assert_eq!(
+            (
+                legacy.response_bytes,
+                legacy.read_back_calls,
+                legacy.follow_up_queries,
+                legacy.truncated_queries,
+            ),
+            (0, 0, 0, 0)
+        );
+    }
+
+    #[test]
     fn test_atlas_eval_load_receipts_accepts_ndjson_and_rejects_unknown_fields() {
         let dir = temp_dir("atlas-eval-receipts");
         let receipts = dir.join("receipts.ndjson");
-        let valid = receipt(Some(Correctness { passed: true }));
+        let valid = receipt_with_correctness(Some(Correctness { passed: true }));
         let mut invalid = serde_json::to_value(&valid).unwrap();
         invalid
             .as_object_mut()
@@ -1106,7 +1231,7 @@ mod tests {
 set -euo pipefail
 printf '%s' "$1" >"$ATLAS_EVAL_PLAN_CAPTURE"
 printf '%s' "$2" >"$ATLAS_EVAL_ARG_CAPTURE"
-printf '%s\n' '{"case_id":"workspace-navigation","arm":"atlas","trial":1,"correctness":{"passed":true},"file_reads":1,"graph_calls":1,"tool_calls":2,"duration_ms":10,"context_bytes":100,"cost_usd":null}'
+printf '%s\n' '{"case_id":"workspace-navigation","arm":"atlas","trial":1,"correctness":{"passed":true},"file_reads":1,"graph_calls":1,"tool_calls":2,"duration_ms":10,"context_bytes":100,"cost_usd":null,"response_bytes":100,"read_back_calls":0,"follow_up_queries":1,"truncated_queries":0}'
 "#,
         )
         .unwrap();
@@ -1142,8 +1267,8 @@ printf '%s\n' '{"case_id":"workspace-navigation","arm":"atlas","trial":1,"correc
         assert_eq!(std::fs::read_to_string(captured_arg).unwrap(), literal_arg);
         assert!(!injected_marker.exists());
         assert_eq!(
-            std::fs::read_to_string(receipts).unwrap().lines().count(),
-            1
+            std::fs::read(receipts).unwrap(),
+            b"{\"case_id\":\"workspace-navigation\",\"arm\":\"atlas\",\"trial\":1,\"correctness\":{\"passed\":true},\"file_reads\":1,\"graph_calls\":1,\"tool_calls\":2,\"duration_ms\":10,\"context_bytes\":100,\"cost_usd\":null,\"response_bytes\":100,\"read_back_calls\":0,\"follow_up_queries\":1,\"truncated_queries\":0}\n"
         );
         std::fs::remove_dir_all(dir).unwrap();
     }
