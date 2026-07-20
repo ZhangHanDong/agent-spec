@@ -2,19 +2,25 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+use std::io::{Read, Write};
+use std::path::Path;
+use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 pub const PROVIDER_IR_VERSION: u32 = 1;
 pub const PROVIDER_MANIFEST_SCHEMA: &str = "agent-spec/code-graph-provider/manifest-v1";
-pub const PROVIDER_REGISTRATION_SCHEMA: &str =
-    "agent-spec/code-graph-provider/registration-v1";
-pub const EXTRACTION_PAYLOAD_SCHEMA: &str =
-    "agent-spec/code-graph-provider/extraction-payload-v1";
+pub const PROVIDER_REGISTRATION_SCHEMA: &str = "agent-spec/code-graph-provider/registration-v1";
+pub const EXTRACTION_PAYLOAD_SCHEMA: &str = "agent-spec/code-graph-provider/extraction-payload-v1";
 pub const EXTRACTION_ARTIFACT_SCHEMA: &str =
     "agent-spec/code-graph-provider/extraction-artifact-v1";
-pub const ENRICHMENT_PAYLOAD_SCHEMA: &str =
-    "agent-spec/code-graph-provider/enrichment-payload-v1";
+pub const ENRICHMENT_PAYLOAD_SCHEMA: &str = "agent-spec/code-graph-provider/enrichment-payload-v1";
 pub const ENRICHMENT_ARTIFACT_SCHEMA: &str =
     "agent-spec/code-graph-provider/enrichment-artifact-v1";
+pub const PROVIDER_REQUEST_SCHEMA: &str = "agent-spec/code-graph-provider/request-v1";
+
+static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, thiserror::Error)]
 #[error("{code}: {message}")]
@@ -256,6 +262,50 @@ pub struct EnrichmentArtifact {
     pub payload: EnrichmentPayload,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProviderOperation {
+    Extract,
+    Enrich,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderRequest {
+    pub schema: String,
+    pub request_id: String,
+    pub operation: ProviderOperation,
+    pub repository_root: String,
+    pub worktree_id: String,
+    pub revision: Option<String>,
+    pub conformance_case: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderProcessOutput {
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CancellationToken {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl CancellationToken {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+}
+
 pub fn validate_manifest(manifest: &ProviderManifest) -> Result<(), ProviderError> {
     if manifest.schema != PROVIDER_MANIFEST_SCHEMA
         || !valid_identifier(&manifest.provider_id)
@@ -362,7 +412,10 @@ pub fn validate_registration(
     if !registration.enabled {
         return Err(ProviderError::new(
             "provider-disabled",
-            format!("provider {} is not enabled for this project", manifest.provider_id),
+            format!(
+                "provider {} is not enabled for this project",
+                manifest.provider_id
+            ),
         ));
     }
     if registration.executable.trim().is_empty()
@@ -570,6 +623,328 @@ pub fn project_enrichment(
     })
 }
 
+pub fn run_provider_process(
+    manifest: &ProviderManifest,
+    registration: &ProviderRegistration,
+    request: &ProviderRequest,
+    cancellation: &CancellationToken,
+) -> Result<ProviderProcessOutput, ProviderError> {
+    validate_registration(manifest, registration)?;
+    validate_request(manifest, request)?;
+    if cancellation.is_cancelled() {
+        return Err(ProviderError::new(
+            "provider-cancelled",
+            "provider request was cancelled before startup",
+        ));
+    }
+    let request_bytes = serde_json::to_vec(request).map_err(|error| {
+        ProviderError::new(
+            "provider-request",
+            format!("failed to serialize provider request: {error}"),
+        )
+    })?;
+
+    let mut command = Command::new(&registration.executable);
+    command
+        .args(&registration.args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(cwd) = &registration.cwd {
+        command.current_dir(cwd);
+    }
+    let mut child = command.spawn().map_err(|error| {
+        ProviderError::new(
+            "provider-start",
+            format!(
+                "failed to start provider {} with explicit executable: {error}",
+                manifest.provider_id
+            ),
+        )
+    })?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| ProviderError::new("provider-io", "provider stdout pipe was unavailable"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| ProviderError::new("provider-io", "provider stderr pipe was unavailable"))?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| ProviderError::new("provider-io", "provider stdin pipe was unavailable"))?;
+    if let Err(error) = stdin
+        .write_all(&request_bytes)
+        .and_then(|()| stdin.write_all(b"\n"))
+    {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(ProviderError::new(
+            "provider-io",
+            format!("failed to write provider request: {error}"),
+        ));
+    }
+    drop(stdin);
+    let overflow = Arc::new(AtomicBool::new(false));
+    let stdout_reader = spawn_bounded_reader(
+        stdout,
+        manifest.limits.max_stdout_bytes,
+        Arc::clone(&overflow),
+    );
+    let stderr_reader = spawn_bounded_reader(
+        stderr,
+        manifest.limits.max_stderr_bytes,
+        Arc::clone(&overflow),
+    );
+
+    let started = Instant::now();
+    let terminal = loop {
+        if cancellation.is_cancelled() {
+            break Err(ProviderError::new(
+                "provider-cancelled",
+                "provider request was cancelled",
+            ));
+        }
+        if overflow.load(Ordering::SeqCst) {
+            break Err(ProviderError::new(
+                "provider-output-limit",
+                "provider stdout or stderr exceeded its manifest limit",
+            ));
+        }
+        if started.elapsed() >= Duration::from_millis(manifest.limits.timeout_ms) {
+            break Err(ProviderError::new(
+                "provider-timeout",
+                format!(
+                    "provider exceeded its {} ms timeout",
+                    manifest.limits.timeout_ms
+                ),
+            ));
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => break Ok(status),
+            Ok(None) => std::thread::sleep(Duration::from_millis(5)),
+            Err(error) => {
+                break Err(ProviderError::new(
+                    "provider-process",
+                    format!("failed while waiting for provider: {error}"),
+                ));
+            }
+        }
+    };
+
+    if terminal.is_err() {
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+    let stdout = join_bounded_reader(stdout_reader)?;
+    let stderr = join_bounded_reader(stderr_reader)?;
+    if overflow.load(Ordering::SeqCst) {
+        return Err(ProviderError::new(
+            "provider-output-limit",
+            "provider stdout or stderr exceeded its manifest limit",
+        ));
+    }
+    let status = terminal?;
+    if !status.success() {
+        let diagnostic = String::from_utf8_lossy(&stderr);
+        return Err(ProviderError::new(
+            "provider-process",
+            format!(
+                "provider exited with {status}; stderr: {}",
+                diagnostic.trim()
+            ),
+        ));
+    }
+    Ok(ProviderProcessOutput { stdout, stderr })
+}
+
+pub fn run_and_publish_extraction(
+    manifest: &ProviderManifest,
+    registration: &ProviderRegistration,
+    request: &ProviderRequest,
+    cancellation: &CancellationToken,
+    output: &Path,
+) -> Result<ExtractionArtifact, ProviderError> {
+    if request.operation != ProviderOperation::Extract {
+        return Err(ProviderError::new(
+            "provider-request",
+            "extraction publication requires an extract request",
+        ));
+    }
+    let process = run_provider_process(manifest, registration, request, cancellation)?;
+    let payload: ExtractionPayload = serde_json::from_slice(&process.stdout).map_err(|error| {
+        ProviderError::new(
+            "provider-response",
+            format!("failed to parse strict extraction payload: {error}"),
+        )
+    })?;
+    let artifact = project_extraction(manifest, &request.worktree_id, payload)?;
+    publish_json_atomic(output, &artifact)?;
+    Ok(artifact)
+}
+
+pub fn run_and_publish_enrichment(
+    manifest: &ProviderManifest,
+    registration: &ProviderRegistration,
+    request: &ProviderRequest,
+    cancellation: &CancellationToken,
+    output: &Path,
+) -> Result<EnrichmentArtifact, ProviderError> {
+    if request.operation != ProviderOperation::Enrich {
+        return Err(ProviderError::new(
+            "provider-request",
+            "enrichment publication requires an enrich request",
+        ));
+    }
+    let process = run_provider_process(manifest, registration, request, cancellation)?;
+    let payload: EnrichmentPayload = serde_json::from_slice(&process.stdout).map_err(|error| {
+        ProviderError::new(
+            "provider-response",
+            format!("failed to parse strict enrichment payload: {error}"),
+        )
+    })?;
+    let artifact = project_enrichment(manifest, &request.worktree_id, payload)?;
+    publish_json_atomic(output, &artifact)?;
+    Ok(artifact)
+}
+
+pub fn publish_json_atomic(output: &Path, value: &impl Serialize) -> Result<(), ProviderError> {
+    let parent = output
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent).map_err(|error| {
+        ProviderError::new(
+            "provider-publish",
+            format!(
+                "failed to create output directory {}: {error}",
+                parent.display()
+            ),
+        )
+    })?;
+    let file_name = output
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            ProviderError::new("provider-publish", "output path has no UTF-8 file name")
+        })?;
+    let sequence = TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let temporary = parent.join(format!(
+        ".{file_name}.tmp-{}-{sequence}",
+        std::process::id()
+    ));
+    let result = (|| -> Result<(), ProviderError> {
+        let mut bytes = serde_json::to_vec_pretty(value).map_err(|error| {
+            ProviderError::new(
+                "provider-serialization",
+                format!("failed to serialize provider artifact: {error}"),
+            )
+        })?;
+        bytes.push(b'\n');
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|error| {
+                ProviderError::new(
+                    "provider-publish",
+                    format!("failed to create {}: {error}", temporary.display()),
+                )
+            })?;
+        file.write_all(&bytes)
+            .and_then(|()| file.sync_all())
+            .map_err(|error| {
+                ProviderError::new(
+                    "provider-publish",
+                    format!("failed to write {}: {error}", temporary.display()),
+                )
+            })?;
+        std::fs::rename(&temporary, output).map_err(|error| {
+            ProviderError::new(
+                "provider-publish",
+                format!(
+                    "failed to atomically publish {} to {}: {error}",
+                    temporary.display(),
+                    output.display()
+                ),
+            )
+        })
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
+}
+
+fn validate_request(
+    manifest: &ProviderManifest,
+    request: &ProviderRequest,
+) -> Result<(), ProviderError> {
+    let expected_operation = match manifest.role {
+        ProviderRole::Extractor => ProviderOperation::Extract,
+        ProviderRole::SemanticEnricher => ProviderOperation::Enrich,
+    };
+    if request.schema != PROVIDER_REQUEST_SCHEMA
+        || !valid_identifier(&request.request_id)
+        || request.operation != expected_operation
+        || request.repository_root.trim().is_empty()
+        || request.worktree_id.trim().is_empty()
+        || request
+            .revision
+            .as_deref()
+            .is_some_and(|revision| revision.trim().is_empty())
+        || request
+            .conformance_case
+            .as_deref()
+            .is_some_and(|case| !valid_identifier(case))
+    {
+        return Err(ProviderError::new(
+            "provider-request",
+            "provider request schema, operation, identity, or repository context is invalid",
+        ));
+    }
+    Ok(())
+}
+
+fn spawn_bounded_reader<R: Read + Send + 'static>(
+    mut reader: R,
+    limit: usize,
+    overflow: Arc<AtomicBool>,
+) -> std::thread::JoinHandle<std::io::Result<Vec<u8>>> {
+    std::thread::spawn(move || {
+        let mut bytes = Vec::with_capacity(limit.min(8 * 1024));
+        let mut buffer = [0_u8; 8 * 1024];
+        loop {
+            let read = reader.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            let remaining = limit.saturating_sub(bytes.len());
+            bytes.extend_from_slice(&buffer[..read.min(remaining)]);
+            if read > remaining {
+                overflow.store(true, Ordering::SeqCst);
+                break;
+            }
+        }
+        Ok(bytes)
+    })
+}
+
+fn join_bounded_reader(
+    reader: std::thread::JoinHandle<std::io::Result<Vec<u8>>>,
+) -> Result<Vec<u8>, ProviderError> {
+    reader
+        .join()
+        .map_err(|_| ProviderError::new("provider-io", "provider output reader panicked"))?
+        .map_err(|error| {
+            ProviderError::new(
+                "provider-io",
+                format!("failed to read provider output: {error}"),
+            )
+        })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn validate_payload_identity(
     manifest: &ProviderManifest,
@@ -615,8 +990,7 @@ fn validate_freshness(
     let mut input_paths = BTreeSet::new();
     for input in &freshness.inputs {
         validate_repository_path(&input.path)?;
-        if !is_lower_hex_fingerprint(&input.fingerprint)
-            || !input_paths.insert(input.path.as_str())
+        if !is_lower_hex_fingerprint(&input.fingerprint) || !input_paths.insert(input.path.as_str())
         {
             return Err(ProviderError::new(
                 "provider-freshness",
@@ -770,6 +1144,8 @@ fn valid_freshness_pattern(pattern: &str) -> bool {
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+    use std::path::{Path, PathBuf};
+    use std::time::Duration;
 
     fn limits() -> ResourceLimits {
         ResourceLimits {
@@ -821,9 +1197,8 @@ mod tests {
                 state: FreshnessState::Fresh,
                 inputs: vec![FreshnessFact {
                     path: "src/lib.fixture".to_string(),
-                    fingerprint:
-                        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-                            .to_string(),
+                    fingerprint: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                        .to_string(),
                 }],
                 affected_paths: Vec::new(),
             },
@@ -857,6 +1232,55 @@ mod tests {
                 provenance: evidence(),
             }],
             diagnostics: Vec::new(),
+        }
+    }
+
+    fn request() -> ProviderRequest {
+        ProviderRequest {
+            schema: PROVIDER_REQUEST_SCHEMA.to_string(),
+            request_id: "fixture-request".to_string(),
+            operation: ProviderOperation::Extract,
+            repository_root: "/workspace/fixture".to_string(),
+            worktree_id: "worktree-main".to_string(),
+            revision: Some("0123456789abcdef0123456789abcdef01234567".to_string()),
+            conformance_case: None,
+        }
+    }
+
+    fn process_fixture(name: &str) -> (PathBuf, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir =
+            std::env::temp_dir().join(format!("agent-spec-provider-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("provider.sh");
+        std::fs::write(
+            &script,
+            r#"#!/bin/sh
+IFS= read -r request
+case "$1" in
+  emit) cat "$2" ;;
+  stdout) i=0; while [ "$i" -lt 300 ]; do printf x; i=$((i + 1)); done ;;
+  stderr) i=0; while [ "$i" -lt 300 ]; do printf x >&2; i=$((i + 1)); done ;;
+  sleep) sleep 2 ;;
+  *) exit 17 ;;
+esac
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        (dir, script)
+    }
+
+    fn registration(script: &Path, args: Vec<String>) -> ProviderRegistration {
+        ProviderRegistration {
+            schema: PROVIDER_REGISTRATION_SCHEMA.to_string(),
+            provider_id: "fixture-extractor".to_string(),
+            enabled: true,
+            executable: script.to_string_lossy().into_owned(),
+            args,
+            cwd: None,
         }
     }
 
@@ -938,11 +1362,13 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(first.schema, EXTRACTION_ARTIFACT_SCHEMA);
         assert_eq!(first.ir_version, PROVIDER_IR_VERSION);
-        assert!(first
-            .payload
-            .nodes
-            .iter()
-            .all(|node| node.id.starts_with("fixture-extractor:")));
+        assert!(
+            first
+                .payload
+                .nodes
+                .iter()
+                .all(|node| node.id.starts_with("fixture-extractor:"))
+        );
         assert_eq!(first.graph_fingerprint.len(), 64);
     }
 
@@ -1020,8 +1446,7 @@ mod tests {
             language: manifest.language.clone(),
             worktree_id: "worktree-main".to_string(),
             base_graph_fingerprint:
-                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-                    .to_string(),
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
             edges: vec![ProviderEdge {
                 from: "fixture-extractor:function:root/run".to_string(),
                 to: "external:runtime:dispatch".to_string(),
@@ -1057,5 +1482,114 @@ mod tests {
                 .code(),
             "provider-evidence"
         );
+    }
+
+    #[test]
+    fn test_adapter_rejects_unknown_wire_schema() {
+        let (dir, script) = process_fixture("unknown-schema");
+        let response = dir.join("response.json");
+        let mut payload = extraction_payload();
+        payload.schema = "agent-spec/code-graph-provider/extraction-payload-v99".to_string();
+        std::fs::write(&response, serde_json::to_vec(&payload).unwrap()).unwrap();
+        let target = dir.join("graph.json");
+        std::fs::write(&target, b"old-graph\n").unwrap();
+
+        let error = run_and_publish_extraction(
+            &extractor_manifest(),
+            &registration(
+                &script,
+                vec!["emit".to_string(), response.to_string_lossy().into_owned()],
+            ),
+            &request(),
+            &CancellationToken::new(),
+            &target,
+        )
+        .unwrap_err();
+
+        assert_eq!(error.code(), "provider-schema");
+        assert_eq!(std::fs::read(&target).unwrap(), b"old-graph\n");
+    }
+
+    #[test]
+    fn test_process_adapter_enforces_output_limits() {
+        let (dir, script) = process_fixture("output-limits");
+        let mut manifest = extractor_manifest();
+        manifest.limits.max_stdout_bytes = 256;
+        manifest.limits.max_stderr_bytes = 256;
+        for mode in ["stdout", "stderr"] {
+            let error = run_provider_process(
+                &manifest,
+                &registration(&script, vec![mode.to_string()]),
+                &request(),
+                &CancellationToken::new(),
+            )
+            .unwrap_err();
+            assert_eq!(error.code(), "provider-output-limit", "{mode}");
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn test_process_adapter_honors_timeout_and_cancellation() {
+        let (dir, script) = process_fixture("stop");
+        let mut timeout_manifest = extractor_manifest();
+        timeout_manifest.limits.timeout_ms = 20;
+        let sleep_registration = registration(&script, vec!["sleep".to_string()]);
+        let error = run_provider_process(
+            &timeout_manifest,
+            &sleep_registration,
+            &request(),
+            &CancellationToken::new(),
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), "provider-timeout");
+
+        let token = CancellationToken::new();
+        let trigger = token.clone();
+        let canceller = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            trigger.cancel();
+        });
+        let error = run_provider_process(
+            &extractor_manifest(),
+            &sleep_registration,
+            &request(),
+            &token,
+        )
+        .unwrap_err();
+        canceller.join().unwrap();
+        assert_eq!(error.code(), "provider-cancelled");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn test_atomic_publish_preserves_previous_artifact_on_failure() {
+        let (dir, script) = process_fixture("atomic");
+        let response = dir.join("response.json");
+        std::fs::write(&response, b"{not-json\n").unwrap();
+        let target = dir.join("graph.json");
+        let previous = b"previous-canonical-artifact\n";
+        std::fs::write(&target, previous).unwrap();
+
+        let error = run_and_publish_extraction(
+            &extractor_manifest(),
+            &registration(
+                &script,
+                vec!["emit".to_string(), response.to_string_lossy().into_owned()],
+            ),
+            &request(),
+            &CancellationToken::new(),
+            &target,
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), "provider-response");
+        assert_eq!(std::fs::read(&target).unwrap(), previous);
+        assert!(
+            std::fs::read_dir(&dir)
+                .unwrap()
+                .filter_map(Result::ok)
+                .all(|entry| !entry.file_name().to_string_lossy().contains(".tmp-"))
+        );
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -33,10 +33,10 @@ harness, CLI surface, and documented provider-author contract without implementi
 
 ## Task 4: Bound Process Execution And Publication
 
-- [ ] Write RED tests for unknown schema, stdout/stderr limits, timeout, cancellation, and rollback.
-- [ ] Implement literal-argv process execution with bounded readers and child reaping.
-- [ ] Implement same-directory atomic publication after full validation only.
-- [ ] Run focused tests and commit.
+- [x] Write RED tests for unknown schema, stdout/stderr limits, timeout, cancellation, and rollback.
+- [x] Implement literal-argv process execution with bounded readers and child reaping.
+- [x] Implement same-directory atomic publication after full validation only.
+- [x] Run focused tests and commit.
 
 ## Task 5: Deliver The Conformance Harness
 
