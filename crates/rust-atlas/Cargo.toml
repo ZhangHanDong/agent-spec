@@ -12,6 +12,7 @@ mir = []
 
 [dependencies]
 blake3 = "1"
+fs2 = "0.4"
 ignore = "0.4"
 proc-macro2 = { version = "1", features = ["span-locations"] }
 protobuf = "3"

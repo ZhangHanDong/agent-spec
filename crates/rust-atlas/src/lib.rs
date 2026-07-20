@@ -27,10 +27,12 @@ mod incremental;
 mod index;
 mod input_plan;
 pub mod live;
+pub mod locking;
 mod mir;
 mod runtime_boundary;
 pub mod scope;
 mod status;
+pub mod sync;
 mod traversal;
 
 pub use affected::{
@@ -124,6 +126,8 @@ pub enum AtlasError {
     OrphanQueue { detail: String },
     #[error("atlas-live-state: {detail}")]
     LiveState { detail: String },
+    #[error("atlas-writer-busy: graph writer is already active for {graph_root}")]
+    WriterBusy { graph_root: String },
     #[error("atlas-affected-path: `{path}`: {detail}")]
     AffectedPath { path: String, detail: String },
     #[error(
@@ -525,11 +529,32 @@ fn build_with_meta(
     retain_semantic_authority_fingerprints: bool,
     mir_options: Option<&MirBuildOptions>,
 ) -> Result<BuildReport, AtlasError> {
+    let writer = locking::WriterLease::try_acquire(graph_dir)?;
+    build_with_meta_locked(
+        code_root,
+        graph_dir,
+        opts,
+        known_meta,
+        retain_semantic_authority_fingerprints,
+        mir_options,
+        &writer,
+    )
+}
+
+pub(crate) fn build_with_meta_locked(
+    code_root: &Path,
+    graph_dir: &Path,
+    opts: &BuildOptions,
+    known_meta: Option<Meta>,
+    retain_semantic_authority_fingerprints: bool,
+    mir_options: Option<&MirBuildOptions>,
+    writer: &locking::WriterLease,
+) -> Result<BuildReport, AtlasError> {
+    writer.assert_graph(graph_dir)?;
     // `cargo metadata` reports absolute, canonical paths; canonicalize the root
     // so the file walk and layout share one path space (otherwise `--code .`
     // yields relative walk paths that never match the absolute target dirs).
     let code_root = &std::fs::canonicalize(code_root).map_err(io_err)?;
-    std::fs::create_dir_all(graph_dir).map_err(io_err)?;
     validate_build_options(opts)?;
     check_cancelled(opts)?;
     let base = generation::resolve_optional_snapshot(graph_dir)?;
