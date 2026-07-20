@@ -155,7 +155,29 @@ pub fn explore(
             frozen: options.frozen,
         },
     )?;
-    explore_index(code_root, &meta, &index, &status, query, options)
+    let mut result = explore_index(code_root, &meta, &index, &status, query, options)?;
+    let mut represented = result
+        .nodes
+        .iter()
+        .map(|node| node.node.file.clone())
+        .collect::<BTreeSet<_>>();
+    represented.extend(result.seeds.iter().map(|node| node.file.clone()));
+    represented.extend(result.excerpts.iter().map(|excerpt| excerpt.file.clone()));
+    represented.extend(
+        result
+            .edges
+            .iter()
+            .filter_map(|edge| edge.site.as_ref().map(|site| site.file.clone())),
+    );
+    for path in result.primary_paths.iter().chain(&result.alternative_paths) {
+        represented.extend(path.nodes.iter().map(|node| node.file.clone()));
+    }
+    for entry in &result.impact {
+        represented.insert(entry.node.file.clone());
+        represented.extend(entry.path.nodes.iter().map(|node| node.file.clone()));
+    }
+    crate::status::scope_live_status(&mut result.status, represented);
+    Ok(result)
 }
 
 pub(crate) fn explore_index(
@@ -900,6 +922,7 @@ mod tests {
             diagnostics: Vec::new(),
         };
         AtlasStatus {
+            live: crate::live::LiveRuntimeStatus::new(crate::live::LiveRuntimeState::Unavailable),
             generation: Some("g-explore-test".into()),
             graph_fingerprint: "explore-test".into(),
             recorded_identity: identity.clone(),

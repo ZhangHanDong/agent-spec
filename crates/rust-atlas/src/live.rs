@@ -60,6 +60,12 @@ impl PendingJournal {
         Ok(Self { runtime_dir })
     }
 
+    pub(crate) fn for_read(graph_root: &Path) -> Result<Self, AtlasError> {
+        let runtime_dir = graph_root.join(".runtime");
+        reject_symlink(&runtime_dir)?;
+        Ok(Self { runtime_dir })
+    }
+
     pub fn path(&self) -> PathBuf {
         self.runtime_dir.join(PENDING_FILE)
     }
@@ -335,7 +341,7 @@ impl LiveRuntimeStatus {
     }
 
     pub fn load(graph_root: &Path) -> Result<Self, AtlasError> {
-        let journal = PendingJournal::open(graph_root)?;
+        let journal = PendingJournal::for_read(graph_root)?;
         let pending = journal.snapshot()?;
         let path = journal.runtime_dir.join(LIVE_STATUS_FILE);
         let mut status = match bounded_read(&path)? {

@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use serde::Serialize;
@@ -110,7 +111,37 @@ pub fn flow(
                 .then_with(|| left.message.cmp(&right.message))
         });
     }
+    let represented = flow_represented_files(&result);
+    crate::status::scope_live_status(&mut result.status, represented);
     Ok(result)
+}
+
+fn flow_represented_files(result: &FlowResult) -> BTreeSet<String> {
+    let mut files = BTreeSet::new();
+    for endpoint in &result.endpoints {
+        for node in endpoint.selected.iter().chain(&endpoint.candidates) {
+            files.insert(node.file.clone());
+        }
+    }
+    for path in result
+        .shortest
+        .iter()
+        .chain(&result.highest_confidence)
+        .chain(&result.alternatives)
+    {
+        files.extend(path.nodes.iter().map(|node| node.file.clone()));
+        files.extend(
+            path.hops
+                .iter()
+                .filter_map(|hop| hop.edge.site.as_ref().map(|site| site.file.clone())),
+        );
+    }
+    for hint in &result.runtime_boundaries {
+        files.insert(hint.source.file.clone());
+        files.insert(hint.site.file.clone());
+        files.extend(hint.candidates.iter().map(|node| node.file.clone()));
+    }
+    files
 }
 
 pub(crate) fn flow_index(
@@ -454,6 +485,7 @@ mod tests {
             diagnostics: Vec::new(),
         };
         AtlasStatus {
+            live: crate::live::LiveRuntimeStatus::new(crate::live::LiveRuntimeState::Unavailable),
             generation: Some("g-flow-test".into()),
             graph_fingerprint: "flow-test".into(),
             recorded_identity: identity.clone(),

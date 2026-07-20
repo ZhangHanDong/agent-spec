@@ -59,7 +59,27 @@ pub fn affected_paths(
         .collect::<Result<BTreeSet<_>, _>>()?
         .into_iter()
         .collect::<Vec<_>>();
-    affected_index(&index, files, options, &status)
+    let mut result = affected_index(&index, files, options, &status)?;
+    let mut represented = result.files.iter().cloned().collect::<BTreeSet<_>>();
+    represented.extend(
+        result
+            .seeds
+            .iter()
+            .flat_map(|seed| seed.nodes.iter().map(|node| node.file.clone())),
+    );
+    for entry in &result.affected {
+        represented.insert(entry.node.file.clone());
+        represented.extend(entry.path.nodes.iter().map(|node| node.file.clone()));
+        represented.extend(
+            entry
+                .path
+                .hops
+                .iter()
+                .filter_map(|hop| hop.edge.site.as_ref().map(|site| site.file.clone())),
+        );
+    }
+    crate::status::scope_live_status(&mut result.status, represented);
+    Ok(result)
 }
 
 pub(crate) fn affected_index(

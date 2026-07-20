@@ -2397,6 +2397,7 @@ pub trait Runner {
             diagnostics: Vec::new(),
         };
         crate::AtlasStatus {
+            live: crate::live::LiveRuntimeStatus::new(crate::live::LiveRuntimeState::Unavailable),
             generation: Some("g-runtime-test".into()),
             graph_fingerprint: "test".into(),
             recorded_identity: identity.clone(),

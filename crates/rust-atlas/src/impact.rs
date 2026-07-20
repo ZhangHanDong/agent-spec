@@ -147,7 +147,21 @@ pub fn impact(
             });
         }
     };
-    impact_index(&index, &seed, options, &status)
+    let mut result = impact_index(&index, &seed, options, &status)?;
+    let mut represented = BTreeSet::from([result.seed.file.clone()]);
+    for entry in &result.affected {
+        represented.insert(entry.node.file.clone());
+        represented.extend(entry.path.nodes.iter().map(|node| node.file.clone()));
+        represented.extend(
+            entry
+                .path
+                .hops
+                .iter()
+                .filter_map(|hop| hop.edge.site.as_ref().map(|site| site.file.clone())),
+        );
+    }
+    crate::status::scope_live_status(&mut result.status, represented);
+    Ok(result)
 }
 
 pub(crate) fn impact_index(
@@ -636,6 +650,7 @@ mod tests {
             diagnostics: Vec::new(),
         };
         AtlasStatus {
+            live: crate::live::LiveRuntimeStatus::new(crate::live::LiveRuntimeState::Unavailable),
             generation: Some("g-impact-test".into()),
             graph_fingerprint: "impact-test".into(),
             recorded_identity: identity.clone(),

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -8,7 +8,11 @@ use serde::{Deserialize, Serialize};
 use crate::scope::AtlasScope;
 #[cfg(test)]
 use crate::walk_rs_files;
-use crate::{AtlasError, Meta, PersistedMeta, io_err, read_persisted_meta_at, rel_path};
+use crate::{
+    AtlasError, Meta, PersistedMeta, io_err,
+    live::{LiveRuntimeState, LiveRuntimeStatus},
+    read_persisted_meta_at, rel_path,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphIdentity {
@@ -52,6 +56,7 @@ pub struct AtlasStatus {
     pub syn: LayerStatus,
     pub scip: LayerStatus,
     pub mir: LayerStatus,
+    pub live: LiveRuntimeStatus,
 }
 
 /// Return graph identity and independent source, SCIP, and MIR freshness.
@@ -100,6 +105,7 @@ pub(crate) fn status_with_meta(
                 recorded.identity.worktree_root, current_identity.worktree_root
             )
         });
+    let live = LiveRuntimeStatus::load(graph_dir)?;
 
     Ok(AtlasStatus {
         generation,
@@ -110,7 +116,22 @@ pub(crate) fn status_with_meta(
         syn,
         scip,
         mir,
+        live,
     })
+}
+
+pub(crate) fn scope_live_status(
+    status: &mut AtlasStatus,
+    represented_files: impl IntoIterator<Item = String>,
+) {
+    let represented = represented_files.into_iter().collect::<BTreeSet<_>>();
+    status
+        .live
+        .pending_paths
+        .retain(|path| represented.contains(path));
+    if status.live.state == LiveRuntimeState::Pending && status.live.pending_paths.is_empty() {
+        status.live.state = LiveRuntimeState::Healthy;
+    }
 }
 
 /// Reject graph status that cannot provide definitive evidence.

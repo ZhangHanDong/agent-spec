@@ -1014,7 +1014,7 @@ pub fn query(
     symbol: &str,
     opts: &QueryOptions,
 ) -> Result<QueryResult, AtlasError> {
-    let (_meta, index, status) = indexed_query_state(code_root, graph_dir, opts)?;
+    let (_meta, index, mut status) = indexed_query_state(code_root, graph_dir, opts)?;
     let matches = index.matching_nodes(symbol);
     let node = match matches.as_slice() {
         [] => {
@@ -1044,6 +1044,9 @@ pub fn query(
             .cloned()
             .collect(),
     );
+    let mut represented = edge_represented_files(&index, edges_out.iter().chain(&edges_in));
+    represented.insert(node.file.clone());
+    status::scope_live_status(&mut status, represented);
     Ok(QueryResult {
         edges_out,
         edges_in,
@@ -1086,7 +1089,7 @@ pub fn search(
     opts: &SearchOptions,
 ) -> Result<SearchResult, AtlasError> {
     validate_search_limit(opts.limit)?;
-    let (meta, index, status) = indexed_query_state(
+    let (meta, index, mut status) = indexed_query_state(
         code_root,
         graph_dir,
         &QueryOptions {
@@ -1095,6 +1098,7 @@ pub fn search(
     )?;
     let mut matches = index.search_nodes(query);
     matches.truncate(opts.limit);
+    status::scope_live_status(&mut status, matches.iter().map(|hit| hit.node.file.clone()));
     Ok(SearchResult {
         matches,
         graph_fingerprint: meta.graph_fingerprint,
@@ -1181,7 +1185,7 @@ pub fn refs(
     symbol: &str,
     opts: &QueryOptions,
 ) -> Result<EdgeReport, AtlasError> {
-    let (_meta, index, status) = indexed_query_state(code_root, graph_dir, opts)?;
+    let (_meta, index, mut status) = indexed_query_state(code_root, graph_dir, opts)?;
     let matches = index.matching_nodes(symbol);
     if matches.is_empty() {
         return Err(AtlasError::UnknownSymbol {
@@ -1194,9 +1198,13 @@ pub fn refs(
         .filter(|e| matches!(e.kind, EdgeKind::References | EdgeKind::Calls))
         .cloned()
         .collect();
+    let edges = edges.into_iter().collect::<Vec<_>>();
+    let mut represented = edge_represented_files(&index, &edges);
+    represented.extend(matches.iter().map(|node| node.file.clone()));
+    status::scope_live_status(&mut status, represented);
     Ok(EdgeReport {
         symbol: symbol.to_string(),
-        edges: edges.into_iter().collect(),
+        edges,
         stale: status.syn.stale_files.clone(),
         status,
     })
@@ -1209,7 +1217,7 @@ pub fn impls(
     name: &str,
     opts: &QueryOptions,
 ) -> Result<EdgeReport, AtlasError> {
-    let (_meta, index, status) = indexed_query_state(code_root, graph_dir, opts)?;
+    let (_meta, index, mut status) = indexed_query_state(code_root, graph_dir, opts)?;
     let matching_ids: BTreeSet<&str> = index
         .nodes_with_symbol_suffix(name)
         .into_iter()
@@ -1232,12 +1240,36 @@ pub fn impls(
         })
         .cloned()
         .collect();
+    let edges = edges.into_iter().collect::<Vec<_>>();
+    let represented = edge_represented_files(&index, &edges);
+    status::scope_live_status(&mut status, represented);
     Ok(EdgeReport {
         symbol: name.to_string(),
-        edges: edges.into_iter().collect(),
+        edges,
         stale: status.syn.stale_files.clone(),
         status,
     })
+}
+
+fn edge_represented_files<'a>(
+    index: &QueryIndex,
+    edges: impl IntoIterator<Item = &'a Edge>,
+) -> BTreeSet<String> {
+    let mut files = BTreeSet::new();
+    for edge in edges {
+        if let Some(site) = &edge.site {
+            files.insert(site.file.clone());
+        }
+        for node_id in std::iter::once(edge.from.as_str())
+            .chain(std::iter::once(edge.to.as_str()))
+            .chain(edge.candidates.iter().map(String::as_str))
+        {
+            if let Some(node) = index.node_by_id(node_id) {
+                files.insert(node.file.clone());
+            }
+        }
+    }
+    files
 }
 
 /// Load every shard plus meta (internal + MCP convenience).
@@ -3887,6 +3919,117 @@ mod tests {
             );
         }
         fs::remove_dir_all(base).ok();
+    }
+
+    #[test]
+    fn test_atlas_live_status_scopes_pending_paths_to_query() {
+        let (code, graph) = copy_fixture("atlas-live-query-scope");
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let journal = crate::live::PendingJournal::open(&graph).unwrap();
+        for (sequence, path) in ["Cargo.toml", "src/lib.rs", "src/store.rs"]
+            .into_iter()
+            .enumerate()
+        {
+            journal.record(path, sequence as u64 + 1).unwrap();
+        }
+        let mut runtime =
+            crate::live::LiveRuntimeStatus::new(crate::live::LiveRuntimeState::Pending);
+        runtime.pending_paths = vec![
+            "Cargo.toml".to_string(),
+            "src/lib.rs".to_string(),
+            "src/store.rs".to_string(),
+        ];
+        runtime.store(&graph).unwrap();
+
+        let global = status(&code, &graph).unwrap();
+        assert_eq!(
+            global.live.pending_paths,
+            vec!["Cargo.toml", "src/lib.rs", "src/store.rs"]
+        );
+
+        let queried = query(
+            &code,
+            &graph,
+            "atlas_basic::open_default",
+            &QueryOptions { frozen: true },
+        )
+        .unwrap();
+        assert_eq!(queried.status.live.pending_paths, vec!["src/lib.rs"]);
+
+        let flowed = flow(
+            &code,
+            &graph,
+            FlowQuery::Through {
+                symbol: "atlas_basic::service::run".to_string(),
+            },
+            &FlowOptions {
+                frozen: true,
+                ..FlowOptions::default()
+            },
+        )
+        .unwrap();
+        let flow_files = flowed
+            .endpoints
+            .iter()
+            .flat_map(|endpoint| endpoint.selected.iter().chain(endpoint.candidates.iter()))
+            .chain(
+                flowed
+                    .alternatives
+                    .iter()
+                    .flat_map(|path| path.nodes.iter()),
+            )
+            .map(|node| node.file.clone())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            flowed.status.live.pending_paths,
+            global
+                .live
+                .pending_paths
+                .iter()
+                .filter(|path| flow_files.contains(*path))
+                .cloned()
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            !flowed
+                .status
+                .live
+                .pending_paths
+                .contains(&"Cargo.toml".to_string())
+        );
+
+        let impacted = impact(
+            &code,
+            &graph,
+            "atlas_basic::service::run",
+            &ImpactOptions {
+                frozen: true,
+                ..ImpactOptions::default()
+            },
+        )
+        .unwrap();
+        let impact_files = std::iter::once(&impacted.seed)
+            .chain(impacted.affected.iter().map(|entry| &entry.node))
+            .map(|node| node.file.clone())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            impacted.status.live.pending_paths,
+            global
+                .live
+                .pending_paths
+                .iter()
+                .filter(|path| impact_files.contains(*path))
+                .cloned()
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            !impacted
+                .status
+                .live
+                .pending_paths
+                .contains(&"Cargo.toml".to_string())
+        );
+        fs::remove_dir_all(graph.parent().unwrap()).ok();
     }
 
     fn node<'a>(shards: &'a [Shard], id: &str) -> Option<&'a Node> {
