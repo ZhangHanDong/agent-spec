@@ -343,13 +343,11 @@ fn empty_result(
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use std::collections::BTreeMap;
-
     use super::*;
     use crate::{
         AtlasStatus, DispatchKind, Edge, EdgeConfidence, EdgeKind, EdgeResolution,
         ExtractorIdentity, FlowState, GraphIdentity, LayerState, LayerStatus, Node, NodeKind,
-        Provenance, QueryIndex, SCHEMA_VERSION, TraversalLimits,
+        Provenance, QueryIndex, TraversalLimits,
     };
 
     fn node(id: &str) -> Node {
@@ -387,37 +385,7 @@ mod tests {
     }
 
     fn index(nodes: Vec<Node>, edges: Vec<Edge>) -> QueryIndex {
-        let mut id = BTreeMap::<String, Vec<usize>>::new();
-        let mut symbol = BTreeMap::<String, Vec<usize>>::new();
-        let mut file = BTreeMap::<String, Vec<usize>>::new();
-        let mut incoming = BTreeMap::<String, Vec<usize>>::new();
-        let mut outgoing = BTreeMap::<String, Vec<usize>>::new();
-        for (position, node) in nodes.iter().enumerate() {
-            id.entry(node.id.clone()).or_default().push(position);
-            symbol
-                .entry(node.symbol.clone())
-                .or_default()
-                .push(position);
-            file.entry(node.file.clone()).or_default().push(position);
-        }
-        for (position, edge) in edges.iter().enumerate() {
-            incoming.entry(edge.to.clone()).or_default().push(position);
-            outgoing
-                .entry(edge.from.clone())
-                .or_default()
-                .push(position);
-        }
-        QueryIndex {
-            schema_version: SCHEMA_VERSION,
-            graph_fingerprint: "flow-test".into(),
-            nodes,
-            edges,
-            id,
-            symbol,
-            file,
-            incoming,
-            outgoing,
-        }
+        QueryIndex::from_test_parts("flow-test", nodes, edges)
     }
 
     fn status(scip: LayerState) -> AtlasStatus {

@@ -876,37 +876,7 @@ mod tests {
     }
 
     fn index(nodes: Vec<Node>, edges: Vec<Edge>) -> QueryIndex {
-        let mut id = BTreeMap::<String, Vec<usize>>::new();
-        let mut symbol = BTreeMap::<String, Vec<usize>>::new();
-        let mut file = BTreeMap::<String, Vec<usize>>::new();
-        let mut incoming = BTreeMap::<String, Vec<usize>>::new();
-        let mut outgoing = BTreeMap::<String, Vec<usize>>::new();
-        for (position, node) in nodes.iter().enumerate() {
-            id.entry(node.id.clone()).or_default().push(position);
-            symbol
-                .entry(node.symbol.clone())
-                .or_default()
-                .push(position);
-            file.entry(node.file.clone()).or_default().push(position);
-        }
-        for (position, edge) in edges.iter().enumerate() {
-            incoming.entry(edge.to.clone()).or_default().push(position);
-            outgoing
-                .entry(edge.from.clone())
-                .or_default()
-                .push(position);
-        }
-        QueryIndex {
-            schema_version: SCHEMA_VERSION,
-            graph_fingerprint: "explore-test".into(),
-            nodes,
-            edges,
-            id,
-            symbol,
-            file,
-            incoming,
-            outgoing,
-        }
+        QueryIndex::from_test_parts("explore-test", nodes, edges)
     }
 
     fn status(code: &Path) -> AtlasStatus {

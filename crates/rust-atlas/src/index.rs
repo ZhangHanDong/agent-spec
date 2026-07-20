@@ -21,6 +21,7 @@ pub struct QueryIndex {
     pub file: BTreeMap<String, Vec<usize>>,
     pub incoming: BTreeMap<String, Vec<usize>>,
     pub outgoing: BTreeMap<String, Vec<usize>>,
+    pub target: BTreeMap<String, Vec<usize>>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -30,6 +31,7 @@ struct Locators {
     file: BTreeMap<String, Vec<usize>>,
     incoming: BTreeMap<String, Vec<usize>>,
     outgoing: BTreeMap<String, Vec<usize>>,
+    target: BTreeMap<String, Vec<usize>>,
 }
 
 impl Locators {
@@ -43,11 +45,26 @@ impl Locators {
             insert_locator(&mut file, &node.file, position);
         }
 
+        let mut target = BTreeMap::new();
+        for edge in edges {
+            for value in edge_target_values(edge) {
+                target
+                    .entry(value.to_string())
+                    .or_insert_with(|| resolve_target_positions(value, &id, &symbol));
+            }
+        }
+
         let mut incoming = BTreeMap::new();
         let mut outgoing = BTreeMap::new();
         for (position, edge) in edges.iter().enumerate() {
-            insert_locator(&mut incoming, &edge.to, position);
             insert_locator(&mut outgoing, &edge.from, position);
+            for value in edge_target_values(edge) {
+                for node_position in target.get(value).into_iter().flatten() {
+                    if let Some(node) = nodes.get(*node_position) {
+                        insert_locator(&mut incoming, &node.id, position);
+                    }
+                }
+            }
         }
 
         Self {
@@ -56,6 +73,7 @@ impl Locators {
             file,
             incoming,
             outgoing,
+            target,
         }
     }
 }
@@ -70,7 +88,7 @@ impl QueryIndex {
 
         let edges: Vec<Edge> = shards
             .iter()
-            .flat_map(|shard| shard.edges.iter().cloned())
+            .flat_map(|shard| shard.edges.iter().cloned().map(canonical_edge))
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
@@ -87,6 +105,28 @@ impl QueryIndex {
             file: locators.file,
             incoming: locators.incoming,
             outgoing: locators.outgoing,
+            target: locators.target,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_test_parts(
+        graph_fingerprint: &str,
+        nodes: Vec<Node>,
+        edges: Vec<Edge>,
+    ) -> Self {
+        let locators = Locators::from_tables(&nodes, &edges);
+        Self {
+            schema_version: SCHEMA_VERSION,
+            graph_fingerprint: graph_fingerprint.into(),
+            nodes,
+            edges,
+            id: locators.id,
+            symbol: locators.symbol,
+            file: locators.file,
+            incoming: locators.incoming,
+            outgoing: locators.outgoing,
+            target: locators.target,
         }
     }
 
@@ -98,6 +138,7 @@ impl QueryIndex {
             ("file", self.file == expected.file),
             ("incoming", self.incoming == expected.incoming),
             ("outgoing", self.outgoing == expected.outgoing),
+            ("target", self.target == expected.target),
         ] {
             if !persisted_matches {
                 return Err(AtlasError::QueryIndexCorrupt {
@@ -143,6 +184,37 @@ impl QueryIndex {
         node_ids: impl IntoIterator<Item = &'a str>,
     ) -> Vec<&'a Edge> {
         self.edges_at(&self.outgoing, node_ids)
+    }
+
+    pub fn incoming_edges_for<'a>(&'a self, node_id: &str) -> impl Iterator<Item = &'a Edge> + 'a {
+        self.incoming
+            .get(node_id)
+            .into_iter()
+            .flatten()
+            .filter_map(|position| self.edges.get(*position))
+    }
+
+    pub fn outgoing_edges_for<'a>(&'a self, node_id: &str) -> impl Iterator<Item = &'a Edge> + 'a {
+        self.outgoing
+            .get(node_id)
+            .into_iter()
+            .flatten()
+            .filter_map(|position| self.edges.get(*position))
+    }
+
+    pub fn target_nodes<'a>(&'a self, target: &str) -> impl Iterator<Item = &'a Node> + 'a {
+        self.target
+            .get(target)
+            .into_iter()
+            .flatten()
+            .filter_map(|position| self.nodes.get(*position))
+    }
+
+    pub fn node_by_id(&self, node_id: &str) -> Option<&Node> {
+        self.id
+            .get(node_id)
+            .and_then(|positions| positions.first())
+            .and_then(|position| self.nodes.get(*position))
     }
 
     pub fn search_nodes(&self, query: &str) -> Vec<SearchHit> {
@@ -195,6 +267,12 @@ impl QueryIndex {
             .filter_map(|position| self.edges.get(position))
             .collect()
     }
+}
+
+fn canonical_edge(mut edge: Edge) -> Edge {
+    edge.candidates.sort();
+    edge.candidates.dedup();
+    edge
 }
 
 fn classify_match(node: &Node, query: &str) -> Option<MatchKind> {
@@ -274,7 +352,47 @@ fn normalize_identifier(value: &str) -> String {
 }
 
 fn insert_locator(locator: &mut BTreeMap<String, Vec<usize>>, key: &str, position: usize) {
-    locator.entry(key.to_string()).or_default().push(position);
+    let positions = locator.entry(key.to_string()).or_default();
+    if positions.last().copied() != Some(position) {
+        positions.push(position);
+    }
+}
+
+fn edge_target_values(edge: &Edge) -> Box<dyn Iterator<Item = &str> + '_> {
+    match edge.resolution {
+        crate::EdgeResolution::External => Box::new(std::iter::empty()),
+        crate::EdgeResolution::Unresolved if !edge.candidates.is_empty() => {
+            Box::new(edge.candidates.iter().map(String::as_str))
+        }
+        crate::EdgeResolution::Resolved | crate::EdgeResolution::Unresolved => {
+            Box::new(std::iter::once(edge.to.as_str()))
+        }
+    }
+}
+
+fn resolve_target_positions(
+    value: &str,
+    id: &BTreeMap<String, Vec<usize>>,
+    symbol: &BTreeMap<String, Vec<usize>>,
+) -> Vec<usize> {
+    let exact = id
+        .get(value)
+        .into_iter()
+        .chain(symbol.get(value))
+        .flatten()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    if !exact.is_empty() {
+        return exact.into_iter().collect();
+    }
+    let suffix = format!("::{value}");
+    symbol
+        .iter()
+        .filter(|(candidate, _)| candidate.ends_with(&suffix))
+        .flat_map(|(_, positions)| positions.iter().copied())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 #[derive(Serialize)]
@@ -424,9 +542,10 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use crate::{
-        AtlasError, BuildOptions, Capability, EdgeSite, MatchKind, Meta, Node, NodeKind,
-        QueryIndex, SCHEMA_VERSION, SearchOptions, Shard, build, canonical_graph_fingerprint,
-        load_graph, load_query_index, read_meta, search, write_json_atomic,
+        AtlasError, BuildOptions, Capability, Edge, EdgeKind, EdgeResolution, EdgeSite, MatchKind,
+        Meta, Node, NodeKind, Provenance, QueryIndex, SCHEMA_VERSION, SearchOptions, Shard, build,
+        canonical_graph_fingerprint, load_graph, load_query_index, read_meta, search,
+        write_json_atomic,
     };
 
     fn temp_dir(name: &str) -> PathBuf {
@@ -497,6 +616,23 @@ mod tests {
         }
     }
 
+    fn test_edge(from: &str, to: &str) -> Edge {
+        Edge {
+            from: from.into(),
+            to: to.into(),
+            target_text: Some(to.into()),
+            resolution: EdgeResolution::Resolved,
+            kind: EdgeKind::Calls,
+            provenance: Provenance::Scip,
+            site: None,
+            extractor: None,
+            dispatch: None,
+            confidence: None,
+            candidates: Vec::new(),
+            evidence: None,
+        }
+    }
+
     fn write_search_index(graph: &Path, nodes: Vec<Node>) {
         let meta = read_meta(graph).unwrap();
         let index = QueryIndex::from_graph(
@@ -510,6 +646,34 @@ mod tests {
             }],
         );
         write_json_atomic(&graph.join(super::QUERY_INDEX_FILE), &index).unwrap();
+    }
+
+    #[test]
+    fn query_index_exposes_lazy_resolved_edge_locators() {
+        let meta = sample_meta();
+        let nodes = vec![
+            search_node("caller-a", "pkg::caller_a", "src/lib.rs", 1),
+            search_node("caller-b", "pkg::caller_b", "src/lib.rs", 2),
+            search_node("target", "pkg::target", "src/lib.rs", 3),
+        ];
+        let edges = vec![
+            test_edge("caller-a", "target"),
+            test_edge("caller-b", "target"),
+        ];
+        let index = QueryIndex::from_graph(
+            &meta,
+            &[Shard {
+                file: "src/lib.rs".into(),
+                hash: "hash".into(),
+                unparsed: None,
+                nodes,
+                edges,
+            }],
+        );
+
+        assert_eq!(index.outgoing_edges_for("caller-a").count(), 1);
+        assert_eq!(index.incoming_edges_for("target").take(1).count(), 1);
+        assert_eq!(index.target_nodes("target").count(), 1);
     }
 
     type SearchIndexErrorMatcher = fn(&AtlasError) -> bool;

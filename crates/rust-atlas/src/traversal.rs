@@ -281,7 +281,7 @@ fn path_neighbors(index: &QueryIndex, path: &PartialPath) -> Vec<(Node, PathHop)
     let Some(current) = path.nodes.last() else {
         return Vec::new();
     };
-    edge_targets_for(index, index.outgoing_edges([current.id.as_str()]))
+    edge_targets_for(index, index.outgoing_edges_for(&current.id))
         .into_iter()
         .filter(|(node, _)| !path.nodes.iter().any(|visited| visited.id == node.id))
         .collect()
@@ -297,23 +297,10 @@ fn edge_targets_for<'a>(
 ) -> Vec<(Node, PathHop)> {
     let mut neighbors = Vec::new();
     for edge in edges {
-        match edge.resolution {
-            EdgeResolution::Resolved => {
-                add_target_neighbors(index, edge, &edge.to, false, &mut neighbors);
-            }
-            EdgeResolution::Unresolved if edge.candidates.is_empty() => {
-                add_target_neighbors(index, edge, &edge.to, true, &mut neighbors);
-            }
-            EdgeResolution::Unresolved => {
-                let mut candidates = edge.candidates.clone();
-                candidates.sort();
-                candidates.dedup();
-                for candidate in candidates {
-                    add_target_neighbors(index, edge, &candidate, true, &mut neighbors);
-                }
-            }
-            EdgeResolution::External => {}
-        }
+        for_each_edge_target(index, edge, |node, hop| {
+            neighbors.push((node, hop));
+            true
+        });
     }
     neighbors.sort_by(|(left_node, left_hop), (right_node, right_hop)| {
         left_node
@@ -329,32 +316,36 @@ fn edge_targets_for<'a>(
     neighbors
 }
 
-fn add_target_neighbors(
+pub(crate) fn for_each_edge_target(
     index: &QueryIndex,
     edge: &Edge,
-    target: &str,
-    candidate: bool,
-    neighbors: &mut Vec<(Node, PathHop)>,
-) {
-    for node in resolution_nodes(resolve_endpoint(index, target)) {
-        neighbors.push((
-            node.clone(),
-            PathHop {
+    mut visitor: impl FnMut(Node, PathHop) -> bool,
+) -> bool {
+    let candidate = edge.resolution != EdgeResolution::Resolved;
+    let targets: Box<dyn Iterator<Item = &str> + '_> = match edge.resolution {
+        EdgeResolution::External => return true,
+        EdgeResolution::Unresolved if !edge.candidates.is_empty() => {
+            Box::new(edge.candidates.iter().map(String::as_str))
+        }
+        EdgeResolution::Resolved | EdgeResolution::Unresolved => {
+            Box::new(std::iter::once(edge.to.as_str()))
+        }
+    };
+    for target in targets {
+        for node in index.target_nodes(target) {
+            let node = node.clone();
+            let hop = PathHop {
                 edge: edge.clone(),
-                chosen_target: node.id,
+                chosen_target: node.id.clone(),
                 candidate,
                 direction: PathDirection::Forward,
-            },
-        ));
+            };
+            if !visitor(node, hop) {
+                return false;
+            }
+        }
     }
-}
-
-fn resolution_nodes(resolution: EndpointResolution) -> Vec<Node> {
-    match resolution {
-        EndpointResolution::Found(node) => vec![node],
-        EndpointResolution::Ambiguous(nodes) => nodes,
-        EndpointResolution::Unknown => Vec::new(),
-    }
+    true
 }
 
 fn complete_path(path: &PartialPath) -> GraphPath {
@@ -385,14 +376,13 @@ pub(crate) fn canonical_path_signature(path: &GraphPath) -> Vec<u8> {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use std::collections::BTreeMap;
     use std::fs;
     use std::path::PathBuf;
 
     use super::*;
     use crate::{
         AtlasError, Edge, EdgeConfidence, EdgeKind, EdgeResolution, Node, NodeKind, Provenance,
-        QueryIndex, SCHEMA_VERSION,
+        QueryIndex,
     };
 
     fn node(id: &str) -> Node {
@@ -431,39 +421,7 @@ mod tests {
     }
 
     fn index(nodes: &[Node], edges: &[Edge]) -> QueryIndex {
-        let nodes = nodes.to_vec();
-        let edges = edges.to_vec();
-        let mut id = BTreeMap::<String, Vec<usize>>::new();
-        let mut symbol = BTreeMap::<String, Vec<usize>>::new();
-        let mut file = BTreeMap::<String, Vec<usize>>::new();
-        let mut incoming = BTreeMap::<String, Vec<usize>>::new();
-        let mut outgoing = BTreeMap::<String, Vec<usize>>::new();
-        for (position, node) in nodes.iter().enumerate() {
-            id.entry(node.id.clone()).or_default().push(position);
-            symbol
-                .entry(node.symbol.clone())
-                .or_default()
-                .push(position);
-            file.entry(node.file.clone()).or_default().push(position);
-        }
-        for (position, edge) in edges.iter().enumerate() {
-            incoming.entry(edge.to.clone()).or_default().push(position);
-            outgoing
-                .entry(edge.from.clone())
-                .or_default()
-                .push(position);
-        }
-        QueryIndex {
-            schema_version: SCHEMA_VERSION,
-            graph_fingerprint: "test-graph".into(),
-            nodes,
-            edges,
-            id,
-            symbol,
-            file,
-            incoming,
-            outgoing,
-        }
+        QueryIndex::from_test_parts("test-graph", nodes.to_vec(), edges.to_vec())
     }
 
     #[test]

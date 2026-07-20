@@ -4223,22 +4223,17 @@ impl std::fmt::Display for Local {
         let incoming_a = edge("a-incoming", &target.id, EdgeKind::Calls);
         let outgoing_a = edge(&target.id, "a-outgoing", EdgeKind::UsesType);
 
-        index.edges = vec![
+        let unsorted_edges = vec![
             incoming_z.clone(),
             outgoing_z.clone(),
             incoming_a.clone(),
             outgoing_a.clone(),
         ];
-        index.incoming = BTreeMap::from([
-            (target.id.clone(), vec![0, 2]),
-            ("z-outgoing".to_string(), vec![1]),
-            ("a-outgoing".to_string(), vec![3]),
-        ]);
-        index.outgoing = BTreeMap::from([
-            ("z-incoming".to_string(), vec![0]),
-            (target.id.clone(), vec![1, 3]),
-            ("a-incoming".to_string(), vec![2]),
-        ]);
+        index = QueryIndex::from_test_parts(
+            &index.graph_fingerprint,
+            index.nodes.clone(),
+            unsorted_edges,
+        );
         let sorted_table: Vec<Edge> = index
             .edges
             .iter()

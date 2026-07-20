@@ -147,7 +147,7 @@ fn nodes_for_file(index: &QueryIndex, file: &str, limit: usize) -> (Vec<Node>, b
         }
         if nodes.len() == limit {
             truncated = true;
-            continue;
+            break;
         }
         nodes.push(node.clone());
     }
