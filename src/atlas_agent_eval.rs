@@ -5,6 +5,7 @@ use std::path::Path;
 
 pub const AGENT_EXPERIMENT_SCHEMA: &str = "agent-spec/atlas-eval/agent-experiment-v1";
 pub const AGENT_PLAN_SCHEMA: &str = "agent-spec/atlas-eval/agent-plan-v1";
+pub const AGENT_RECEIPTS_SCHEMA: &str = "agent-spec/atlas-eval/agent-receipts-v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -95,6 +96,72 @@ pub struct AgentPlannedRun {
     pub tools: Vec<String>,
     pub surface_fingerprint: String,
     pub session_store: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentReceiptBundle {
+    pub schema: String,
+    pub experiment_version: String,
+    pub plan_fingerprint: String,
+    pub runs: Vec<AgentRunReceipt>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AgentRunOutcome {
+    Completed,
+    Failed,
+    Timeout,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentRunReceipt {
+    pub run_id: String,
+    pub outcome: AgentRunOutcome,
+    pub correctness: AgentCorrectness,
+    pub judge_version: String,
+    pub rubric_fingerprint: String,
+    pub raw_session: EvidenceArtifact,
+    pub answer_hash: String,
+    pub tool_trace_hash: String,
+    pub query_metrics_schema: String,
+    pub stale_as_fresh: bool,
+    pub metrics: AgentRunMetrics,
+    pub diagnostic: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentCorrectness {
+    pub passed: bool,
+    pub rationale: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvidenceArtifact {
+    pub path: String,
+    pub hash: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentRunMetrics {
+    pub file_reads: u64,
+    pub grep_calls: u64,
+    pub graph_calls: u64,
+    pub tool_calls: u64,
+    pub round_trips: u64,
+    pub duration_ms: u64,
+    pub response_bytes: u64,
+    pub context_bytes: u64,
+    pub cost_usd: Option<f64>,
+    pub read_back_calls: u64,
+    pub follow_up_queries: u64,
+    pub truncated_queries: u64,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -217,6 +284,129 @@ pub fn load_agent_experiment(path: &Path) -> Result<AgentExperiment, AgentEvalEr
     })?;
     validate_agent_experiment(&experiment)?;
     Ok(experiment)
+}
+
+pub fn parse_agent_receipts(bytes: &[u8]) -> Result<AgentReceiptBundle, AgentEvalError> {
+    serde_json::from_slice(bytes).map_err(|error| {
+        AgentEvalError::new(
+            "atlas-agent-ab-receipt",
+            format!("failed to parse strict Agent receipt bundle: {error}"),
+        )
+    })
+}
+
+pub fn load_agent_receipts(path: &Path) -> Result<AgentReceiptBundle, AgentEvalError> {
+    let bytes = std::fs::read(path).map_err(|error| {
+        AgentEvalError::new(
+            "atlas-agent-ab-load",
+            format!("failed to read {}: {error}", path.display()),
+        )
+    })?;
+    parse_agent_receipts(&bytes)
+}
+
+pub fn validate_agent_receipts(
+    plan: &AgentRunPlan,
+    bundle: &AgentReceiptBundle,
+) -> Result<(), AgentEvalError> {
+    if plan.schema != AGENT_PLAN_SCHEMA
+        || bundle.schema != AGENT_RECEIPTS_SCHEMA
+        || bundle.experiment_version != plan.experiment_version
+        || bundle.plan_fingerprint != fingerprint(plan)?
+    {
+        return Err(AgentEvalError::new(
+            "atlas-agent-ab-receipt",
+            "receipt bundle does not match the versioned Agent plan",
+        ));
+    }
+
+    let planned = plan
+        .runs
+        .iter()
+        .map(|run| (run.run_id.as_str(), run))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut seen = BTreeSet::new();
+    for receipt in &bundle.runs {
+        if !seen.insert(receipt.run_id.as_str()) || !planned.contains_key(receipt.run_id.as_str()) {
+            return Err(AgentEvalError::new(
+                "atlas-agent-ab-completeness",
+                format!("duplicate or unknown receipt run {}", receipt.run_id),
+            ));
+        }
+    }
+    if seen.len() != planned.len() {
+        let missing = planned
+            .keys()
+            .filter(|run_id| !seen.contains(**run_id))
+            .copied()
+            .collect::<Vec<_>>();
+        return Err(AgentEvalError::new(
+            "atlas-agent-ab-completeness",
+            format!(
+                "receipt bundle is missing planned runs: {}",
+                missing.join(", ")
+            ),
+        ));
+    }
+
+    for receipt in &bundle.runs {
+        let run = planned[receipt.run_id.as_str()];
+        validate_agent_run_receipt(run, receipt)?;
+    }
+    Ok(())
+}
+
+fn validate_agent_run_receipt(
+    run: &AgentPlannedRun,
+    receipt: &AgentRunReceipt,
+) -> Result<(), AgentEvalError> {
+    let session_path = Path::new(&receipt.raw_session.path);
+    if receipt.judge_version != run.controls.judge.version
+        || receipt.rubric_fingerprint != run.rubric_fingerprint
+        || receipt.correctness.rationale.trim().is_empty()
+        || receipt.raw_session.path.trim().is_empty()
+        || is_temporary_path(&receipt.raw_session.path)
+        || !session_path.starts_with(Path::new(&run.session_store))
+        || !is_lower_hex(&receipt.raw_session.hash)
+        || !is_lower_hex(&receipt.answer_hash)
+        || !is_lower_hex(&receipt.tool_trace_hash)
+    {
+        return Err(AgentEvalError::new(
+            "atlas-agent-ab-evidence",
+            format!(
+                "run {} has invalid judge, session, or trace evidence",
+                run.run_id
+            ),
+        ));
+    }
+    if receipt.query_metrics_schema != crate::atlas_eval::QUERY_METRICS_SCHEMA {
+        return Err(AgentEvalError::new(
+            "atlas-agent-ab-receipt",
+            format!("run {} uses legacy query metrics", run.run_id),
+        ));
+    }
+    if receipt
+        .metrics
+        .cost_usd
+        .is_some_and(|cost| !cost.is_finite() || cost < 0.0)
+    {
+        return Err(AgentEvalError::new(
+            "atlas-agent-ab-receipt",
+            format!("run {} has invalid cost", run.run_id),
+        ));
+    }
+    let completed = receipt.outcome == AgentRunOutcome::Completed;
+    if completed && receipt.diagnostic.is_some()
+        || !completed
+            && (receipt.correctness.passed
+                || receipt.diagnostic.as_deref().is_none_or(str::is_empty))
+    {
+        return Err(AgentEvalError::new(
+            "atlas-agent-ab-receipt",
+            format!("run {} has inconsistent outcome fields", run.run_id),
+        ));
+    }
+    Ok(())
 }
 
 pub fn validate_agent_experiment(experiment: &AgentExperiment) -> Result<(), AgentEvalError> {
@@ -389,6 +579,58 @@ mod tests {
         .unwrap()
     }
 
+    fn agent_plan() -> AgentRunPlan {
+        compile_agent_plan(&corpus(3), &experiment()).unwrap()
+    }
+
+    fn receipt_for(run: &AgentPlannedRun) -> AgentRunReceipt {
+        AgentRunReceipt {
+            run_id: run.run_id.clone(),
+            outcome: AgentRunOutcome::Completed,
+            correctness: AgentCorrectness {
+                passed: true,
+                rationale: "rubric satisfied".to_string(),
+            },
+            judge_version: run.controls.judge.version.clone(),
+            rubric_fingerprint: run.rubric_fingerprint.clone(),
+            raw_session: EvidenceArtifact {
+                path: format!("{}/{}.json", run.session_store, run.run_id),
+                hash: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                    .to_string(),
+            },
+            answer_hash: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+                .to_string(),
+            tool_trace_hash: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+                .to_string(),
+            query_metrics_schema: crate::atlas_eval::QUERY_METRICS_SCHEMA.to_string(),
+            stale_as_fresh: false,
+            metrics: AgentRunMetrics {
+                file_reads: 8,
+                grep_calls: 4,
+                graph_calls: u64::from(run.arm != AgentArm::Baseline),
+                tool_calls: 14,
+                round_trips: 10,
+                duration_ms: 100,
+                response_bytes: 1200,
+                context_bytes: 2400,
+                cost_usd: Some(0.01),
+                read_back_calls: 1,
+                follow_up_queries: 1,
+                truncated_queries: 0,
+            },
+            diagnostic: None,
+        }
+    }
+
+    fn receipt_bundle(plan: &AgentRunPlan) -> AgentReceiptBundle {
+        AgentReceiptBundle {
+            schema: AGENT_RECEIPTS_SCHEMA.to_string(),
+            experiment_version: plan.experiment_version.clone(),
+            plan_fingerprint: fingerprint(plan).unwrap(),
+            runs: plan.runs.iter().map(receipt_for).collect(),
+        }
+    }
+
     #[test]
     fn test_agent_ab_plan_builds_three_symmetric_arms() {
         let plan = compile_agent_plan(&corpus(3), &experiment()).unwrap();
@@ -452,5 +694,77 @@ mod tests {
     fn test_agent_ab_plan_requires_three_trials() {
         let error = compile_agent_plan(&corpus(2), &experiment()).unwrap_err();
         assert_eq!(error.code(), "atlas-agent-ab-trials");
+    }
+
+    #[test]
+    fn test_agent_ab_gate_requires_exact_planned_runs() {
+        let plan = agent_plan();
+        let mut missing = receipt_bundle(&plan);
+        missing.runs.pop();
+        let error = validate_agent_receipts(&plan, &missing).unwrap_err();
+        assert_eq!(error.code(), "atlas-agent-ab-completeness");
+
+        let mut duplicate = receipt_bundle(&plan);
+        duplicate.runs.push(duplicate.runs[0].clone());
+        let error = validate_agent_receipts(&plan, &duplicate).unwrap_err();
+        assert_eq!(error.code(), "atlas-agent-ab-completeness");
+
+        let mut unknown = receipt_bundle(&plan);
+        unknown.runs[0].run_id =
+            "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff".to_string();
+        let error = validate_agent_receipts(&plan, &unknown).unwrap_err();
+        assert_eq!(error.code(), "atlas-agent-ab-completeness");
+    }
+
+    #[test]
+    fn test_agent_ab_gate_retains_failed_runs() {
+        let plan = agent_plan();
+        let mut bundle = receipt_bundle(&plan);
+        bundle.runs[1].outcome = AgentRunOutcome::Failed;
+        bundle.runs[1].correctness.passed = false;
+        bundle.runs[1].correctness.rationale = "agent process failed".to_string();
+        bundle.runs[1].diagnostic = Some("driver exited 17".to_string());
+
+        validate_agent_receipts(&plan, &bundle).unwrap();
+        assert_eq!(bundle.runs.len(), plan.runs.len());
+        assert_eq!(bundle.runs[1].outcome, AgentRunOutcome::Failed);
+        assert_eq!(
+            bundle.runs[1].diagnostic.as_deref(),
+            Some("driver exited 17")
+        );
+    }
+
+    #[test]
+    fn test_agent_ab_gate_rejects_legacy_query_metrics() {
+        let plan = agent_plan();
+        let bundle = receipt_bundle(&plan);
+        let mut value = serde_json::to_value(bundle).unwrap();
+        value["runs"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("query_metrics_schema");
+        let bytes = serde_json::to_vec(&value).unwrap();
+
+        let error = parse_agent_receipts(&bytes).unwrap_err();
+        assert_eq!(error.code(), "atlas-agent-ab-receipt");
+    }
+
+    #[test]
+    fn test_agent_ab_gate_validates_session_evidence() {
+        let plan = agent_plan();
+        let mut invalid_session = receipt_bundle(&plan);
+        invalid_session.runs[0].raw_session.path = "/tmp/session.json".to_string();
+        let error = validate_agent_receipts(&plan, &invalid_session).unwrap_err();
+        assert_eq!(error.code(), "atlas-agent-ab-evidence");
+
+        let mut invalid_judge = receipt_bundle(&plan);
+        invalid_judge.runs[0].judge_version.clear();
+        let error = validate_agent_receipts(&plan, &invalid_judge).unwrap_err();
+        assert_eq!(error.code(), "atlas-agent-ab-evidence");
+
+        let mut invalid_hash = receipt_bundle(&plan);
+        invalid_hash.runs[0].tool_trace_hash = "not-a-hash".to_string();
+        let error = validate_agent_receipts(&plan, &invalid_hash).unwrap_err();
+        assert_eq!(error.code(), "atlas-agent-ab-evidence");
     }
 }

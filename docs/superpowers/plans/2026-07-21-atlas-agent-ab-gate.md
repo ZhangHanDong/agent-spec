@@ -144,7 +144,7 @@ git commit -m "feat(atlas): compile symmetric agent evaluation plans"
 - Produces: `AgentReceiptBundle`, `AgentRunReceipt`, `validate_agent_receipts`.
 - Consumed by: Task 4 Agent promotion gate.
 
-- [ ] **Step 1: Write RED receipt tests**
+- [x] **Step 1: Write RED receipt tests**
 
 Add `test_agent_ab_gate_requires_exact_planned_runs`,
 `test_agent_ab_gate_retains_failed_runs`,
@@ -152,7 +152,7 @@ Add `test_agent_ab_gate_requires_exact_planned_runs`,
 `test_agent_ab_gate_validates_session_evidence`. Fixtures must exercise omitted, duplicate, unknown,
 failed, partial metric, `/tmp` path, judge mismatch, and malformed hash variants.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```bash
 cargo test test_agent_ab_gate_requires_exact_planned_runs -- --nocapture
@@ -163,14 +163,14 @@ cargo test test_agent_ab_gate_validates_session_evidence -- --nocapture
 
 Expected: compile failure for missing receipt APIs.
 
-- [ ] **Step 3: Implement strict receipt parsing and completeness**
+- [x] **Step 3: Implement strict receipt parsing and completeness**
 
 Require all plan/run/surface/environment/rubric fingerprints, current query metric schema, complete
 metrics, non-empty judge evidence, canonical session location and lowercase 64-hex hashes. Match the
 set of receipt run ids exactly to the plan before aggregation. Non-completed outcomes require a
 diagnostic and `correctness.passed=false`; they remain valid evidence but block promotion.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 ```bash
 cargo test agent_ab_gate_ -- --nocapture
