@@ -268,7 +268,7 @@ pub(crate) fn explore_index(
             .then_with(|| left.message.cmp(&right.message))
     });
     diagnostics.dedup();
-    let mut result = ExploreResult {
+    let result = ExploreResult {
         schema: "agent-spec/rust-atlas/explore-v1".into(),
         query: query.into(),
         profile: options.profile,
@@ -287,8 +287,7 @@ pub(crate) fn explore_index(
         status: status.clone(),
         stale: status.syn.stale_files.clone(),
     };
-    refresh_usage(&mut result);
-    Ok(result)
+    finalize_budget(result)
 }
 
 fn tokenize_query(query: &str) -> (Vec<String>, bool) {
@@ -587,6 +586,174 @@ fn excerpt_diagnostic(code: &str, file: &str, message: impl Into<String>) -> Exp
 fn push_reason(reasons: &mut Vec<String>, reason: &str) {
     if !reasons.iter().any(|existing| existing == reason) {
         reasons.push(reason.into());
+    }
+}
+
+pub(crate) fn finalize_budget(mut result: ExploreResult) -> Result<ExploreResult, AtlasError> {
+    enforce_count_caps(&mut result)?;
+    loop {
+        refresh_usage(&mut result);
+        if result.usage.serialized_bytes <= result.limits.max_serialized_bytes {
+            return Ok(result);
+        }
+        if !prune_one_optional(&mut result) {
+            return Err(AtlasError::ExploreBudget {
+                required_bytes: result.usage.serialized_bytes,
+                max_bytes: result.limits.max_serialized_bytes,
+            });
+        }
+    }
+}
+
+fn enforce_count_caps(result: &mut ExploreResult) -> Result<(), AtlasError> {
+    if result.seeds.len() > result.limits.max_seeds {
+        return Err(count_budget_error(
+            "seeds",
+            result.seeds.len(),
+            result.limits.max_seeds,
+        ));
+    }
+    if result.primary_paths.len() > result.limits.max_paths {
+        return Err(count_budget_error(
+            "primary paths",
+            result.primary_paths.len(),
+            result.limits.max_paths,
+        ));
+    }
+
+    if result.excerpts.len() > result.limits.max_excerpts {
+        result.excerpts.truncate(result.limits.max_excerpts);
+        mark_truncated(result, "excerpts-count");
+    }
+    let alternative_limit = result
+        .limits
+        .max_paths
+        .saturating_sub(result.primary_paths.len());
+    if result.alternative_paths.len() > alternative_limit {
+        result.alternative_paths.truncate(alternative_limit);
+        mark_truncated(result, "alternative-paths-count");
+    }
+
+    result.edges.sort();
+    result.edges.dedup();
+    let primary_edges = primary_edges(result);
+    while result.edges.len() > result.limits.max_edges {
+        let Some(position) = result
+            .edges
+            .iter()
+            .rposition(|edge| !primary_edges.contains(edge))
+        else {
+            return Err(count_budget_error(
+                "primary-spine edges",
+                result.edges.len(),
+                result.limits.max_edges,
+            ));
+        };
+        result.edges.remove(position);
+        mark_truncated(result, "off-spine-edges-count");
+    }
+
+    while result.nodes.len() > result.limits.max_nodes {
+        let Some(position) = result
+            .nodes
+            .iter()
+            .rposition(|node| !node.seed && !node.spine)
+        else {
+            return Err(count_budget_error(
+                "seed and primary-spine nodes",
+                result.nodes.len(),
+                result.limits.max_nodes,
+            ));
+        };
+        let removed = result.nodes.remove(position);
+        let alternative_count = result.alternative_paths.len();
+        result
+            .alternative_paths
+            .retain(|path| !path.nodes.iter().any(|node| node.id == removed.node.id));
+        if result.alternative_paths.len() != alternative_count {
+            mark_truncated(result, "alternative-paths-count");
+        }
+        let edge_count = result.edges.len();
+        result.edges.retain(|edge| {
+            primary_edges.contains(edge) || !edge_mentions_node(edge, &removed.node)
+        });
+        if result.edges.len() != edge_count {
+            mark_truncated(result, "off-spine-edges-count");
+        }
+        if !result
+            .nodes
+            .iter()
+            .any(|node| node.node.file == removed.node.file)
+        {
+            let excerpt_count = result.excerpts.len();
+            result
+                .excerpts
+                .retain(|excerpt| excerpt.file != removed.node.file);
+            if result.excerpts.len() != excerpt_count {
+                mark_truncated(result, "excerpts-count");
+            }
+        }
+        mark_truncated(result, "off-spine-nodes-count");
+    }
+    Ok(())
+}
+
+fn prune_one_optional(result: &mut ExploreResult) -> bool {
+    if result.excerpts.pop().is_some() {
+        mark_truncated(result, "excerpts");
+        return true;
+    }
+    if result.alternative_paths.pop().is_some() {
+        mark_truncated(result, "alternative-paths");
+        return true;
+    }
+    let primary_edges = primary_edges(result);
+    if let Some(position) = result
+        .edges
+        .iter()
+        .rposition(|edge| !primary_edges.contains(edge))
+    {
+        result.edges.remove(position);
+        mark_truncated(result, "off-spine-edges");
+        return true;
+    }
+    if let Some(position) = result
+        .nodes
+        .iter()
+        .rposition(|node| !node.seed && !node.spine)
+    {
+        result.nodes.remove(position);
+        mark_truncated(result, "off-spine-nodes");
+        return true;
+    }
+    false
+}
+
+fn primary_edges(result: &ExploreResult) -> BTreeSet<Edge> {
+    result
+        .primary_paths
+        .iter()
+        .flat_map(|path| path.hops.iter().map(|hop| hop.edge.clone()))
+        .collect()
+}
+
+fn edge_mentions_node(edge: &Edge, node: &Node) -> bool {
+    [edge.from.as_str(), edge.to.as_str()]
+        .into_iter()
+        .chain(edge.candidates.iter().map(String::as_str))
+        .any(|endpoint| endpoint == node.id || endpoint == node.symbol)
+}
+
+fn mark_truncated(result: &mut ExploreResult, reason: &str) {
+    result.truncated = true;
+    push_reason(&mut result.truncation_reasons, reason);
+}
+
+fn count_budget_error(resource: &str, required: usize, max: usize) -> AtlasError {
+    AtlasError::ExploreCountBudget {
+        resource: resource.into(),
+        required,
+        max,
     }
 }
 
@@ -1050,5 +1217,317 @@ mod tests {
         assert_eq!(excerpt_window(100, 50, 90, 20), (50, 69));
         assert_eq!(excerpt_window(100, 100, 100, 20), (81, 100));
         assert_eq!(excerpt_window(0, 1, 1, 20), (0, 0));
+    }
+
+    fn budget_path(from: &str, to: &str) -> GraphPath {
+        let from_node = node(from, from, &format!("src/{from}.rs"));
+        let to_node = node(to, to, &format!("src/{to}.rs"));
+        let edge = edge(from, to, EdgeKind::Calls);
+        crate::traversal::graph_path(
+            vec![from_node, to_node],
+            vec![crate::PathHop {
+                edge,
+                chosen_target: to.into(),
+                candidate: false,
+                direction: crate::PathDirection::Forward,
+            }],
+        )
+    }
+
+    fn budget_result(profile: ExploreProfile) -> ExploreResult {
+        let primary = budget_path("seed", "spine");
+        let mut nodes = vec![
+            ExploreNode {
+                node: primary.nodes[0].clone(),
+                seed: true,
+                spine: true,
+            },
+            ExploreNode {
+                node: primary.nodes[1].clone(),
+                seed: false,
+                spine: true,
+            },
+        ];
+        nodes.extend((0..120).map(|index| ExploreNode {
+            node: node(
+                &format!("optional-{index:03}"),
+                &format!("optional_{index}"),
+                &format!("src/optional_{index}.rs"),
+            ),
+            seed: false,
+            spine: false,
+        }));
+        let mut edges = vec![primary.hops[0].edge.clone()];
+        edges.extend(
+            (0..120).map(|index| edge(&format!("optional-{index:03}"), "spine", EdgeKind::Calls)),
+        );
+        edges.sort();
+        let alternatives = (0..25)
+            .map(|index| budget_path(&format!("optional-{index:03}"), "spine"))
+            .collect::<Vec<_>>();
+        let excerpts = (0..15)
+            .map(|index| SourceExcerpt {
+                file: format!("src/excerpt_{index}.rs"),
+                line_start: 1,
+                line_end: 1,
+                text: "x".repeat(1_000),
+                source_hash: format!("hash-{index}"),
+            })
+            .collect();
+        ExploreResult {
+            schema: "agent-spec/rust-atlas/explore-v1".into(),
+            query: "budget".into(),
+            profile,
+            limits: profile.budget(),
+            usage: BudgetUsage::default(),
+            seeds: vec![primary.nodes[0].clone()],
+            nodes,
+            edges,
+            primary_paths: vec![primary],
+            alternative_paths: alternatives,
+            impact: Vec::new(),
+            excerpts,
+            truncated: false,
+            truncation_reasons: Vec::new(),
+            diagnostics: Vec::new(),
+            status: status(Path::new("/repo")),
+            stale: Vec::new(),
+        }
+    }
+
+    fn optional_counts(result: &ExploreResult) -> (usize, usize, usize, usize) {
+        let primary_edges = result
+            .primary_paths
+            .iter()
+            .flat_map(|path| path.hops.iter().map(|hop| &hop.edge))
+            .collect::<BTreeSet<_>>();
+        (
+            result.excerpts.len(),
+            result.alternative_paths.len(),
+            result
+                .edges
+                .iter()
+                .filter(|edge| !primary_edges.contains(edge))
+                .count(),
+            result
+                .nodes
+                .iter()
+                .filter(|node| !node.seed && !node.spine)
+                .count(),
+        )
+    }
+
+    fn stable_cap(mut expected: ExploreResult) -> usize {
+        let mut cap = 9_999;
+        for _ in 0..16 {
+            expected.limits.max_serialized_bytes = cap;
+            refresh_usage(&mut expected);
+            if expected.usage.serialized_bytes == cap {
+                return cap;
+            }
+            cap = expected.usage.serialized_bytes;
+        }
+        panic!("serialized-size accounting did not converge");
+    }
+
+    #[test]
+    fn test_atlas_explore_compact_and_deep_budgets_are_deterministic() {
+        assert_eq!(
+            ExploreBudget::compact(),
+            ExploreBudget {
+                max_seeds: 8,
+                max_nodes: 32,
+                max_edges: 48,
+                max_paths: 8,
+                max_excerpts: 4,
+                max_excerpt_lines: 20,
+                max_serialized_bytes: 16_000,
+            }
+        );
+        assert_eq!(
+            ExploreBudget::deep(),
+            ExploreBudget {
+                max_seeds: 16,
+                max_nodes: 96,
+                max_edges: 160,
+                max_paths: 20,
+                max_excerpts: 12,
+                max_excerpt_lines: 40,
+                max_serialized_bytes: 24_000,
+            }
+        );
+        for profile in [ExploreProfile::Compact, ExploreProfile::Deep] {
+            let original = budget_result(profile);
+            let left = finalize_budget(original.clone()).unwrap();
+            let right = finalize_budget(original.clone()).unwrap();
+            let left_bytes = serde_json::to_vec(&left).unwrap();
+            let right_bytes = serde_json::to_vec(&right).unwrap();
+            assert_eq!(left_bytes, right_bytes);
+            assert!(left_bytes.len() <= profile.budget().max_serialized_bytes);
+            assert_eq!(left.usage.serialized_bytes, left_bytes.len());
+            assert!(left.nodes.len() <= profile.budget().max_nodes);
+            assert!(left.edges.len() <= profile.budget().max_edges);
+            assert!(left.usage.paths <= profile.budget().max_paths);
+            assert!(left.excerpts.len() <= profile.budget().max_excerpts);
+            let pruning_order = left
+                .truncation_reasons
+                .iter()
+                .filter(|reason| {
+                    matches!(
+                        reason.as_str(),
+                        "excerpts" | "alternative-paths" | "off-spine-edges" | "off-spine-nodes"
+                    )
+                })
+                .map(String::as_str)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                pruning_order,
+                [
+                    "excerpts",
+                    "alternative-paths",
+                    "off-spine-edges",
+                    "off-spine-nodes",
+                ][..pruning_order.len()]
+            );
+            for path in &left.primary_paths {
+                assert!(path.nodes.iter().all(|path_node| {
+                    left.nodes.iter().any(|node| node.node.id == path_node.id)
+                }));
+                assert!(path.hops.iter().all(|hop| left.edges.contains(&hop.edge)));
+            }
+            for edge in &left.edges {
+                assert!(
+                    left.nodes
+                        .iter()
+                        .any(|node| { edge.from == node.node.id || edge.from == node.node.symbol })
+                );
+                assert!(left.nodes.iter().any(|node| {
+                    edge.to == node.node.id
+                        || edge.to == node.node.symbol
+                        || edge.candidates.contains(&node.node.id)
+                        || edge.candidates.contains(&node.node.symbol)
+                }));
+            }
+            let kept_optional_nodes = left
+                .nodes
+                .iter()
+                .filter(|node| !node.seed && !node.spine)
+                .map(|node| node.node.id.as_str())
+                .collect::<Vec<_>>();
+            let original_optional_nodes = original
+                .nodes
+                .iter()
+                .filter(|node| !node.seed && !node.spine)
+                .take(kept_optional_nodes.len())
+                .map(|node| node.node.id.as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(kept_optional_nodes, original_optional_nodes);
+            assert_eq!(
+                left.excerpts
+                    .iter()
+                    .map(|excerpt| excerpt.file.as_str())
+                    .collect::<Vec<_>>(),
+                original
+                    .excerpts
+                    .iter()
+                    .take(left.excerpts.len())
+                    .map(|excerpt| excerpt.file.as_str())
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
+    fn test_atlas_explore_prunes_optional_sections_in_fixed_order() {
+        let mut original = budget_result(ExploreProfile::Compact);
+        original.excerpts.truncate(1);
+        original.alternative_paths.truncate(1);
+        original.edges = vec![
+            original.primary_paths[0].hops[0].edge.clone(),
+            edge("optional-000", "spine", EdgeKind::Calls),
+        ];
+        original.nodes.truncate(3);
+        let required = original.clone();
+        let mut expected = vec![original.clone()];
+        let mut current = original.clone();
+        for _ in 0..4 {
+            assert!(prune_one_optional(&mut current));
+            expected.push(current.clone());
+        }
+        let mut snapshots = Vec::new();
+        for (stage, expected) in expected.into_iter().enumerate() {
+            let cap = if stage == 0 {
+                usize::MAX
+            } else {
+                stable_cap(expected)
+            };
+            let mut input = original.clone();
+            input.limits.max_serialized_bytes = cap;
+            let actual = finalize_budget(input).unwrap();
+            assert_eq!(
+                actual.usage.serialized_bytes,
+                serde_json::to_vec(&actual).unwrap().len()
+            );
+            snapshots.push(actual);
+        }
+        assert_eq!(
+            snapshots.iter().map(optional_counts).collect::<Vec<_>>(),
+            vec![
+                (1, 1, 1, 1),
+                (0, 1, 1, 1),
+                (0, 0, 1, 1),
+                (0, 0, 0, 1),
+                (0, 0, 0, 0),
+            ]
+        );
+        assert_eq!(snapshots[1].truncation_reasons.last().unwrap(), "excerpts");
+        assert_eq!(
+            snapshots[2].truncation_reasons.last().unwrap(),
+            "alternative-paths"
+        );
+        assert_eq!(
+            snapshots[3].truncation_reasons.last().unwrap(),
+            "off-spine-edges"
+        );
+        assert_eq!(
+            snapshots[4].truncation_reasons.last().unwrap(),
+            "off-spine-nodes"
+        );
+        for snapshot in &snapshots[1..] {
+            assert_eq!(snapshot.seeds, required.seeds);
+            assert_eq!(snapshot.status, required.status);
+            assert_eq!(snapshot.diagnostics, required.diagnostics);
+            assert_eq!(snapshot.primary_paths, required.primary_paths);
+        }
+    }
+
+    #[test]
+    fn test_atlas_explore_rejects_unshrinkable_required_payload() {
+        let mut required = budget_result(ExploreProfile::Compact);
+        required.nodes.retain(|node| node.seed || node.spine);
+        required.edges = vec![required.primary_paths[0].hops[0].edge.clone()];
+        required.alternative_paths.clear();
+        required.excerpts.clear();
+        required.diagnostics.push(ExploreDiagnostic {
+            code: "required".into(),
+            message: "x".repeat(20_000),
+            file: None,
+        });
+        let mut accounting = required.clone();
+        enforce_count_caps(&mut accounting).unwrap();
+        refresh_usage(&mut accounting);
+        let expected_bytes = accounting.usage.serialized_bytes;
+        let expected_limit = accounting.limits.max_serialized_bytes;
+        match finalize_budget(required).unwrap_err() {
+            AtlasError::ExploreBudget {
+                required_bytes,
+                max_bytes,
+            } => {
+                assert_eq!(required_bytes, expected_bytes);
+                assert_eq!(max_bytes, expected_limit);
+                assert!(required_bytes > max_bytes);
+            }
+            error => panic!("unexpected budget error: {error}"),
+        }
     }
 }

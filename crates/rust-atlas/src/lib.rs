@@ -93,6 +93,21 @@ pub enum AtlasError {
     TraversalLimit { detail: String },
     #[error("atlas-affected-path: `{path}`: {detail}")]
     AffectedPath { path: String, detail: String },
+    #[error(
+        "atlas-explore-budget: required payload is {required_bytes} bytes, profile limit is {max_bytes}"
+    )]
+    ExploreBudget {
+        required_bytes: usize,
+        max_bytes: usize,
+    },
+    #[error(
+        "atlas-explore-budget: required {resource} count is {required}, profile limit is {max}"
+    )]
+    ExploreCountBudget {
+        resource: String,
+        required: usize,
+        max: usize,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
