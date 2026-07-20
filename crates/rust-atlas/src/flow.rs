@@ -361,6 +361,7 @@ mod tests {
             visibility: "pub".into(),
             signature: format!("fn {id}()"),
             doc: None,
+            cfg: None,
         }
     }
 
@@ -381,6 +382,7 @@ mod tests {
             confidence: Some(confidence),
             candidates: Vec::new(),
             evidence: Some(format!("{from} calls {to}")),
+            generic: false,
         }
     }
 

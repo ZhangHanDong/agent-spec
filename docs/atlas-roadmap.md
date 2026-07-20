@@ -122,7 +122,7 @@ Task Contract。
 | 缺口 | 后果 |
 |---|---|
 | 非 Rust provider 仍只有消费合约 | 多语言项目需要另行实现 provider-neutral impact adapter |
-| MIR 与 dynamic-dispatch enricher 尚未交付 | 编译器级控制流与部分运行时分派仍只能报告缺失能力或 bounded candidate |
+| 官方 MIR producer 与 dynamic-dispatch enricher 尚未交付 | 已可消费外部 compiler overlay；仓库尚不能自行提取 MIR，部分运行时分派仍只能报告缺失能力或 bounded candidate |
 | 尚无真实 Agent A/B 执行结果 | 离线 corpus、run plan 和 receipt summarization 不能证明 Atlas 带来性能改善 |
 | 零变更 rebuild 仍有明显全图地板 | 直接上 daemon 只会隐藏低效 resolve/validate，而不是解决它 |
 
@@ -179,11 +179,15 @@ evidence      analyzer-specific reason 或 occurrence identifier
 
 #### A3. MIR overlay
 
-状态：已在 `specs/roadmap/task-atlas-mir-layer.spec.md` 规划。
+状态：Wave 3 已交付 versioned overlay consumer、feature gate、fixed-argv driver adapter、
+calls/CFG projection、独立 freshness 与失败降级。官方 `rustc_public` producer binary 尚未
+随仓库分发；发布前 `--mir <artifact>` 是可用入口，`--mir-driver` 是 producer process
+protocol，不把 fake/test producer 当成 compiler authority。
 
-- 优先评估 Charon；兼容性不足时再考虑 `rustc_public` driver。
+- Charon 已在 2026-07-20 被兼容性门拒绝；目标 producer 是单独钉住 nightly 的
+  `rustc_public` driver，不能进入默认 stable dependency graph。
 - 增加精确 MIR call edge 和 per-function CFG summary。
-- nightly 和 extractor version 要求必须 feature-gated。
+- 外部 producer 独立钉住 nightly/extractor version；Atlas 激活入口必须 feature-gated。
 - 默认保留 generic form，不展开所有 monomorphized instance。
 - MIR 不可用时降级到 syn 加 SCIP，并返回 typed diagnostic。
 
@@ -507,10 +511,11 @@ adapter。它们投影到同一 Code Graph IR，并通过 provider conformance t
 | 4 | B2/B3 explore 与 flow（已交付） | E0、A2、B1、D1 | 给 Agent 一个内容充分的架构查询并延续离线评测契约 |
 | 5 | B4 impact 与 affected code（已交付） | E0、B1、B3 | 提供确定性反向遍历与同一 receipt 指标 |
 | 6 | C1/C2/C3 intent-aware affected、bundle 与 replay（已交付） | B4、已交付 binding/quality planning | 连接代码变更、需求、测试、工具、skill 与同 run evidence |
-| 7 | A3 MIR overlay | A2、B1 | 为已经可消费的 flow 增加精度 |
-| 8 | D2 incremental hardening | B1、D1 | 移除全图 rebuild 地板 |
-| 9 | D3 watch 与 daemon | D2 | 在不隐藏 stale 的前提下增加实时性能 |
-| 10 | F1/F2 provider ecosystem | Rust C1 已验证 | 泛化经过验证的合约，而不是提前猜抽象 |
+| 7 | A3 MIR overlay consumer（已交付） | A2、B1 | 已提供 compiler evidence 接入与治理；官方 producer 单独交付 |
+| 8 | A4 dynamic-dispatch enricher | A3、B3 | 将非静态调用建模为显式 bounded candidates，不冒充 compiler fact |
+| 9 | D2 incremental hardening | B1、D1 | 移除全图 rebuild 地板 |
+| 10 | D3 watch 与 daemon | D2 | 在不隐藏 stale 的前提下增加实时性能 |
+| 11 | F1/F2 provider ecosystem | Rust C1 已验证 | 泛化经过验证的合约，而不是提前猜抽象 |
 
 第一轮实施使用三个独立合约：
 
@@ -543,6 +548,16 @@ work unit、Task Contract、scenario、显式 test selector 和 worktree/VCS 证
 重放 intent-impact、quality outcome 与 lifecycle evidence。风险 A lifecycle、独立复审和
 requirement governance gate 是本轮交付证据。
 
+第四轮实施使用一个 MIR overlay 合约：
+
+1. `REQ-ATLAS-MIR-OVERLAY` → `task-atlas-mir-layer`
+
+该 requirement 为 `accepted`。本轮交付非默认 `mir` feature、
+`rust-atlas/mir-overlay-v1` consumer、固定 argv producer adapter、精确 MIR call edge、函数
+CFG summary、query provenance precedence、独立 freshness 和失败清理。Charon 未通过 stable
+兼容性门；官方 `rustc_public` producer 仍是单独交付项，不能用测试 driver 冒充已交付的
+compiler extractor。
+
 ## 7. 旧 Phase 映射
 
 历史文档和合约使用过重叠的 Phase 编号。保留历史名称以维持 trace，并按下表理解：
@@ -552,7 +567,7 @@ requirement governance gate 是本轮交付证据。
 | 原始 Phase 1 Rust graph | A0 与 B0，已交付 |
 | syn hardening Phase 1 | A0，已交付 |
 | SCIP semantic Phase 2 | A1，已交付 |
-| 原始 MIR Phase 2 | A3，待实施 |
+| 原始 MIR Phase 2 | A3 consumer 已交付；官方 `rustc_public` producer 待单独发布 |
 | 原始 KLL integration Phase 3 | C0，已交付 |
 | polyglot Phase 3 | 改为 Rust Atlas 外部的 F1/F2 |
 | 原 Phase 4 daemon/performance | D2/D3，位于 query/freshness 基础之后 |

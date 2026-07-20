@@ -77,6 +77,7 @@ pub(crate) fn status_with_meta(
         diagnostics: Vec::new(),
     };
     let scip = scip_status(&recorded.meta, &current_source_fingerprint);
+    let mir = mir_status(&recorded.meta, &current_source_fingerprint);
     let worktree_mismatch = (recorded.identity.worktree_root != current_identity.worktree_root)
         .then(|| {
             format!(
@@ -92,7 +93,7 @@ pub(crate) fn status_with_meta(
         worktree_mismatch,
         syn,
         scip,
-        mir: unavailable("MIR layer is unavailable"),
+        mir,
     })
 }
 
@@ -270,6 +271,90 @@ fn scip_status(meta: &Meta, current_source_fingerprint: &str) -> LayerStatus {
         },
         recorded_fingerprint: Some(recorded_index.clone()),
         current_fingerprint: current_index,
+        stale_files: Vec::new(),
+        diagnostics,
+    }
+}
+
+fn mir_status(meta: &Meta, current_source_fingerprint: &str) -> LayerStatus {
+    let capability = &meta.capability;
+    let authority = [
+        ("mir_overlay", capability.mir_overlay.as_ref()),
+        ("mir_fingerprint", capability.mir_fingerprint.as_ref()),
+        (
+            "mir_source_fingerprint",
+            capability.mir_source_fingerprint.as_ref(),
+        ),
+        ("mir_tool", capability.mir_tool.as_ref()),
+    ];
+    if !capability.mir {
+        let diagnostics = authority
+            .iter()
+            .filter_map(|(field, value)| {
+                value.as_ref().map(|_| {
+                    format!("MIR capability is false but authority field is present: {field}")
+                })
+            })
+            .collect::<Vec<_>>();
+        if diagnostics.is_empty() {
+            return unavailable("MIR layer is unavailable: no explicit MIR overlay");
+        }
+        return LayerStatus {
+            state: LayerState::Stale,
+            recorded_fingerprint: capability.mir_fingerprint.clone(),
+            current_fingerprint: None,
+            stale_files: Vec::new(),
+            diagnostics,
+        };
+    }
+
+    let missing = authority
+        .iter()
+        .filter(|(_, value)| value.is_none())
+        .map(|(field, _)| format!("MIR authority missing field: {field}"))
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        return LayerStatus {
+            state: LayerState::Stale,
+            recorded_fingerprint: capability.mir_fingerprint.clone(),
+            current_fingerprint: None,
+            stale_files: Vec::new(),
+            diagnostics: missing,
+        };
+    }
+
+    let (Some(recorded_overlay), Some(recorded_sources), Some(overlay_path)) = (
+        capability.mir_fingerprint.as_ref(),
+        capability.mir_source_fingerprint.as_ref(),
+        capability.mir_overlay.as_ref(),
+    ) else {
+        unreachable!("complete MIR authority was validated above");
+    };
+    let current_overlay = std::fs::read(overlay_path)
+        .ok()
+        .map(|bytes| blake3::hash(&bytes).to_hex().to_string());
+    let mut diagnostics = Vec::new();
+    if current_overlay.as_deref() != Some(recorded_overlay) {
+        diagnostics.push(format!(
+            "MIR overlay fingerprint mismatch: recorded {recorded_overlay}, current {}",
+            current_overlay.as_deref().unwrap_or("missing")
+        ));
+    }
+    if current_source_fingerprint != recorded_sources {
+        diagnostics.push(format!(
+            "MIR source fingerprint mismatch: recorded {recorded_sources}, current {current_source_fingerprint}"
+        ));
+    }
+    diagnostics.sort();
+
+    LayerStatus {
+        state: if diagnostics.is_empty() {
+            LayerState::Fresh
+        } else {
+            LayerState::Stale
+        },
+        recorded_fingerprint: Some(recorded_overlay.clone()),
+        current_fingerprint: current_overlay,
         stale_files: Vec::new(),
         diagnostics,
     }

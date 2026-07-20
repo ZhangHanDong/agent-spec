@@ -12,6 +12,10 @@ members = [".", "crates/rust-atlas"]
 default-members = [".", "crates/rust-atlas"]
 exclude = ["fixtures/requirements-noteapp", "fixtures/atlas/basic"]
 
+[features]
+default = []
+mir = ["rust-atlas/mir"]
+
 [dependencies]
 rust-atlas = { path = "crates/rust-atlas", version = "0.2.0" }
 blake3 = "1"

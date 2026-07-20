@@ -54,6 +54,13 @@ agent-spec atlas status --code . --graph .agent-spec/graph --format json
 agent-spec atlas check --code . --graph .agent-spec/graph
 ```
 
+MIR is opt-in. Build the binary with Cargo feature `mir`, then pass exactly one
+of `atlas build --mir <overlay.json>` or `--mir-driver <absolute-binary>`.
+Failures degrade with `mir-extraction-failed`, clear old MIR facts, and preserve
+the syn plus optional SCIP graph. The repository ships the versioned consumer
+protocol and fixed-argv driver adapter; it does not bundle an official
+`rustc_public` producer binary. See `docs/atlas-mir-overlay.md`.
+
 Build the derived graph before querying. `status` reports recorded/current graph
 identity and independent syn, SCIP, and MIR freshness; syn fresh does not make a
 SCIP or MIR layer fresh. `check` preserves the syn stale-file gate. Rebuild with

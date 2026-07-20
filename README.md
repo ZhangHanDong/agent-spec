@@ -550,6 +550,21 @@ agent-spec atlas status --code . --graph .agent-spec/graph --format json
 agent-spec atlas check --code . --graph .agent-spec/graph
 ```
 
+MIR activation is an opt-in Cargo feature and consumes a versioned external
+producer artifact. The stable JSON consumer carries no compiler dependency;
+the default build neither compiles nor invokes a MIR producer:
+
+```bash
+cargo run --features mir -- atlas build --code . --mir target/rust-atlas/mir-overlay.json
+cargo run --features mir -- atlas build --code . --mir-driver /absolute/path/to/rust-atlas-mir-driver
+```
+
+The two MIR modes are mutually exclusive. Extraction or validation failure
+returns a `mir-extraction-failed` build warning, clears previous MIR facts, and
+keeps the syn plus optional SCIP graph usable. The repository currently ships
+the protocol, consumer, and driver adapter, not an official `rustc_public`
+producer binary. See [Rust Atlas MIR Overlay](docs/atlas-mir-overlay.md).
+
 `search` accepts a query and supports `--limit` from 1 through 200 (default
 20); add `--frozen` to read without automatic syn refresh. `check` is the
 compatibility freshness gate for syn stale files and exits non-zero when any

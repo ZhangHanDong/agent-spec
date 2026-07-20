@@ -1,23 +1,22 @@
 spec: task
-name: "Atlas MIR Layer (Phase 2)"
-tags: [atlas, code-graph, mir, static-analysis]
+name: "Atlas MIR Layer (Promoted)"
+tags: [atlas, code-graph, mir, static-analysis, roadmap]
 depends: [task-rust-atlas-code-graph]
 estimate: 2w
 ---
 
 ## Intent
 
-Overlay precise MIR-derived facts onto the Phase 1 atlas graph: resolved
-`calls` edges and per-function CFG summaries with provenance `mir`, so agents
-get call-graph precision the syn/SCIP layers cannot provide. The MIR extractor
-is an optional, feature-gated enhancer — without it, atlas behaves exactly as
-Phase 1.
+This roadmap placeholder has been promoted to
+`specs/task-atlas-mir-layer.spec.md`. The active contract owns the extractor
+choice, feature boundary, failure semantics, and verification scenarios.
 
 ## Decisions
 
-- Evaluate Charon (serialized ULLBC/LLBC output) as the extractor before writing a custom `rustc_public` driver; record the choice in this spec before implementation starts.
+- Charon was evaluated on 2026-07-20 and rejected because its independent nightly pin does not satisfy the repository stable-toolchain compatibility gate.
+- The active contract selects a separately versioned `rustc_public` producer and `rust-atlas/mir-overlay-v1` process boundary.
 - MIR facts are an overlay: same schema, edges carry provenance `mir`; queries prefer the highest-provenance edge when duplicates exist.
-- The MIR layer is gated behind `--features mir` and is the only place a nightly toolchain may be required; the default build stays stable-only.
+- MIR activation is gated behind `--features mir`; the pure JSON consumer remains stable-only and carries no compiler dependency. Only an external producer may require nightly.
 - Extraction failures (crate does not compile, extractor version mismatch) degrade to the Phase 1 graph with a diagnostic, never a hard failure of `atlas build`.
 
 ## Boundaries

@@ -855,6 +855,7 @@ mod tests {
             visibility: "pub".into(),
             signature: format!("fn {symbol}()"),
             doc: None,
+            cfg: None,
         }
     }
 
@@ -872,6 +873,7 @@ mod tests {
             confidence: Some(EdgeConfidence::Exact),
             candidates: Vec::new(),
             evidence: Some(format!("{from}->{to}")),
+            generic: false,
         }
     }
 

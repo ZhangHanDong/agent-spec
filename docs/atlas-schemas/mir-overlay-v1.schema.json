@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ZhangHanDong/agent-spec/docs/atlas-schemas/mir-overlay-v1.schema.json",
+  "title": "Rust Atlas MIR Overlay v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "extractor", "source_fingerprint", "functions"],
+  "properties": {
+    "schema": {
+      "const": "rust-atlas/mir-overlay-v1"
+    },
+    "extractor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "source_fingerprint": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "functions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/function"
+      }
+    }
+  },
+  "$defs": {
+    "cfg": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["basic_blocks", "edges", "exits", "loop_headers"],
+      "properties": {
+        "basic_blocks": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "edges": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "exits": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "loop_headers": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "site": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "line_start", "column_start", "line_end", "column_end"],
+      "properties": {
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "line_start": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column_start": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "line_end": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column_end": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "call": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target", "site", "dispatch", "evidence"],
+      "allOf": [
+        {
+          "if": {
+            "required": ["dispatch"],
+            "properties": {
+              "dispatch": {
+                "const": "generic"
+              }
+            }
+          },
+          "then": {
+            "required": ["generic"],
+            "properties": {
+              "generic": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["generic"],
+            "properties": {
+              "generic": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "dispatch": {
+                "const": "generic"
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "target": {
+          "type": "string",
+          "minLength": 1
+        },
+        "site": {
+          "$ref": "#/$defs/site"
+        },
+        "dispatch": {
+          "enum": ["static", "trait", "generic", "closure", "function-pointer", "channel", "macro"]
+        },
+        "generic": {
+          "type": "boolean",
+          "default": false
+        },
+        "evidence": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "function": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["symbol", "cfg"],
+      "properties": {
+        "symbol": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cfg": {
+          "$ref": "#/$defs/cfg"
+        },
+        "calls": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/call"
+          }
+        }
+      }
+    }
+  }
+}

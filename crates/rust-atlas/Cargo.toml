@@ -6,6 +6,10 @@ version = "0.2.0"
 license = "MIT"
 repository = "https://github.com/ZhangHanDong/agent-spec"
 
+[features]
+default = []
+mir = []
+
 [dependencies]
 blake3 = "1"
 ignore = "0.4"

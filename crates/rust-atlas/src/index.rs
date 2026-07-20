@@ -719,6 +719,7 @@ mod tests {
             visibility: "pub".to_string(),
             signature: format!("fn {symbol}()"),
             doc: None,
+            cfg: None,
         }
     }
 
@@ -736,6 +737,7 @@ mod tests {
             confidence: None,
             candidates: Vec::new(),
             evidence: None,
+            generic: false,
         }
     }
 

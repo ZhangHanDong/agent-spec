@@ -427,6 +427,14 @@ enum AtlasCommands {
         /// Optional SCIP index (rust-analyzer protobuf or JSON) for resolved references
         #[arg(long)]
         scip: Option<PathBuf>,
+        /// Optional versioned rust-atlas MIR overlay (requires Cargo feature `mir`)
+        #[cfg(feature = "mir")]
+        #[arg(long, conflicts_with = "mir_driver")]
+        mir: Option<PathBuf>,
+        /// Optional MIR producer executable invoked with fixed --code/--out argv
+        #[cfg(feature = "mir")]
+        #[arg(long, conflicts_with = "mir")]
+        mir_driver: Option<PathBuf>,
     },
     /// Generate a SCIP index via rust-analyzer (opt-in semantic layer)
     ScipGen {
@@ -3715,15 +3723,37 @@ fn cmd_atlas(action: AtlasCommands) -> Result<(), Box<dyn std::error::Error>> {
             graph,
             full,
             scip,
+            #[cfg(feature = "mir")]
+            mir,
+            #[cfg(feature = "mir")]
+            mir_driver,
         } => {
-            let report = rust_atlas::build(
-                &code,
-                &graph,
-                &rust_atlas::BuildOptions {
-                    full,
-                    scip_index: scip,
-                },
-            )?;
+            let options = rust_atlas::BuildOptions {
+                full,
+                scip_index: scip,
+            };
+            let report = {
+                #[cfg(feature = "mir")]
+                {
+                    if mir.is_some() || mir_driver.is_some() {
+                        rust_atlas::build_with_mir(
+                            &code,
+                            &graph,
+                            &options,
+                            &rust_atlas::MirBuildOptions {
+                                overlay: mir,
+                                driver: mir_driver,
+                            },
+                        )?
+                    } else {
+                        rust_atlas::build(&code, &graph, &options)?
+                    }
+                }
+                #[cfg(not(feature = "mir"))]
+                {
+                    rust_atlas::build(&code, &graph, &options)?
+                }
+            };
             print_value(&report, "json")
         }
         AtlasCommands::ScipGen { code, graph, ra } => {
@@ -12304,6 +12334,61 @@ Scenario: pass
             ],
         ] {
             assert!(super::Cli::try_parse_from(args).is_err(), "args must fail");
+        }
+    }
+
+    #[cfg(feature = "mir")]
+    #[test]
+    fn test_atlas_mir_build_cli_parses_overlay_and_driver_modes() {
+        assert!(
+            super::Cli::try_parse_from([
+                "agent-spec",
+                "atlas",
+                "build",
+                "--mir",
+                "target/mir-overlay.json",
+            ])
+            .is_ok()
+        );
+        assert!(
+            super::Cli::try_parse_from([
+                "agent-spec",
+                "atlas",
+                "build",
+                "--mir-driver",
+                "rust-atlas-mir-driver",
+            ])
+            .is_ok()
+        );
+        assert!(
+            super::Cli::try_parse_from([
+                "agent-spec",
+                "atlas",
+                "build",
+                "--mir",
+                "overlay.json",
+                "--mir-driver",
+                "driver",
+            ])
+            .is_err()
+        );
+    }
+
+    #[cfg(not(feature = "mir"))]
+    #[test]
+    fn test_atlas_default_cli_rejects_mir_activation() {
+        for flag in ["--mir", "--mir-driver"] {
+            assert!(
+                super::Cli::try_parse_from([
+                    "agent-spec",
+                    "atlas",
+                    "build",
+                    flag,
+                    "producer-input",
+                ])
+                .is_err(),
+                "default CLI must reject {flag}"
+            );
         }
     }
 

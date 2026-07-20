@@ -22,6 +22,7 @@ mod explore;
 mod flow;
 mod impact;
 mod index;
+mod mir;
 mod status;
 mod traversal;
 
@@ -201,6 +202,16 @@ pub struct Node {
     pub visibility: String,
     pub signature: String,
     pub doc: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cfg: Option<CfgSummary>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct CfgSummary {
+    pub basic_blocks: usize,
+    pub edges: usize,
+    pub exits: usize,
+    pub loop_headers: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -223,6 +234,12 @@ pub struct Edge {
     pub candidates: Vec<String>,
     #[serde(default)]
     pub evidence: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub generic: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -248,6 +265,21 @@ pub struct Capability {
     /// Source-set fingerprint captured when the current SCIP index was
     /// explicitly overlaid. Automatic refreshes intentionally retain it.
     pub scip_source_fingerprint: Option<String>,
+    /// Whether a MIR overlay was applied to this graph snapshot.
+    #[serde(default)]
+    pub mir: bool,
+    /// Extractor identity declared by the MIR overlay producer.
+    #[serde(default)]
+    pub mir_tool: Option<String>,
+    /// Absolute path of the MIR overlay last consumed.
+    #[serde(default)]
+    pub mir_overlay: Option<String>,
+    /// blake3 of the MIR overlay artifact at overlay time.
+    #[serde(default)]
+    pub mir_fingerprint: Option<String>,
+    /// Source-set fingerprint declared by the current MIR overlay.
+    #[serde(default)]
+    pub mir_source_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -268,12 +300,26 @@ pub struct BuildOptions {
     pub scip_index: Option<PathBuf>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct MirBuildOptions {
+    pub overlay: Option<PathBuf>,
+    pub driver: Option<PathBuf>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct BuildReport {
     pub rebuilt: Vec<String>,
     pub removed: Vec<String>,
     pub unparsed: Vec<String>,
     pub capability: Capability,
+    pub diagnostics: Vec<BuildDiagnostic>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BuildDiagnostic {
+    pub code: String,
+    pub severity: String,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -385,7 +431,17 @@ pub fn build(
     graph_dir: &Path,
     opts: &BuildOptions,
 ) -> Result<BuildReport, AtlasError> {
-    build_with_meta(code_root, graph_dir, opts, None, false)
+    build_with_meta(code_root, graph_dir, opts, None, false, None)
+}
+
+#[cfg(any(feature = "mir", test))]
+pub fn build_with_mir(
+    code_root: &Path,
+    graph_dir: &Path,
+    opts: &BuildOptions,
+    mir: &MirBuildOptions,
+) -> Result<BuildReport, AtlasError> {
+    build_with_meta(code_root, graph_dir, opts, None, false, Some(mir))
 }
 
 fn build_with_meta(
@@ -393,7 +449,8 @@ fn build_with_meta(
     graph_dir: &Path,
     opts: &BuildOptions,
     known_meta: Option<Meta>,
-    retain_scip_authority_fingerprints: bool,
+    retain_semantic_authority_fingerprints: bool,
+    mir_options: Option<&MirBuildOptions>,
 ) -> Result<BuildReport, AtlasError> {
     // `cargo metadata` reports absolute, canonical paths; canonicalize the root
     // so the file walk and layout share one path space (otherwise `--code .`
@@ -416,6 +473,12 @@ fn build_with_meta(
     let retained_scip_fingerprint = old_meta
         .as_ref()
         .and_then(|meta| meta.capability.scip_fingerprint.clone());
+    let retained_mir_source_fingerprint = old_meta
+        .as_ref()
+        .and_then(|meta| meta.capability.mir_source_fingerprint.clone());
+    let retained_mir_fingerprint = old_meta
+        .as_ref()
+        .and_then(|meta| meta.capability.mir_fingerprint.clone());
 
     let mut files = BTreeMap::new();
     let mut rebuilt = Vec::new();
@@ -469,18 +532,52 @@ fn build_with_meta(
         // re-overlay after edits instead of silently dropping the semantic layer.
         let abs = std::fs::canonicalize(index_path).unwrap_or_else(|_| index_path.clone());
         capability.scip_index = Some(abs.to_string_lossy().into_owned());
-        capability.scip_fingerprint = if retain_scip_authority_fingerprints {
+        capability.scip_fingerprint = if retain_semantic_authority_fingerprints {
             retained_scip_fingerprint
         } else {
             Some(overlaid_scip_fingerprint)
         };
-        capability.scip_source_fingerprint = if retain_scip_authority_fingerprints {
+        capability.scip_source_fingerprint = if retain_semantic_authority_fingerprints {
             retained_scip_source_fingerprint
         } else {
             Some(status::source_fingerprint(&files)?)
         };
     } else {
         remove_scip_edges(&shards_dir, &files)?;
+    }
+    let mut diagnostics = Vec::new();
+    remove_mir_facts(&shards_dir, &files)?;
+    if let Some(options) = mir_options {
+        match mir::prepare_and_overlay(
+            code_root,
+            graph_dir,
+            &shards_dir,
+            &files,
+            options,
+            retain_semantic_authority_fingerprints,
+        ) {
+            Ok(Some(applied)) => {
+                capability.mir = true;
+                capability.mir_tool = Some(applied.tool);
+                capability.mir_overlay = Some(applied.overlay_path);
+                capability.mir_fingerprint = if retain_semantic_authority_fingerprints {
+                    retained_mir_fingerprint
+                } else {
+                    Some(applied.overlay_fingerprint)
+                };
+                capability.mir_source_fingerprint = if retain_semantic_authority_fingerprints {
+                    retained_mir_source_fingerprint
+                } else {
+                    Some(applied.source_fingerprint)
+                };
+            }
+            Ok(None) => {}
+            Err(message) => diagnostics.push(BuildDiagnostic {
+                code: "mir-extraction-failed".to_string(),
+                severity: "warning".to_string(),
+                message,
+            }),
+        }
     }
     validate_graph(&shards_dir, &files)?;
 
@@ -505,6 +602,7 @@ fn build_with_meta(
         removed,
         unparsed,
         capability,
+        diagnostics,
     })
 }
 
@@ -536,25 +634,46 @@ pub fn query(
             });
         }
     };
-    Ok(QueryResult {
-        edges_out: index
+    let edges_out = preferred_query_edges(
+        index
             .outgoing_edges([node.id.as_str()])
             .into_iter()
             .cloned()
-            .collect::<BTreeSet<_>>()
-            .into_iter()
             .collect(),
-        edges_in: index
+    );
+    let edges_in = preferred_query_edges(
+        index
             .incoming_edges([node.id.as_str()])
             .into_iter()
             .cloned()
-            .collect::<BTreeSet<_>>()
-            .into_iter()
             .collect(),
+    );
+    Ok(QueryResult {
+        edges_out,
+        edges_in,
         node,
         stale: status.syn.stale_files.clone(),
         status,
     })
+}
+
+fn preferred_query_edges(mut edges: Vec<Edge>) -> Vec<Edge> {
+    let mut highest: BTreeMap<(String, String), Provenance> = BTreeMap::new();
+    for edge in &edges {
+        if matches!(edge.kind, EdgeKind::Calls | EdgeKind::References) {
+            highest
+                .entry((edge.from.clone(), edge.to.clone()))
+                .and_modify(|current| *current = (*current).max(edge.provenance))
+                .or_insert(edge.provenance);
+        }
+    }
+    edges.retain(|edge| {
+        !matches!(edge.kind, EdgeKind::Calls | EdgeKind::References)
+            || highest.get(&(edge.from.clone(), edge.to.clone())) == Some(&edge.provenance)
+    });
+    edges.sort();
+    edges.dedup();
+    edges
 }
 
 /// Deterministic indexed symbol search with fixed match precedence.
@@ -1071,6 +1190,16 @@ fn refresh_stale_graph(
         .clone()
         .map(PathBuf::from)
         .filter(|p| p.exists());
+    let mir_options = meta
+        .capability
+        .mir_overlay
+        .clone()
+        .map(PathBuf::from)
+        .filter(|path| path.exists())
+        .map(|overlay| MirBuildOptions {
+            overlay: Some(overlay),
+            driver: None,
+        });
     build_with_meta(
         code_root,
         graph_dir,
@@ -1080,6 +1209,7 @@ fn refresh_stale_graph(
         },
         Some(meta),
         true,
+        mir_options.as_ref(),
     )?;
     read_persisted_meta(graph_dir)
 }
@@ -1656,6 +1786,7 @@ impl ExtractCtx<'_> {
             visibility: vis,
             signature,
             doc: doc_first_line(attrs),
+            cfg: None,
         });
         id
     }
@@ -1679,6 +1810,7 @@ impl ExtractCtx<'_> {
             visibility,
             signature,
             doc: None,
+            cfg: None,
         });
     }
 
@@ -1696,6 +1828,7 @@ impl ExtractCtx<'_> {
             confidence: Some(EdgeConfidence::Exact),
             candidates: Vec::new(),
             evidence: None,
+            generic: false,
         });
     }
 }
@@ -2203,6 +2336,7 @@ fn extract_items(
                         confidence: None,
                         candidates: Vec::new(),
                         evidence: None,
+                        generic: false,
                     });
                 }
                 ctx.edges.push(Edge {
@@ -2218,6 +2352,7 @@ fn extract_items(
                     confidence: None,
                     candidates: Vec::new(),
                     evidence: None,
+                    generic: false,
                 });
                 for ii in &i.items {
                     let (member, kind, span, vis, signature, attrs) = match ii {
@@ -2680,6 +2815,7 @@ fn overlay_scip(
                     candidates.len(),
                 )),
                 candidates,
+                generic: false,
             };
             push_edge(&mut shards, &mut changed, &rel, edge);
         }
@@ -2761,6 +2897,7 @@ fn overlay_scip(
                     candidates.len(),
                 )),
                 candidates,
+                generic: false,
             };
             push_edge(&mut shards, &mut changed, &rel, edge);
         }
@@ -2836,6 +2973,25 @@ fn remove_scip_edges(
             .edges
             .retain(|edge| edge.provenance != Provenance::Scip);
         if shard.edges.len() != old_len {
+            write_shard(shards_dir, &shard)?;
+        }
+    }
+    Ok(())
+}
+
+fn remove_mir_facts(shards_dir: &Path, files: &BTreeMap<String, String>) -> Result<(), AtlasError> {
+    for rel in files.keys() {
+        let mut shard = read_shard(shards_dir, rel)?;
+        let old_edges = shard.edges.len();
+        let mut changed = false;
+        shard
+            .edges
+            .retain(|edge| edge.provenance != Provenance::Mir);
+        changed |= shard.edges.len() != old_edges;
+        for node in &mut shard.nodes {
+            changed |= node.cfg.take().is_some();
+        }
+        if changed {
             write_shard(shards_dir, &shard)?;
         }
     }
@@ -3030,6 +3186,7 @@ mod tests {
             confidence: Some(EdgeConfidence::Exact),
             candidates: Vec::new(),
             evidence: None,
+            generic: false,
         }
     }
 
@@ -4498,6 +4655,500 @@ impl std::fmt::Display for Local {
                 .all(|e| e.provenance == Provenance::Syn)
         );
         fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_default_build_excludes_mir() {
+        let (code, graph) = copy_fixture("atlas-default-no-mir");
+        let report = build(&code, &graph, &BuildOptions::default()).unwrap();
+        let value = serde_json::to_value(&report).unwrap();
+
+        assert_eq!(value["capability"]["mir"], false);
+        assert_eq!(value["diagnostics"], serde_json::json!([]));
+        assert!(
+            all_edges(&load_graph(&graph).unwrap().1)
+                .iter()
+                .all(|edge| edge.provenance != Provenance::Mir)
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_mir_overlay_schema_documents_consumer_contract() {
+        let schema: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../docs/atlas-schemas/mir-overlay-v1.schema.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            schema["properties"]["schema"]["const"],
+            "rust-atlas/mir-overlay-v1"
+        );
+        assert_eq!(
+            schema["$defs"]["call"]["properties"]["generic"]["default"],
+            false
+        );
+        assert_eq!(
+            schema["$defs"]["cfg"]["required"],
+            serde_json::json!(["basic_blocks", "edges", "exits", "loop_headers"])
+        );
+    }
+
+    #[test]
+    fn test_atlas_default_build_removes_previous_mir_overlay() {
+        let (code, graph) = copy_fixture("atlas-default-removes-mir");
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let (meta, shards) = load_graph(&graph).unwrap();
+        let caller = node(&shards, "atlas_basic::service::run")
+            .unwrap()
+            .id
+            .clone();
+        let callee = node(
+            &shards,
+            "atlas_basic::store::impl atlas_basic::store::Store for atlas_basic::store::MemStore::get",
+        )
+        .unwrap()
+        .id
+        .clone();
+        let mut service = read_shard(&graph.join("shards"), "src/service.rs").unwrap();
+        service
+            .nodes
+            .iter_mut()
+            .find(|item| item.id == caller)
+            .unwrap()
+            .cfg = Some(CfgSummary {
+            basic_blocks: 1,
+            edges: 0,
+            exits: 1,
+            loop_headers: 0,
+        });
+        let mut mir_edge = edge(&caller, &callee, EdgeKind::Calls);
+        mir_edge.provenance = Provenance::Mir;
+        service.edges.push(mir_edge);
+        write_shard(&graph.join("shards"), &service).unwrap();
+        assert_eq!(meta.files.len(), 3);
+
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let (_, shards) = load_graph(&graph).unwrap();
+        assert!(
+            all_edges(&shards)
+                .iter()
+                .all(|edge| edge.provenance != Provenance::Mir)
+        );
+        assert!(
+            shards
+                .iter()
+                .flat_map(|shard| &shard.nodes)
+                .all(|node| node.cfg.is_none())
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_mir_overlay_adds_calls_edges() {
+        let (code, graph) = copy_fixture("atlas-mir-overlay");
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let (meta, _) = load_graph(&graph).unwrap();
+        let source_fingerprint = status::source_fingerprint(&meta.files).unwrap();
+        let overlay = code.parent().unwrap().join("mir-overlay.json");
+        fs::write(
+            &overlay,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "schema": "rust-atlas/mir-overlay-v1",
+                "extractor": {"name": "rustc_public", "version": "nightly-2026-07-10"},
+                "source_fingerprint": source_fingerprint,
+                "functions": [{
+                    "symbol": "atlas_basic::service::run",
+                    "cfg": {"basic_blocks": 3, "edges": 2, "exits": 1, "loop_headers": 0},
+                    "calls": [{
+                        "target": "atlas_basic::store::impl atlas_basic::store::Store for atlas_basic::store::MemStore::get",
+                        "site": {"file": "src/service.rs", "line_start": 4, "column_start": 5, "line_end": 4, "column_end": 16},
+                        "dispatch": "static",
+                        "generic": false,
+                        "evidence": "rustc_public MIR terminator Call"
+                    }]
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let report = build_with_mir(
+            &code,
+            &graph,
+            &BuildOptions::default(),
+            &MirBuildOptions {
+                overlay: Some(overlay),
+                driver: None,
+            },
+        )
+        .unwrap();
+        assert!(report.capability.mir);
+        assert!(report.diagnostics.is_empty());
+
+        let (_, shards) = load_graph(&graph).unwrap();
+        let caller = node(&shards, "atlas_basic::service::run").unwrap();
+        assert_eq!(
+            caller.cfg,
+            Some(CfgSummary {
+                basic_blocks: 3,
+                edges: 2,
+                exits: 1,
+                loop_headers: 0,
+            })
+        );
+        assert!(all_edges(&shards).iter().any(|edge| {
+            edge.from == caller.id
+                && edge.kind == EdgeKind::Calls
+                && edge.provenance == Provenance::Mir
+                && edge.confidence == Some(EdgeConfidence::Exact)
+        }));
+        assert!(
+            all_edges(&shards)
+                .iter()
+                .any(|edge| edge.provenance == Provenance::Syn)
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_query_prefers_highest_provenance_edge() {
+        let mut syn = edge("caller", "callee", EdgeKind::References);
+        syn.provenance = Provenance::Syn;
+        let mut scip = edge("caller", "callee", EdgeKind::Calls);
+        scip.provenance = Provenance::Scip;
+        let mut mir = scip.clone();
+        mir.provenance = Provenance::Mir;
+        mir.site = Some(EdgeSite {
+            file: "src/lib.rs".into(),
+            line_start: 3,
+            column_start: 5,
+            line_end: 3,
+            column_end: 12,
+        });
+
+        let preferred = preferred_query_edges(vec![syn.clone(), scip, mir.clone()]);
+        assert_eq!(preferred, vec![mir]);
+        assert_eq!(
+            vec![syn].len(),
+            1,
+            "stored lower evidence remains independent"
+        );
+    }
+
+    #[test]
+    fn test_atlas_status_reports_stale_mir_after_syn_refresh() {
+        let (code, graph) = copy_fixture("atlas-mir-status");
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let (meta, _) = load_graph(&graph).unwrap();
+        let source_fingerprint = status::source_fingerprint(&meta.files).unwrap();
+        let overlay = code.parent().unwrap().join("mir-overlay.json");
+        fs::write(
+            &overlay,
+            serde_json::to_vec(&serde_json::json!({
+                "schema": "rust-atlas/mir-overlay-v1",
+                "extractor": {"name": "rustc_public", "version": "nightly-test"},
+                "source_fingerprint": source_fingerprint,
+                "functions": [{
+                    "symbol": "atlas_basic::service::run",
+                    "cfg": {"basic_blocks": 2, "edges": 1, "exits": 1, "loop_headers": 0},
+                    "calls": []
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        build_with_mir(
+            &code,
+            &graph,
+            &BuildOptions::default(),
+            &MirBuildOptions {
+                overlay: Some(overlay),
+                driver: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(status(&code, &graph).unwrap().mir.state, LayerState::Fresh);
+
+        let service = code.join("src/service.rs");
+        let mut source = fs::read_to_string(&service).unwrap();
+        source.push('\n');
+        fs::write(&service, source).unwrap();
+        let result = query(
+            &code,
+            &graph,
+            "atlas_basic::service::run",
+            &QueryOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(result.status.syn.state, LayerState::Fresh);
+        assert_eq!(result.status.mir.state, LayerState::Stale);
+        assert!(
+            result
+                .status
+                .mir
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.contains("source fingerprint"))
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_mir_failure_degrades_to_syn_graph() {
+        let (code, graph) = copy_fixture("atlas-mir-failure");
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let (meta, _) = load_graph(&graph).unwrap();
+        let source_fingerprint = status::source_fingerprint(&meta.files).unwrap();
+        let overlay = code.parent().unwrap().join("mir-overlay.json");
+        fs::write(
+            &overlay,
+            serde_json::to_vec(&serde_json::json!({
+                "schema": "rust-atlas/mir-overlay-v1",
+                "extractor": {"name": "rustc_public", "version": "nightly-test"},
+                "source_fingerprint": source_fingerprint,
+                "functions": [{
+                    "symbol": "atlas_basic::service::run",
+                    "cfg": {"basic_blocks": 1, "edges": 0, "exits": 1, "loop_headers": 0},
+                    "calls": []
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let options = MirBuildOptions {
+            overlay: Some(overlay.clone()),
+            driver: None,
+        };
+        build_with_mir(&code, &graph, &BuildOptions::default(), &options).unwrap();
+        assert!(
+            load_graph(&graph)
+                .unwrap()
+                .1
+                .iter()
+                .any(|shard| { shard.nodes.iter().any(|node| node.cfg.is_some()) })
+        );
+
+        fs::write(&overlay, b"{not valid json").unwrap();
+        let report = build_with_mir(&code, &graph, &BuildOptions::default(), &options).unwrap();
+        assert!(!report.capability.mir);
+        assert_eq!(report.diagnostics.len(), 1);
+        assert_eq!(report.diagnostics[0].code, "mir-extraction-failed");
+        let (_, shards) = load_graph(&graph).unwrap();
+        assert!(
+            all_edges(&shards)
+                .iter()
+                .all(|edge| edge.provenance != Provenance::Mir)
+        );
+        assert!(
+            shards
+                .iter()
+                .flat_map(|shard| &shard.nodes)
+                .all(|node| node.cfg.is_none())
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_mir_generic_call_is_not_monomorphized() {
+        let (code, graph) = copy_fixture("atlas-mir-generic");
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let (meta, _) = load_graph(&graph).unwrap();
+        let source_fingerprint = status::source_fingerprint(&meta.files).unwrap();
+        let overlay = code.parent().unwrap().join("mir-overlay.json");
+        fs::write(
+            &overlay,
+            serde_json::to_vec(&serde_json::json!({
+                "schema": "rust-atlas/mir-overlay-v1",
+                "extractor": {"name": "rustc_public", "version": "nightly-test"},
+                "source_fingerprint": source_fingerprint,
+                "functions": [{
+                    "symbol": "atlas_basic::service::run",
+                    "cfg": {"basic_blocks": 2, "edges": 1, "exits": 1, "loop_headers": 0},
+                    "calls": [{
+                        "target": "atlas_basic::store::Store::get",
+                        "site": {"file": "src/service.rs", "line_start": 4, "column_start": 5, "line_end": 4, "column_end": 16},
+                        "dispatch": "generic",
+                        "generic": true,
+                        "evidence": "rustc_public generic MIR call"
+                    }]
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        build_with_mir(
+            &code,
+            &graph,
+            &BuildOptions::default(),
+            &MirBuildOptions {
+                overlay: Some(overlay),
+                driver: None,
+            },
+        )
+        .unwrap();
+        let (_, shards) = load_graph(&graph).unwrap();
+        let mir_calls = all_edges(&shards)
+            .into_iter()
+            .filter(|edge| edge.provenance == Provenance::Mir)
+            .collect::<Vec<_>>();
+        assert_eq!(mir_calls.len(), 1);
+        assert!(mir_calls[0].generic);
+        assert_eq!(mir_calls[0].dispatch, Some(DispatchKind::Generic));
+        assert!(mir_calls[0].candidates.is_empty());
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_mir_rejects_schema_without_partial_write() {
+        let (code, graph) = copy_fixture("atlas-mir-schema");
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let (meta, _) = load_graph(&graph).unwrap();
+        let source_fingerprint = status::source_fingerprint(&meta.files).unwrap();
+        let overlay = code.parent().unwrap().join("mir-overlay.json");
+        fs::write(
+            &overlay,
+            serde_json::to_vec(&serde_json::json!({
+                "schema": "rust-atlas/mir-overlay-v999",
+                "extractor": {"name": "rustc_public", "version": "nightly-test"},
+                "source_fingerprint": source_fingerprint,
+                "functions": [{
+                    "symbol": "atlas_basic::service::run",
+                    "cfg": {"basic_blocks": 1, "edges": 0, "exits": 1, "loop_headers": 0},
+                    "calls": []
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let report = build_with_mir(
+            &code,
+            &graph,
+            &BuildOptions::default(),
+            &MirBuildOptions {
+                overlay: Some(overlay),
+                driver: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(report.diagnostics[0].code, "mir-extraction-failed");
+        assert!(report.diagnostics[0].message.contains("mir-overlay-v999"));
+        let (_, shards) = load_graph(&graph).unwrap();
+        assert!(
+            shards
+                .iter()
+                .flat_map(|shard| &shard.nodes)
+                .all(|node| node.cfg.is_none())
+        );
+        assert!(
+            all_edges(&shards)
+                .iter()
+                .all(|edge| edge.provenance != Provenance::Mir)
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_mir_rejects_non_function_and_inconsistent_generic_facts() {
+        let (code, graph) = copy_fixture("atlas-mir-semantic-validation");
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let (meta, _) = load_graph(&graph).unwrap();
+        let source_fingerprint = status::source_fingerprint(&meta.files).unwrap();
+        let overlay = code.parent().unwrap().join("mir-overlay.json");
+        let options = MirBuildOptions {
+            overlay: Some(overlay.clone()),
+            driver: None,
+        };
+
+        fs::write(
+            &overlay,
+            serde_json::to_vec(&serde_json::json!({
+                "schema": "rust-atlas/mir-overlay-v1",
+                "extractor": {"name": "rustc_public", "version": "nightly-test"},
+                "source_fingerprint": source_fingerprint,
+                "functions": [{
+                    "symbol": "atlas_basic::service",
+                    "cfg": {"basic_blocks": 1, "edges": 0, "exits": 1, "loop_headers": 0},
+                    "calls": []
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let report = build_with_mir(&code, &graph, &BuildOptions::default(), &options).unwrap();
+        assert_eq!(report.diagnostics[0].code, "mir-extraction-failed");
+        assert!(report.diagnostics[0].message.contains("is not a function"));
+
+        fs::write(
+            &overlay,
+            serde_json::to_vec(&serde_json::json!({
+                "schema": "rust-atlas/mir-overlay-v1",
+                "extractor": {"name": "rustc_public", "version": "nightly-test"},
+                "source_fingerprint": source_fingerprint,
+                "functions": [{
+                    "symbol": "atlas_basic::service::run",
+                    "cfg": {"basic_blocks": 1, "edges": 0, "exits": 1, "loop_headers": 0},
+                    "calls": [{
+                        "target": "atlas_basic::store::Store::get",
+                        "site": {"file": "src/service.rs", "line_start": 4, "column_start": 5, "line_end": 4, "column_end": 16},
+                        "dispatch": "static",
+                        "generic": true,
+                        "evidence": "inconsistent producer fact"
+                    }]
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let report = build_with_mir(&code, &graph, &BuildOptions::default(), &options).unwrap();
+        assert_eq!(report.diagnostics[0].code, "mir-extraction-failed");
+        assert!(report.diagnostics[0].message.contains("generic flag"));
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_atlas_mir_driver_uses_fixed_argv_and_degrades_on_failure() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (code, graph) = copy_fixture("atlas-mir-driver-argv");
+        let base = code.parent().unwrap();
+        let driver = base.join("mir-driver");
+        let argv_log = base.join("argv.log");
+        fs::write(
+            &driver,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nexit 23\n",
+                argv_log.display()
+            ),
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&driver).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&driver, permissions).unwrap();
+
+        let report = build_with_mir(
+            &code,
+            &graph,
+            &BuildOptions::default(),
+            &MirBuildOptions {
+                overlay: None,
+                driver: Some(driver),
+            },
+        )
+        .unwrap();
+        assert_eq!(report.diagnostics[0].code, "mir-extraction-failed");
+        let args = fs::read_to_string(&argv_log).unwrap();
+        let canonical_code = fs::canonicalize(&code).unwrap();
+        assert_eq!(
+            args.lines().collect::<Vec<_>>(),
+            vec![
+                "--code",
+                canonical_code.to_string_lossy().as_ref(),
+                "--out",
+                graph.join("mir-overlay.json").to_string_lossy().as_ref(),
+            ]
+        );
+        fs::remove_dir_all(base).ok();
     }
 
     #[test]
