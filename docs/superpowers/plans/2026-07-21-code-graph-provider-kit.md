@@ -60,4 +60,4 @@ harness, CLI surface, and documented provider-author contract without implementi
   content to KLL truth.
 - [x] Run fmt, clippy, full workspace tests, docs lint, wiki check, KLL graph/plan gates, and task
   lifecycle with no skip or uncertain verdict.
-- [ ] Commit publication, rerun post-commit lifecycle, requirement replay, and trace graph.
+- [x] Commit publication, rerun post-commit lifecycle, requirement replay, and trace graph.
