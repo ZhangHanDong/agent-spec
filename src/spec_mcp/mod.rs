@@ -7,6 +7,8 @@
 
 pub mod tools;
 
+#[cfg(test)]
+pub(crate) use tools::with_atlas_explore_tool;
 pub use tools::{McpContext, dispatch, tool_specs};
 
 use serde_json::{Value, json};

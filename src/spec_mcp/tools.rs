@@ -62,6 +62,26 @@ pub fn tool_specs() -> Value {
             }
         }));
     }
+    if atlas_explore_enabled()
+        && let Some(specs) = specs.as_array_mut()
+    {
+        specs.push(json!({
+            "name": "atlas_explore",
+            "description": "Bounded Rust code context composed from a frozen Atlas graph.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string" },
+                    "profile": {
+                        "type": "string",
+                        "enum": ["compact", "deep"],
+                        "default": "compact"
+                    }
+                },
+                "required": ["query"]
+            }
+        }));
+    }
     specs
 }
 
@@ -73,9 +93,33 @@ fn atlas_search_enabled() -> bool {
     std::env::var("AGENT_SPEC_MCP_ATLAS_SEARCH").is_ok_and(|value| value == "1")
 }
 
+fn atlas_explore_enabled() -> bool {
+    #[cfg(test)]
+    if let Some(enabled) = ATLAS_EXPLORE_TOOL_ENABLED.with(std::cell::Cell::get) {
+        return enabled;
+    }
+    std::env::var("AGENT_SPEC_MCP_ATLAS_EXPLORE").is_ok_and(|value| value == "1")
+}
+
 #[cfg(test)]
 std::thread_local! {
     static ATLAS_SEARCH_TOOL_ENABLED: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+    static ATLAS_EXPLORE_TOOL_ENABLED: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn with_atlas_explore_tool<T>(enabled: bool, f: impl FnOnce() -> T) -> T {
+    struct Reset(Option<bool>);
+
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            ATLAS_EXPLORE_TOOL_ENABLED.with(|value| value.set(self.0));
+        }
+    }
+
+    let previous = ATLAS_EXPLORE_TOOL_ENABLED.with(|value| value.replace(Some(enabled)));
+    let _reset = Reset(previous);
+    f()
 }
 
 /// Dispatch a tool call. Returns the tool's structured JSON payload.
@@ -84,6 +128,7 @@ pub fn dispatch(name: &str, args: &Value, ctx: &McpContext) -> Result<Value, Str
         "knowledge.find" => knowledge_find(args, ctx),
         "atlas_tree" | "atlas_query" | "atlas_search" | "atlas_refs" | "atlas_impls"
         | "atlas_status" => atlas_tool(name, args, ctx),
+        "atlas_explore" if atlas_explore_enabled() => atlas_tool(name, args, ctx),
         "knowledge.governing" => knowledge_governing(args, ctx),
         "liveness.status" => liveness_status(args, ctx),
         "spec.contract" => spec_contract(args, ctx),
@@ -333,6 +378,38 @@ fn atlas_tool(name: &str, args: &Value, ctx: &McpContext) -> Result<Value, Strin
                 query,
                 &rust_atlas::SearchOptions {
                     limit,
+                    frozen: true,
+                },
+            )
+            .map_err(|error| error.to_string())?;
+            to_value(serde_json::to_value(&result))
+        }
+        "atlas_explore" => {
+            let query = args
+                .get("query")
+                .and_then(Value::as_str)
+                .filter(|query| !query.is_empty())
+                .ok_or("atlas_explore requires `query`")?;
+            let profile = match args.get("profile") {
+                None => rust_atlas::ExploreProfile::Compact,
+                Some(Value::String(profile)) if profile == "compact" => {
+                    rust_atlas::ExploreProfile::Compact
+                }
+                Some(Value::String(profile)) if profile == "deep" => {
+                    rust_atlas::ExploreProfile::Deep
+                }
+                Some(_) => {
+                    return Err(
+                        "atlas-explore-profile: `profile` must be `compact` or `deep`".to_string(),
+                    );
+                }
+            };
+            let result = rust_atlas::explore(
+                &ctx.code,
+                &graph_dir,
+                query,
+                &rust_atlas::ExploreOptions {
+                    profile,
                     frozen: true,
                 },
             )

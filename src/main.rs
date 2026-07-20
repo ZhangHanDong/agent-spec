@@ -12283,6 +12283,91 @@ Scenario: pass
     }
 
     #[test]
+    fn test_atlas_explore_mcp_is_hidden_by_default_and_opt_in() {
+        crate::spec_mcp::with_atlas_explore_tool(false, || {
+            assert!(
+                crate::spec_mcp::tool_specs()
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|tool| tool["name"] != "atlas_explore")
+            );
+        });
+
+        let (code, graph) = atlas_fixture_copy("atlas-mcp-explore");
+        rust_atlas::build(&code, &graph, &rust_atlas::BuildOptions::default()).unwrap();
+        let atlas_dir = code.join(".agent-spec");
+        fs::create_dir_all(&atlas_dir).unwrap();
+        let graph_dir = atlas_dir.join("graph");
+        fs::rename(&graph, &graph_dir).unwrap();
+        let ctx = crate::spec_mcp::McpContext {
+            knowledge: code.join("knowledge"),
+            specs: code.join("specs"),
+            code: code.clone(),
+        };
+
+        crate::spec_mcp::with_atlas_explore_tool(false, || {
+            let error = crate::spec_mcp::dispatch(
+                "atlas_explore",
+                &serde_json::json!({"query": "MemStore"}),
+                &ctx,
+            )
+            .unwrap_err();
+            assert_eq!(error, "unknown tool 'atlas_explore'");
+        });
+
+        crate::spec_mcp::with_atlas_explore_tool(true, || {
+            let tools = crate::spec_mcp::tool_specs();
+            let tool = tools
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|tool| tool["name"] == "atlas_explore")
+                .unwrap();
+            assert_eq!(
+                tool["inputSchema"]["required"],
+                serde_json::json!(["query"])
+            );
+
+            let actual = crate::spec_mcp::dispatch(
+                "atlas_explore",
+                &serde_json::json!({"query": "MemStore", "profile": "compact"}),
+                &ctx,
+            )
+            .unwrap();
+            let expected = rust_atlas::explore(
+                &ctx.code,
+                &graph_dir,
+                "MemStore",
+                &rust_atlas::ExploreOptions {
+                    profile: rust_atlas::ExploreProfile::Compact,
+                    frozen: true,
+                },
+            )
+            .unwrap();
+            assert_eq!(actual, serde_json::to_value(expected).unwrap());
+
+            let default_profile = crate::spec_mcp::dispatch(
+                "atlas_explore",
+                &serde_json::json!({"query": "MemStore"}),
+                &ctx,
+            )
+            .unwrap();
+            assert_eq!(default_profile, actual);
+
+            let error = crate::spec_mcp::dispatch(
+                "atlas_explore",
+                &serde_json::json!({"query": "MemStore", "profile": "wide"}),
+                &ctx,
+            )
+            .unwrap_err();
+            assert!(error.contains("atlas-explore-profile"), "{error}");
+        });
+
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
     fn test_mcp_atlas_tools_report_missing_graph() {
         let base = std::env::temp_dir().join(format!("atlas-mcp-missing-{}", std::process::id()));
         let _ = fs::remove_dir_all(&base);
