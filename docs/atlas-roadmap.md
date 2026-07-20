@@ -1,8 +1,8 @@
 # Rust Atlas Roadmap：从可信 Rust 图到意图感知的代码智能
 
 > 当前正典 roadmap，修订于 2026-07-20。状态基线：`agent-spec` 1.1.0、
-> `rust-atlas` 0.2.0、代码基线 `ea36c08`、roadmap 基线 `7066d91`。Wave 1 的
-> E0、A2/B1 与 D1 已交付；后续 track 的实现状态仍以本文件各条目为准。
+> `rust-atlas` 0.2.0、代码基线 `bdc2b4c`。Wave 1 的 E0、A2/B1、D1 与 Wave 2 的
+> B2/B3/B4 已交付；后续 track 的实现状态仍以本文件各条目为准。
 >
 > 本文用能力轨道替代旧的单序列 Phase 编号。历史合约保留原名称以维持 trace 稳定，
 > 但其中的 `Phase 2`、`Phase 3` 不再代表当前排期。
@@ -102,6 +102,8 @@ Task Contract。
   `impls-trait`、`impl-for` 边。
 - schema v6 edge evidence：site、extractor、dispatch、confidence、candidate 与 evidence。
 - derived query index，以及 tree、query、search、refs、impls、status 的 CLI 查询。
+- shared bounded traversal，以及 source-safe `explore`、explainable `flow`、reverse
+  `impact` 和 changed-file `affected` 查询。
 - graph identity 与独立 syn、SCIP、MIR status；worktree mismatch、陈旧 semantic
   authority、schema 或 query-index 不一致都会拒绝确定性消费。
 - stale-aware Contract symbol、code binding、lifecycle 检查和 typed trace target。
@@ -116,8 +118,8 @@ Task Contract。
 
 | 缺口 | 后果 |
 |---|---|
-| 没有 `explore`、`flow`、`impact`、`affected` 综合查询 | Agent 仍需拼接多个低层调用和源码读取 |
-| 影响分析停留在代码事实 | 代码变更还不能直接追到需求、scenario、测试和质量门禁 |
+| 影响分析仍停留在代码事实 | 代码变更还不能直接追到需求、scenario、测试和质量门禁 |
+| MIR 与 dynamic-dispatch enricher 尚未交付 | 编译器级控制流与部分运行时分派仍只能报告缺失能力或 bounded candidate |
 | 尚无真实 Agent A/B 执行结果 | 离线 corpus、run plan 和 receipt summarization 不能证明 Atlas 带来性能改善 |
 | 零变更 rebuild 仍有明显全图地板 | 直接上 daemon 只会隐藏低效 resolve/validate，而不是解决它 |
 

@@ -42,6 +42,9 @@ be inlined as source excerpts. Flow keeps `found`, `no-path`,
 `capability-unavailable`, `truncated`, `unknown-endpoint`, and
 `ambiguous-endpoint` distinct. Affected maps changes to code evidence only;
 test obligations remain owned by the intent compiler and Task Contracts.
+Connecting affected code paths to requirements, scenarios, and quality gates is
+the next intent-aware consumer step; code impact alone does not establish that
+trace.
 
 ## Maintenance
 

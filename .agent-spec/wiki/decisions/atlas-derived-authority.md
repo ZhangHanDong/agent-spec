@@ -32,6 +32,8 @@ list, and makes `atlas_explore` unavailable to both discovery and dispatch
 unless explicitly enabled. Explore source excerpts require a current hash that
 matches graph metadata. KLL artifacts own durable requirements and decisions;
 lifecycle and replay establish current verification evidence.
+The delivered impact graph therefore remains derived input until a later
+intent-aware consumer joins it to explicit bindings and Contract selectors.
 
 ## Maintenance
 
