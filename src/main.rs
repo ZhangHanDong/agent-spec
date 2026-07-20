@@ -419,6 +419,11 @@ enum AtlasCommands {
         #[command(subcommand)]
         action: AtlasBenchmarkCommands,
     },
+    /// Validate and conformance-test optional external Code Graph providers
+    Provider {
+        #[command(subcommand)]
+        action: AtlasProviderCommands,
+    },
     /// Optional local watcher and synchronization daemon
     Daemon {
         #[command(subcommand)]
@@ -862,6 +867,34 @@ enum AtlasBenchmarkCommands {
         corpus: PathBuf,
         #[arg(long)]
         results: PathBuf,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum AtlasProviderCommands {
+    /// Validate a provider manifest and optional project registration
+    Validate {
+        #[arg(long)]
+        manifest: PathBuf,
+        #[arg(long)]
+        registration: Option<PathBuf>,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Run the provider-neutral F1 conformance matrix
+    Conformance {
+        #[arg(long)]
+        manifest: PathBuf,
+        #[arg(long)]
+        registration: PathBuf,
+        #[arg(long)]
+        fixture: PathBuf,
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/provider-conformance")]
+        scratch: PathBuf,
         #[arg(long)]
         out: Option<PathBuf>,
     },
@@ -3987,6 +4020,7 @@ fn cmd_atlas(action: AtlasCommands) -> Result<(), Box<dyn std::error::Error>> {
     let frozen_opts = |frozen: bool| rust_atlas::QueryOptions { frozen };
     match action {
         AtlasCommands::Benchmark { action } => cmd_atlas_benchmark(action),
+        AtlasCommands::Provider { action } => cmd_atlas_provider(action),
         AtlasCommands::Daemon { action } => cmd_atlas_daemon(action),
         AtlasCommands::Build {
             code,
@@ -4383,6 +4417,80 @@ fn cmd_atlas_status_with_writer(
 fn cmd_atlas_benchmark(action: AtlasBenchmarkCommands) -> Result<(), Box<dyn std::error::Error>> {
     let stdout = std::io::stdout();
     cmd_atlas_benchmark_with_writer(action, &mut stdout.lock())
+}
+
+fn cmd_atlas_provider(action: AtlasProviderCommands) -> Result<(), Box<dyn std::error::Error>> {
+    let stdout = std::io::stdout();
+    cmd_atlas_provider_with_writer(action, &mut stdout.lock())
+}
+
+fn cmd_atlas_provider_with_writer(
+    action: AtlasProviderCommands,
+    stdout: &mut dyn std::io::Write,
+) -> Result<(), Box<dyn std::error::Error>> {
+    fn emit<T: serde::Serialize>(
+        value: &T,
+        out: Option<&Path>,
+        stdout: &mut dyn std::io::Write,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(path) = out {
+            agent_spec_code_graph_provider::publish_json_atomic(path, value)?;
+        } else {
+            let bytes = serde_json::to_vec_pretty(value)?;
+            stdout.write_all(&bytes)?;
+            stdout.write_all(b"\n")?;
+        }
+        Ok(())
+    }
+
+    match action {
+        AtlasProviderCommands::Validate {
+            manifest,
+            registration,
+            out,
+        } => {
+            let manifest = agent_spec_code_graph_provider::load_provider_manifest(&manifest)?;
+            if let Some(path) = &registration {
+                let registration =
+                    agent_spec_code_graph_provider::load_provider_registration(path)?;
+                agent_spec_code_graph_provider::validate_registration(&manifest, &registration)?;
+            }
+            let receipt = serde_json::json!({
+                "schema": "agent-spec/code-graph-provider/validation-receipt-v1",
+                "valid": true,
+                "provider_id": manifest.provider_id,
+                "provider_version": manifest.provider_version,
+                "role": manifest.role,
+                "registration_checked": registration.is_some(),
+            });
+            emit(&receipt, out.as_deref(), stdout)
+        }
+        AtlasProviderCommands::Conformance {
+            manifest,
+            registration,
+            fixture,
+            code,
+            scratch,
+            out,
+        } => {
+            let manifest = agent_spec_code_graph_provider::load_provider_manifest(&manifest)?;
+            let registration =
+                agent_spec_code_graph_provider::load_provider_registration(&registration)?;
+            let fixture = agent_spec_code_graph_provider::load_conformance_fixture(&fixture)?;
+            let receipt = agent_spec_code_graph_provider::run_provider_conformance(
+                &manifest,
+                &registration,
+                &fixture,
+                &code,
+                &scratch,
+            )?;
+            emit(&receipt, out.as_deref(), stdout)?;
+            if receipt.state == agent_spec_code_graph_provider::ConformanceState::Blocked {
+                return Err(std::io::Error::other("provider-conformance-blocked").into());
+            }
+            Ok(())
+        }
+    }
 }
 
 fn cmd_atlas_benchmark_with_writer(
@@ -12649,6 +12757,103 @@ Scenario: pass
             } => super::cmd_atlas_benchmark_with_writer(action, stdout),
             _ => panic!("expected atlas benchmark command"),
         }
+    }
+
+    fn run_atlas_provider_cli(
+        args: &[&str],
+        stdout: &mut Vec<u8>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let cli = super::Cli::parse_from(args);
+        match cli.command {
+            super::Commands::Atlas {
+                action: super::AtlasCommands::Provider { action },
+            } => super::cmd_atlas_provider_with_writer(action, stdout),
+            _ => panic!("expected atlas provider command"),
+        }
+    }
+
+    #[test]
+    fn test_atlas_provider_cli_validate_and_conformance() {
+        let root = repo_root();
+        let fixture = root.join("fixtures/code-graph-provider/basic");
+        let manifest = fixture.join("manifest.json");
+        let registration = fixture.join("registration.json");
+        let matrix = fixture.join("conformance.json");
+        let scratch = make_temp_dir("atlas-provider-cli");
+        let receipt = scratch.join("receipt.json");
+
+        let mut validate_stdout = Vec::new();
+        run_atlas_provider_cli(
+            &[
+                "agent-spec",
+                "atlas",
+                "provider",
+                "validate",
+                "--manifest",
+                manifest.to_str().unwrap(),
+                "--registration",
+                registration.to_str().unwrap(),
+            ],
+            &mut validate_stdout,
+        )
+        .unwrap();
+        let validation: serde_json::Value = serde_json::from_slice(&validate_stdout).unwrap();
+        assert_eq!(validation["valid"], true);
+        assert_eq!(validation["provider_id"], "fixture-extractor");
+
+        let mut conformance_stdout = Vec::new();
+        run_atlas_provider_cli(
+            &[
+                "agent-spec",
+                "atlas",
+                "provider",
+                "conformance",
+                "--manifest",
+                manifest.to_str().unwrap(),
+                "--registration",
+                registration.to_str().unwrap(),
+                "--fixture",
+                matrix.to_str().unwrap(),
+                "--code",
+                root.to_str().unwrap(),
+                "--scratch",
+                scratch.to_str().unwrap(),
+                "--out",
+                receipt.to_str().unwrap(),
+            ],
+            &mut conformance_stdout,
+        )
+        .unwrap();
+        assert!(conformance_stdout.is_empty());
+        let receipt: agent_spec_code_graph_provider::ProviderConformanceReceipt =
+            serde_json::from_slice(&fs::read(receipt).unwrap()).unwrap();
+        assert_eq!(
+            receipt.state,
+            agent_spec_code_graph_provider::ConformanceState::Passed
+        );
+        assert_eq!(receipt.checks.len(), 8);
+
+        let disabled = scratch.join("disabled.json");
+        let mut disabled_value: serde_json::Value =
+            serde_json::from_slice(&fs::read(&registration).unwrap()).unwrap();
+        disabled_value["enabled"] = serde_json::Value::Bool(false);
+        fs::write(&disabled, serde_json::to_vec(&disabled_value).unwrap()).unwrap();
+        let error = run_atlas_provider_cli(
+            &[
+                "agent-spec",
+                "atlas",
+                "provider",
+                "validate",
+                "--manifest",
+                manifest.to_str().unwrap(),
+                "--registration",
+                disabled.to_str().unwrap(),
+            ],
+            &mut Vec::new(),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("provider-disabled"));
+        fs::remove_dir_all(scratch).unwrap();
     }
 
     #[test]

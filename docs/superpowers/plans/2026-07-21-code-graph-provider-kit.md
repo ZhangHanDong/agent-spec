@@ -47,10 +47,11 @@ harness, CLI surface, and documented provider-author contract without implementi
 
 ## Task 6: Expose Explicit CLI Commands
 
-- [ ] Write RED CLI test for `atlas provider validate` and `atlas provider conformance`.
-- [ ] Add nested commands with quiet JSON stdout, atomic `--out`, and nonzero blocked exit.
-- [ ] Verify no default command, build, test, or requirements flow launches a provider.
-- [ ] Run focused tests and commit.
+- [x] Write RED CLI test for `atlas provider validate` and `atlas provider conformance`.
+- [x] Add nested commands with quiet JSON stdout, atomic `--out`, and nonzero blocked exit.
+- [x] Verify no default command, build, or requirements flow launches a provider; deterministic tests
+  launch only the checked-in, explicitly enabled local conformance fixture.
+- [x] Run focused tests and commit.
 
 ## Task 7: Publish F1 And Dogfood
 

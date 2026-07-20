@@ -6,6 +6,7 @@ version = 4
 name = "agent-spec"
 version = "1.1.0"
 dependencies = [
+ "agent-spec-code-graph-provider",
  "blake3",
  "clap",
  "getrandom",
