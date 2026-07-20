@@ -45,6 +45,9 @@ estimate: 3d
 - skills/agent-spec-tool-first/**
 - CHANGELOG.md
 
+### Symbols
+- rust-atlas: agent_spec::atlas_eval
+
 ### Forbidden
 - 不在默认测试、build script 或 CI 中发起网络请求或真实模型调用
 - 不复制 codegraph 的百分比作为 Atlas pass threshold

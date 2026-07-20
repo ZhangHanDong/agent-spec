@@ -111,6 +111,13 @@ impl RequirementTraceRecord {
         let mut code_targets = Vec::new();
         let mut evidence = Vec::new();
 
+        code_targets.extend(
+            input
+                .code_target_facts
+                .iter()
+                .map(|fact| fact.node_id.clone()),
+        );
+
         for item in &result.evidence {
             collect_code_targets(item, &mut code_targets);
             evidence.push(trace_evidence_summary(item));
@@ -452,11 +459,27 @@ pub fn format_requirement_replay_text(records: &[RequirementTraceRecord]) -> Str
     );
     for record in records {
         out.push_str(&format!(
-            "work unit: {}\nspec: {}\nscenario: {}\ntest: {}\nverdict: {:?}\n",
+            "work unit: {}\nspec: {}\nscenario: {}\ntest: {}\ncode targets: {}\nworktree: {}\nbranch: {}\nvcs: {}\nverdict: {:?}\n",
             record.work_unit_id,
             record.spec_path.display(),
             record.scenario_name,
             record.test_selector.as_deref().unwrap_or("<none>"),
+            if record.code_targets.is_empty() {
+                "<none>".to_string()
+            } else {
+                record.code_targets.join(", ")
+            },
+            record
+                .worktree_path
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "<none>".into()),
+            record.branch.as_deref().unwrap_or("<none>"),
+            record
+                .vcs
+                .as_ref()
+                .map(|vcs| format!("{:?} {}", vcs.vcs_type, vcs.change_ref))
+                .unwrap_or_else(|| "<none>".into()),
             record.verdict
         ));
     }
@@ -534,9 +557,15 @@ pub fn format_requirement_trace_mermaid(records: &[RequirementTraceRecord]) -> S
                 escape_mermaid(target)
             ));
         }
-        if let Some(branch) = &record.branch {
+        if let Some(worktree_path) = &record.worktree_path {
             out.push_str(&format!(
                 "  {prefix}_worktree[\"{}\"]\n",
+                escape_mermaid(&worktree_path.display().to_string())
+            ));
+        }
+        if let Some(branch) = &record.branch {
+            out.push_str(&format!(
+                "  {prefix}_branch[\"Branch: {}\"]\n",
                 escape_mermaid(branch)
             ));
         }
@@ -550,16 +579,38 @@ pub fn format_requirement_trace_mermaid(records: &[RequirementTraceRecord]) -> S
         out.push_str(&format!(
             "  {prefix}_req --> {prefix}_wu --> {prefix}_spec --> {prefix}_scenario\n"
         ));
-        if record.test_selector.is_some() {
+        let evidence_tail = if record.test_selector.is_some() {
             out.push_str(&format!("  {prefix}_scenario --> {prefix}_test\n"));
-            for code_idx in 0..record.code_targets.len() {
-                out.push_str(&format!("  {prefix}_test --> {prefix}_code{code_idx}\n"));
+            format!("{prefix}_test")
+        } else {
+            format!("{prefix}_scenario")
+        };
+        for code_idx in 0..record.code_targets.len() {
+            out.push_str(&format!("  {evidence_tail} --> {prefix}_code{code_idx}\n"));
+        }
+
+        let mut authority_tails = if record.code_targets.is_empty() {
+            vec![evidence_tail]
+        } else {
+            (0..record.code_targets.len())
+                .map(|code_idx| format!("{prefix}_code{code_idx}"))
+                .collect::<Vec<_>>()
+        };
+        if record.worktree_path.is_some() {
+            for tail in &authority_tails {
+                out.push_str(&format!("  {tail} --> {prefix}_worktree\n"));
             }
+            authority_tails = vec![format!("{prefix}_worktree")];
         }
         if record.branch.is_some() {
-            out.push_str(&format!("  {prefix}_wu --> {prefix}_worktree\n"));
-            if record.vcs.is_some() {
-                out.push_str(&format!("  {prefix}_worktree --> {prefix}_vcs\n"));
+            for tail in &authority_tails {
+                out.push_str(&format!("  {tail} --> {prefix}_branch\n"));
+            }
+            authority_tails = vec![format!("{prefix}_branch")];
+        }
+        if record.vcs.is_some() {
+            for tail in &authority_tails {
+                out.push_str(&format!("  {tail} --> {prefix}_vcs\n"));
             }
         }
     }
@@ -706,6 +757,14 @@ mod tests {
         let text = format_requirement_replay_text(&replay);
         assert!(text.contains("evidence replay"));
         assert!(!text.contains("deterministic LLM replay"));
+        for expected in [
+            "code targets: src/lib.rs",
+            "worktree: ../agent-spec-worktrees/wu-req-note-create",
+            "branch: feat/wu-req-note-create",
+            "vcs: <none>",
+        ] {
+            assert!(text.contains(expected), "missing `{expected}` in:\n{text}");
+        }
     }
 
     #[test]
@@ -900,14 +959,63 @@ mod tests {
 
     #[test]
     fn test_requirements_trace_graph_mermaid_contains_evidence_nodes() {
-        let mermaid = format_requirement_trace_mermaid(&[failing_record("REQ-NOTE-CREATE")]);
+        let mut record = failing_record("REQ-NOTE-CREATE");
+        record.vcs = Some(VcsContext {
+            vcs_type: VcsType::Git,
+            change_ref: "abc1234".into(),
+            operation_ref: None,
+        });
+        let mermaid = format_requirement_trace_mermaid(&[record]);
         assert!(mermaid.contains("flowchart LR"));
         assert!(mermaid.contains("REQ-NOTE-CREATE"));
         assert!(mermaid.contains("WU-REQ-NOTE-CREATE"));
         assert!(mermaid.contains("Scenario: Create note"));
         assert!(mermaid.contains("Test: note_create_adds_note"));
         assert!(mermaid.contains("src/lib.rs"));
+        assert!(mermaid.contains("../agent-spec-worktrees/wu-req-note-create"));
         assert!(mermaid.contains("feat/wu-req-note-create"));
+        assert!(mermaid.contains("r0_test --> r0_code0"));
+        assert!(mermaid.contains("r0_code0 --> r0_worktree"));
+        assert!(mermaid.contains("r0_worktree --> r0_branch"));
+        assert!(mermaid.contains("r0_branch --> r0_vcs"));
+    }
+
+    #[test]
+    fn test_requirement_trace_promotes_typed_atlas_facts_to_code_targets() {
+        let report = VerificationReport::from_results(
+            "Atlas".into(),
+            vec![trace_result("Resolve symbol", "test_resolve_symbol")],
+        );
+        let fact = CodeTargetFact {
+            provider: "rust-atlas".into(),
+            node_id: "agent_spec::atlas_eval::build_run_plan".into(),
+            kind: "function".into(),
+            file: "src/atlas_eval.rs".into(),
+            provenance: "syn".into(),
+            graph_fingerprint: "graph-1".into(),
+        };
+
+        let record = RequirementTraceRecord::from_parts(RequirementTraceRecordInput {
+            run_id: "run-atlas".into(),
+            timestamp: 1,
+            requirement_id: "REQ-ATLAS".into(),
+            requirement_source: PathBuf::from("knowledge/requirements/req-atlas.md"),
+            work_unit_id: "WU-REQ-ATLAS".into(),
+            spec_path: PathBuf::from("specs/task-atlas.spec.md"),
+            scenario_name: "Resolve symbol".into(),
+            test_selector: Some("test_resolve_symbol".into()),
+            report: &report,
+            worktree_path: None,
+            branch: None,
+            vcs: None,
+            code_target_facts: vec![fact],
+        })
+        .unwrap();
+
+        assert_eq!(
+            record.code_targets,
+            vec!["agent_spec::atlas_eval::build_run_plan", "src/lib.rs"]
+        );
     }
 
     #[test]
