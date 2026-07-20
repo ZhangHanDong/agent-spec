@@ -12347,6 +12347,32 @@ Scenario: pass
             .unwrap();
             assert_eq!(actual, serde_json::to_value(expected).unwrap());
 
+            let response = crate::spec_mcp::handle_request(
+                &serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "atlas_explore",
+                        "arguments": {"query": "MemStore", "profile": "compact"}
+                    }
+                }),
+                &ctx,
+            )
+            .unwrap();
+            let text = response["result"]["content"][0]["text"].as_str().unwrap();
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(text).unwrap(),
+                actual
+            );
+            assert_eq!(
+                text.len(),
+                actual["usage"]["serialized_bytes"].as_u64().unwrap() as usize
+            );
+            assert!(
+                text.len() <= actual["limits"]["max_serialized_bytes"].as_u64().unwrap() as usize
+            );
+
             let default_profile = crate::spec_mcp::dispatch(
                 "atlas_explore",
                 &serde_json::json!({"query": "MemStore"}),

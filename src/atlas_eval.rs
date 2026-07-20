@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 pub const CORPUS_SCHEMA: &str = "agent-spec/atlas-eval/corpus-v1";
 pub const RUN_PLAN_SCHEMA: &str = "agent-spec/atlas-eval/run-plan-v1";
+pub const QUERY_METRICS_SCHEMA: &str = "agent-spec/atlas-eval/query-metrics-v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -101,7 +102,7 @@ pub struct Correctness {
 
 /// Measurements and correctness evidence produced by one benchmark run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "RunReceiptWire")]
 pub struct RunReceipt {
     pub case_id: String,
     pub arm: Arm,
@@ -113,14 +114,83 @@ pub struct RunReceipt {
     pub duration_ms: u64,
     pub context_bytes: u64,
     pub cost_usd: Option<f64>,
-    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub query_metrics_schema: Option<String>,
     pub response_bytes: u64,
-    #[serde(default)]
     pub read_back_calls: u64,
-    #[serde(default)]
     pub follow_up_queries: u64,
-    #[serde(default)]
     pub truncated_queries: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RunReceiptWire {
+    case_id: String,
+    arm: Arm,
+    trial: u32,
+    correctness: Option<Correctness>,
+    file_reads: u64,
+    graph_calls: u64,
+    tool_calls: u64,
+    duration_ms: u64,
+    context_bytes: u64,
+    cost_usd: Option<f64>,
+    #[serde(default)]
+    query_metrics_schema: Option<String>,
+    #[serde(default)]
+    response_bytes: Option<u64>,
+    #[serde(default)]
+    read_back_calls: Option<u64>,
+    #[serde(default)]
+    follow_up_queries: Option<u64>,
+    #[serde(default)]
+    truncated_queries: Option<u64>,
+}
+
+impl TryFrom<RunReceiptWire> for RunReceipt {
+    type Error = String;
+
+    fn try_from(wire: RunReceiptWire) -> Result<Self, Self::Error> {
+        let values = [
+            wire.response_bytes,
+            wire.read_back_calls,
+            wire.follow_up_queries,
+            wire.truncated_queries,
+        ];
+        let present = values.iter().filter(|value| value.is_some()).count();
+        if present != 0 && present != values.len() {
+            return Err("query metrics must provide all four fields or none".into());
+        }
+        if let Some(schema) = wire.query_metrics_schema.as_deref()
+            && schema != QUERY_METRICS_SCHEMA
+        {
+            return Err(format!("unsupported query metrics schema `{schema}`"));
+        }
+        if wire.query_metrics_schema.is_some() && present == 0 {
+            return Err("query metrics schema requires all four metric fields".into());
+        }
+        if wire.query_metrics_schema.is_none() && values.iter().flatten().any(|value| *value != 0) {
+            return Err("non-zero query metrics require query_metrics_schema".into());
+        }
+
+        Ok(Self {
+            case_id: wire.case_id,
+            arm: wire.arm,
+            trial: wire.trial,
+            correctness: wire.correctness,
+            file_reads: wire.file_reads,
+            graph_calls: wire.graph_calls,
+            tool_calls: wire.tool_calls,
+            duration_ms: wire.duration_ms,
+            context_bytes: wire.context_bytes,
+            cost_usd: wire.cost_usd,
+            query_metrics_schema: wire.query_metrics_schema,
+            response_bytes: wire.response_bytes.unwrap_or(0),
+            read_back_calls: wire.read_back_calls.unwrap_or(0),
+            follow_up_queries: wire.follow_up_queries.unwrap_or(0),
+            truncated_queries: wire.truncated_queries.unwrap_or(0),
+        })
+    }
 }
 
 /// Robust distribution statistics for one metric.
@@ -142,6 +212,8 @@ pub struct MetricsSummary {
     pub duration_ms: MetricSummary,
     pub context_bytes: MetricSummary,
     pub cost_usd: Option<MetricSummary>,
+    pub query_metrics_receipts: usize,
+    pub legacy_query_metrics_receipts: usize,
     pub response_bytes: MetricSummary,
     pub read_back_calls: MetricSummary,
     pub follow_up_queries: MetricSummary,
@@ -446,6 +518,10 @@ fn summarize_correctness(receipts: &[RunReceipt]) -> CorrectnessSummary {
 }
 
 fn summarize_metrics(receipts: &[RunReceipt]) -> MetricsSummary {
+    let query_metrics = receipts
+        .iter()
+        .filter(|receipt| receipt.query_metrics_schema.as_deref() == Some(QUERY_METRICS_SCHEMA))
+        .collect::<Vec<_>>();
     MetricsSummary {
         file_reads: metric(receipts.iter().map(|receipt| receipt.file_reads as f64)),
         graph_calls: metric(receipts.iter().map(|receipt| receipt.graph_calls as f64)),
@@ -453,19 +529,25 @@ fn summarize_metrics(receipts: &[RunReceipt]) -> MetricsSummary {
         duration_ms: metric(receipts.iter().map(|receipt| receipt.duration_ms as f64)),
         context_bytes: metric(receipts.iter().map(|receipt| receipt.context_bytes as f64)),
         cost_usd: optional_metric(receipts.iter().filter_map(|receipt| receipt.cost_usd)),
-        response_bytes: metric(receipts.iter().map(|receipt| receipt.response_bytes as f64)),
+        query_metrics_receipts: query_metrics.len(),
+        legacy_query_metrics_receipts: receipts.len() - query_metrics.len(),
+        response_bytes: metric(
+            query_metrics
+                .iter()
+                .map(|receipt| receipt.response_bytes as f64),
+        ),
         read_back_calls: metric(
-            receipts
+            query_metrics
                 .iter()
                 .map(|receipt| receipt.read_back_calls as f64),
         ),
         follow_up_queries: metric(
-            receipts
+            query_metrics
                 .iter()
                 .map(|receipt| receipt.follow_up_queries as f64),
         ),
         truncated_queries: metric(
-            receipts
+            query_metrics
                 .iter()
                 .map(|receipt| receipt.truncated_queries as f64),
         ),
@@ -474,6 +556,13 @@ fn summarize_metrics(receipts: &[RunReceipt]) -> MetricsSummary {
 
 fn metric(values: impl Iterator<Item = f64>) -> MetricSummary {
     let mut values: Vec<_> = values.collect();
+    if values.is_empty() {
+        return MetricSummary {
+            samples: 0,
+            median: 0.0,
+            mad: 0.0,
+        };
+    }
     values.sort_by(f64::total_cmp);
     let median = median(&values);
     let deviations = values.iter().map(|value| (value - median).abs());
@@ -578,6 +667,7 @@ mod tests {
             duration_ms: 120,
             context_bytes: 1024,
             cost_usd: Some(0.12),
+            query_metrics_schema: Some(QUERY_METRICS_SCHEMA.into()),
             response_bytes: 0,
             read_back_calls: 0,
             follow_up_queries: 0,
@@ -928,6 +1018,8 @@ mod tests {
             receipt(Arm::Baseline, 1),
         ];
         let summary = summarize(&receipts).unwrap();
+        assert_eq!(summary.metrics.query_metrics_receipts, 3);
+        assert_eq!(summary.metrics.legacy_query_metrics_receipts, 0);
         assert_metric(&summary.metrics.response_bytes, 12_000.0, 4_000.0, 3);
         assert_metric(&summary.metrics.read_back_calls, 0.0, 0.0, 3);
         assert_metric(&summary.metrics.follow_up_queries, 1.0, 1.0, 3);
@@ -959,6 +1051,15 @@ mod tests {
             ),
             (0, 0, 0, 0)
         );
+        let legacy_summary = summarize(&[legacy]).unwrap();
+        assert_eq!(legacy_summary.metrics.query_metrics_receipts, 0);
+        assert_eq!(legacy_summary.metrics.legacy_query_metrics_receipts, 1);
+        assert_metric(&legacy_summary.metrics.response_bytes, 0.0, 0.0, 0);
+        assert_metric(&legacy_summary.metrics.read_back_calls, 0.0, 0.0, 0);
+
+        let partial =
+            LEGACY_RECEIPT_JSON.replace("\n    }", ",\n        \"response_bytes\": 12000\n    }");
+        assert!(serde_json::from_str::<RunReceipt>(&partial).is_err());
     }
 
     #[test]

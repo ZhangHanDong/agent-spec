@@ -62,7 +62,7 @@ pub fn affected_paths(
     affected_index(&index, files, options, &status)
 }
 
-fn affected_index(
+pub(crate) fn affected_index(
     index: &QueryIndex,
     files: Vec<String>,
     options: &AffectedOptions,
@@ -72,10 +72,16 @@ fn affected_index(
     let mut seeds = Vec::with_capacity(files.len());
     let mut traversal_seeds = BTreeMap::<String, Node>::new();
     let mut diagnostics = BTreeSet::new();
+    let mut seeds_truncated = false;
 
     for file in &files {
-        let nodes = nodes_for_file(index, file);
-        if nodes.is_empty() {
+        let remaining = options
+            .impact
+            .max_nodes
+            .saturating_sub(traversal_seeds.len());
+        let (nodes, has_nodes, truncated) = nodes_for_file(index, file, remaining);
+        seeds_truncated |= truncated;
+        if !has_nodes {
             diagnostics.insert((
                 "atlas-affected-no-symbols".to_string(),
                 format!("changed file `{file}` has no code nodes in the current graph"),
@@ -88,6 +94,16 @@ fn affected_index(
             file: file.clone(),
             nodes,
         });
+    }
+
+    if seeds_truncated {
+        diagnostics.insert((
+            "atlas-affected-seeds-truncated".to_string(),
+            format!(
+                "changed-file seed selection reached the global node limit {}",
+                options.impact.max_nodes
+            ),
+        ));
     }
 
     let traversal_seeds = traversal_seeds.into_values().collect::<Vec<_>>();
@@ -103,7 +119,7 @@ fn affected_index(
         files,
         seeds,
         affected: traversal.affected,
-        truncated: traversal.truncated,
+        truncated: seeds_truncated || traversal.truncated,
         diagnostics: diagnostics
             .into_iter()
             .map(|(code, message)| AffectedDiagnostic { code, message })
@@ -113,18 +129,29 @@ fn affected_index(
     })
 }
 
-fn nodes_for_file(index: &QueryIndex, file: &str) -> Vec<Node> {
-    let mut nodes = index
+fn nodes_for_file(index: &QueryIndex, file: &str, limit: usize) -> (Vec<Node>, bool, bool) {
+    let mut nodes = Vec::new();
+    let mut seen = BTreeSet::new();
+    let mut has_nodes = false;
+    let mut truncated = false;
+    for node in index
         .file
         .get(file)
         .into_iter()
         .flatten()
         .filter_map(|position| index.nodes.get(*position))
-        .cloned()
-        .collect::<Vec<_>>();
-    nodes.sort_by(|left, right| left.id.cmp(&right.id));
-    nodes.dedup_by(|left, right| left.id == right.id);
-    nodes
+    {
+        has_nodes = true;
+        if !seen.insert(node.id.as_str()) {
+            continue;
+        }
+        if nodes.len() == limit {
+            truncated = true;
+            continue;
+        }
+        nodes.push(node.clone());
+    }
+    (nodes, has_nodes, truncated)
 }
 
 pub(crate) fn normalize_affected_path(code_root: &Path, path: &Path) -> Result<String, AtlasError> {
@@ -485,8 +512,22 @@ mod tests {
             &options,
         )
         .unwrap();
+        assert!(
+            result
+                .seeds
+                .iter()
+                .map(|seed| seed.nodes.len())
+                .sum::<usize>()
+                <= 1
+        );
         assert!(result.affected.len() <= 1);
         assert!(result.truncated);
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "atlas-affected-seeds-truncated")
+        );
 
         let invalid = AffectedOptions {
             impact: ImpactOptions {

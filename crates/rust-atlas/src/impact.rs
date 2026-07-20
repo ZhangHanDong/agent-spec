@@ -63,6 +63,8 @@ pub(crate) struct ImpactTraversal {
     pub affected: Vec<ImpactEntry>,
     pub truncated: bool,
     pub diagnostics: Vec<ImpactDiagnostic>,
+    #[cfg(test)]
+    peak_frontier: usize,
 }
 
 pub fn impact(
@@ -119,26 +121,40 @@ pub(crate) fn impact_many_index(
     options: &ImpactOptions,
 ) -> Result<ImpactTraversal, AtlasError> {
     validate_options(options)?;
-    let seed_ids = seeds
-        .iter()
-        .map(|seed| seed.id.clone())
-        .collect::<BTreeSet<_>>();
-    let mut layer = BTreeMap::new();
+    let mut canonical_seeds = BTreeMap::new();
+    let mut truncated = false;
     for seed in seeds {
-        insert_best(
-            &mut layer,
-            Candidate {
-                node: seed.clone(),
-                path: graph_path(vec![seed.clone()], Vec::new()),
-            },
-        );
+        canonical_seeds.insert(seed.id.clone(), seed.clone());
+        if canonical_seeds.len() > options.max_nodes {
+            canonical_seeds.pop_last();
+            truncated = true;
+        }
     }
+    let seed_ids = canonical_seeds.keys().cloned().collect::<BTreeSet<_>>();
+    let candidate_limit = seed_ids.len().saturating_add(options.max_nodes);
+    let mut layer = canonical_seeds
+        .into_values()
+        .map(|seed| {
+            (
+                seed.id.clone(),
+                Candidate {
+                    path: graph_path(vec![seed.clone()], Vec::new()),
+                    node: seed,
+                },
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
     let mut settled = BTreeSet::new();
     let mut affected = Vec::new();
-    let mut truncated = false;
+    #[cfg(test)]
+    let mut peak_frontier = layer.len();
 
     'distances: for distance in 0..=options.max_depth {
-        containment_closure(index, &mut layer, &settled);
+        truncated |= containment_closure(index, &mut layer, &settled, candidate_limit);
+        #[cfg(test)]
+        {
+            peak_frontier = peak_frontier.max(layer.len());
+        }
         let mut candidates = layer.into_values().collect::<Vec<_>>();
         candidates.sort_by_cached_key(|candidate| {
             (
@@ -166,7 +182,10 @@ pub(crate) fn impact_many_index(
 
         let mut next = BTreeMap::new();
         for candidate in &candidates {
-            for (node, hop) in dependency_neighbors(index, &candidate.node) {
+            let (neighbors, neighbors_truncated) =
+                dependency_neighbors(index, &candidate.node, candidate_limit);
+            truncated |= neighbors_truncated;
+            for (node, hop) in neighbors {
                 if settled.contains(&node.id)
                     || candidate
                         .path
@@ -176,13 +195,19 @@ pub(crate) fn impact_many_index(
                 {
                     continue;
                 }
-                insert_best(
+                let outcome = insert_best_bounded(
                     &mut next,
                     Candidate {
                         path: append_neighbor(&candidate.path, node.clone(), hop),
                         node,
                     },
+                    candidate_limit,
                 );
+                truncated |= outcome.truncated;
+                #[cfg(test)]
+                {
+                    peak_frontier = peak_frontier.max(next.len());
+                }
             }
         }
         if distance == options.max_depth {
@@ -216,6 +241,8 @@ pub(crate) fn impact_many_index(
         affected,
         truncated,
         diagnostics,
+        #[cfg(test)]
+        peak_frontier,
     })
 }
 
@@ -223,8 +250,10 @@ fn containment_closure(
     index: &QueryIndex,
     layer: &mut BTreeMap<String, Candidate>,
     settled: &BTreeSet<String>,
-) {
+    limit: usize,
+) -> bool {
     let mut frontier = layer.values().cloned().collect::<Vec<_>>();
+    let mut truncated = false;
     while !frontier.is_empty() {
         frontier.sort_by_cached_key(|candidate| {
             (
@@ -238,7 +267,9 @@ fn containment_closure(
         }) {
             continue;
         }
-        for (node, hop) in containment_neighbors(index, &candidate.node) {
+        let (neighbors, neighbors_truncated) = containment_neighbors(index, &candidate.node, limit);
+        truncated |= neighbors_truncated;
+        for (node, hop) in neighbors {
             if settled.contains(&node.id)
                 || candidate
                     .path
@@ -252,11 +283,14 @@ fn containment_closure(
                 path: append_neighbor(&candidate.path, node.clone(), hop),
                 node,
             };
-            if insert_best(layer, next.clone()) {
+            let outcome = insert_best_bounded(layer, next.clone(), limit);
+            truncated |= outcome.truncated;
+            if outcome.inserted {
                 frontier.push(next);
             }
         }
     }
+    truncated
 }
 
 pub(crate) fn validate_options(options: &ImpactOptions) -> Result<(), AtlasError> {
@@ -288,6 +322,32 @@ fn insert_best(layer: &mut BTreeMap<String, Candidate>, candidate: Candidate) ->
     true
 }
 
+#[derive(Debug, Clone, Copy)]
+struct BoundedInsert {
+    inserted: bool,
+    truncated: bool,
+}
+
+fn insert_best_bounded(
+    layer: &mut BTreeMap<String, Candidate>,
+    candidate: Candidate,
+    limit: usize,
+) -> BoundedInsert {
+    let candidate_id = candidate.node.id.clone();
+    let inserted = insert_best(layer, candidate);
+    if !inserted || layer.len() <= limit {
+        return BoundedInsert {
+            inserted,
+            truncated: false,
+        };
+    }
+    let removed = layer.pop_last().map(|(id, _)| id);
+    BoundedInsert {
+        inserted: removed.as_deref() != Some(candidate_id.as_str()),
+        truncated: true,
+    }
+}
+
 fn append_neighbor(path: &GraphPath, node: Node, hop: PathHop) -> GraphPath {
     let mut nodes = path.nodes.clone();
     nodes.push(node);
@@ -296,28 +356,32 @@ fn append_neighbor(path: &GraphPath, node: Node, hop: PathHop) -> GraphPath {
     graph_path(nodes, hops)
 }
 
-fn containment_neighbors(index: &QueryIndex, current: &Node) -> Vec<(Node, PathHop)> {
-    let mut neighbors = Vec::new();
+fn containment_neighbors(
+    index: &QueryIndex,
+    current: &Node,
+    limit: usize,
+) -> (Vec<(Node, PathHop)>, bool) {
+    let mut neighbors = BTreeMap::new();
+    let mut truncated = false;
     for edge in index
         .outgoing_edges([current.id.as_str()])
         .into_iter()
         .filter(|edge| edge.kind == EdgeKind::Contains)
     {
-        neighbors.extend(edge_targets(index, edge));
+        for neighbor in edge_targets(index, edge) {
+            truncated |= insert_bounded_neighbor(&mut neighbors, neighbor, limit);
+        }
     }
-
-    neighbors.sort_by(|(left_node, left_hop), (right_node, right_hop)| {
-        left_node
-            .id
-            .cmp(&right_node.id)
-            .then_with(|| left_hop.edge.cmp(&right_hop.edge))
-    });
-    neighbors.dedup();
-    neighbors
+    (neighbors.into_values().collect(), truncated)
 }
 
-fn dependency_neighbors(index: &QueryIndex, current: &Node) -> Vec<(Node, PathHop)> {
-    let mut neighbors = Vec::new();
+fn dependency_neighbors(
+    index: &QueryIndex,
+    current: &Node,
+    limit: usize,
+) -> (Vec<(Node, PathHop)>, bool) {
+    let mut neighbors = BTreeMap::new();
+    let mut truncated = false;
     for edge in &index.edges {
         if !matches!(
             edge.kind,
@@ -339,17 +403,35 @@ fn dependency_neighbors(index: &QueryIndex, current: &Node) -> Vec<(Node, PathHo
             continue;
         };
         hop.direction = PathDirection::Reverse;
-        neighbors.push((dependent, hop));
+        truncated |= insert_bounded_neighbor(&mut neighbors, (dependent, hop), limit);
     }
+    (neighbors.into_values().collect(), truncated)
+}
 
-    neighbors.sort_by(|(left_node, left_hop), (right_node, right_hop)| {
-        left_node
-            .id
-            .cmp(&right_node.id)
-            .then_with(|| left_hop.edge.cmp(&right_hop.edge))
-    });
-    neighbors.dedup();
-    neighbors
+type NeighborKey = (String, crate::Edge, String, bool, u8);
+
+fn insert_bounded_neighbor(
+    neighbors: &mut BTreeMap<NeighborKey, (Node, PathHop)>,
+    neighbor: (Node, PathHop),
+    limit: usize,
+) -> bool {
+    let direction = match neighbor.1.direction {
+        PathDirection::Forward => 0,
+        PathDirection::Reverse => 1,
+    };
+    let key = (
+        neighbor.0.id.clone(),
+        neighbor.1.edge.clone(),
+        neighbor.1.chosen_target.clone(),
+        neighbor.1.candidate,
+        direction,
+    );
+    neighbors.entry(key).or_insert(neighbor);
+    if neighbors.len() <= limit {
+        return false;
+    }
+    neighbors.pop_last();
+    true
 }
 
 #[cfg(test)]
@@ -648,5 +730,46 @@ mod tests {
                 Err(AtlasError::TraversalLimit { .. })
             ));
         }
+    }
+
+    #[test]
+    fn impact_bounds_containment_and_dependency_frontiers() {
+        let mut containment_nodes = vec![node("container", NodeKind::Module)];
+        let mut containment_edges = Vec::new();
+        for position in 0..100 {
+            let id = format!("member-{position:03}");
+            containment_nodes.push(node(&id, NodeKind::Fn));
+            containment_edges.push(edge("container", &id, EdgeKind::Contains));
+        }
+        let options = ImpactOptions {
+            max_nodes: 2,
+            ..ImpactOptions::default()
+        };
+        let containment = impact_many_index(
+            &index(containment_nodes, containment_edges),
+            &[node("container", NodeKind::Module)],
+            &options,
+        )
+        .unwrap();
+        assert!(containment.peak_frontier <= 3);
+        assert_eq!(containment.affected.len(), 2);
+        assert!(containment.truncated);
+
+        let mut dependency_nodes = vec![node("seed", NodeKind::Fn)];
+        let mut dependency_edges = Vec::new();
+        for position in 0..100 {
+            let id = format!("caller-{position:03}");
+            dependency_nodes.push(node(&id, NodeKind::Fn));
+            dependency_edges.push(edge(&id, "seed", EdgeKind::Calls));
+        }
+        let dependency = impact_many_index(
+            &index(dependency_nodes, dependency_edges),
+            &[node("seed", NodeKind::Fn)],
+            &options,
+        )
+        .unwrap();
+        assert!(dependency.peak_frontier <= 3);
+        assert_eq!(dependency.affected.len(), 2);
+        assert!(dependency.truncated);
     }
 }

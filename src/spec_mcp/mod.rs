@@ -51,7 +51,12 @@ fn handle_tools_call(id: Value, req: &Value, ctx: &McpContext) -> Value {
 
     match dispatch(name, &args, ctx) {
         Ok(payload) => {
-            let text = serde_json::to_string_pretty(&payload).unwrap_or_default();
+            let text = if name == "atlas_explore" {
+                serde_json::to_string(&payload)
+            } else {
+                serde_json::to_string_pretty(&payload)
+            }
+            .unwrap_or_default();
             ok(
                 id,
                 json!({ "content": [ { "type": "text", "text": text } ], "isError": false }),

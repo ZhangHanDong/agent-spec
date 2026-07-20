@@ -666,6 +666,7 @@ fn enforce_count_caps(result: &mut ExploreResult) -> Result<(), AtlasError> {
             ));
         };
         let removed = result.nodes.remove(position);
+        prune_impact_for_node(result, &removed.node);
         let alternative_count = result.alternative_paths.len();
         result
             .alternative_paths
@@ -722,11 +723,22 @@ fn prune_one_optional(result: &mut ExploreResult) -> bool {
         .iter()
         .rposition(|node| !node.seed && !node.spine)
     {
-        result.nodes.remove(position);
+        let removed = result.nodes.remove(position);
+        prune_impact_for_node(result, &removed.node);
         mark_truncated(result, "off-spine-nodes");
         return true;
     }
+    if result.impact.pop().is_some() {
+        mark_truncated(result, "impact");
+        return true;
+    }
     false
+}
+
+fn prune_impact_for_node(result: &mut ExploreResult, removed: &Node) {
+    result.impact.retain(|entry| {
+        entry.node.id != removed.id && !entry.path.nodes.iter().any(|node| node.id == removed.id)
+    });
 }
 
 fn primary_edges(result: &ExploreResult) -> BTreeSet<Edge> {
@@ -1447,6 +1459,11 @@ mod tests {
             edge("optional-000", "spine", EdgeKind::Calls),
         ];
         original.nodes.truncate(3);
+        original.impact = vec![ImpactEntry {
+            node: original.nodes[2].node.clone(),
+            distance: 1,
+            path: budget_path("optional-000", "spine"),
+        }];
         let required = original.clone();
         let mut expected = vec![original.clone()];
         let mut current = original.clone();
@@ -1492,6 +1509,10 @@ mod tests {
         assert_eq!(
             snapshots[4].truncation_reasons.last().unwrap(),
             "off-spine-nodes"
+        );
+        assert!(
+            snapshots[4].impact.is_empty(),
+            "impact entries that depend on a pruned optional node must be pruned too"
         );
         for snapshot in &snapshots[1..] {
             assert_eq!(snapshot.seeds, required.seeds);

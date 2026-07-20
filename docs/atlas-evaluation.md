@@ -106,6 +106,7 @@ are rejected. A receipt has this shape:
   "duration_ms": 842,
   "context_bytes": 12000,
   "cost_usd": 0.04,
+  "query_metrics_schema": "agent-spec/atlas-eval/query-metrics-v1",
   "response_bytes": 24000,
   "read_back_calls": 1,
   "follow_up_queries": 2,
@@ -117,7 +118,8 @@ are rejected. A receipt has this shape:
 `correctness` object is required for summarization and contains `passed`.
 `cost_usd` is optional, but when present it must be finite and non-negative.
 The remaining measurements are unsigned integers. Current external agent
-commands must emit all four query measurements, including explicit zeroes:
+commands must emit `query_metrics_schema` and all four query measurements,
+including explicit zeroes:
 
 | Field | Meaning |
 |---|---|
@@ -127,8 +129,11 @@ commands must emit all four query measurements, including explicit zeroes:
 | `truncated_queries` | Query responses that reported truncation or another response limit. |
 
 For backward compatibility, receipts created before these fields were added
-deserialize omitted query measurements as zero. Omission is reserved for those
-legacy receipts; new producers must report the measured values explicitly.
+deserialize omitted query measurements as zero. They are counted under
+`legacy_query_metrics_receipts` and excluded from the four query metric
+distributions, so missing measurements cannot improve an A/B result. A receipt
+with only some fields, an unknown schema, or non-zero unversioned values is
+rejected. New producers must report the schema and all measured values.
 
 The result contains total `receipts`, total `correctness` counts, aggregate
 `metrics`, and an `arms` object keyed by the populated arms. Each metric has
@@ -137,7 +142,9 @@ The result contains total `receipts`, total `correctness` counts, aggregate
 optional `cost_usd`, plus `response_bytes`, `read_back_calls`,
 `follow_up_queries`, and `truncated_queries`. The optional cost metric is absent
 when no receipt reports a cost. Aggregate and per-arm metrics use the same
-calculation.
+calculation. Each metrics object also reports `query_metrics_receipts` and
+`legacy_query_metrics_receipts`; a valid E1 comparison requires zero legacy
+query-metric receipts in both arms.
 
 ## Output Contract
 

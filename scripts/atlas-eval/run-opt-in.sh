@@ -75,7 +75,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Keep agent stdout opaque; receipt parsing and legacy defaults belong to summarize.
+# Keep agent stdout opaque; versioned query metrics and legacy coverage belong to summarize.
 "$resolved_command" "$plan" "$@" >"$receipt_tmp"
 
 mv -- "$receipt_tmp" "$receipts"

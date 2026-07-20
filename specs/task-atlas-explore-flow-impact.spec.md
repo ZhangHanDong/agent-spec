@@ -50,8 +50,9 @@ truncation 与测试覆盖结论的诚实边界。
   `AGENT_SPEC_MCP_ATLAS_EXPLORE=1` 开启的 frozen `atlas_explore`，默认 tools/list 不变。
 - `atlas explore <QUERY>` 的 `--profile` 仅接受 `compact|deep` 且默认 compact；flow 只接受完整
   `--from/--to` 对或单独 `--through`；impact 要求一个 symbol；affected 必须且只能选择一种输入模式。
-- `RunReceipt` 新增带 serde default 的 `response_bytes`、`read_back_calls`、
-  `follow_up_queries`、`truncated_queries`，summary 对四项继续使用 median 与 MAD。
+- `RunReceipt` 的新生产者必须写入 `query_metrics_schema`、`response_bytes`、
+  `read_back_calls`、`follow_up_queries`、`truncated_queries`；legacy receipt 可读取但不进入
+  四项 median/MAD，summary 显式报告 measured/legacy coverage，部分缺失字段必须拒绝。
 
 ## Boundaries
 
@@ -276,4 +277,4 @@ truncation 与测试覆盖结论的诚实边界。
   假设 paired receipts 包含 response bytes、read-back、follow-up 与 truncation count
   当 benchmark summarize 运行
   那么 aggregate 与 per-arm summary 为 `response_bytes`、`read_back_calls`、`follow_up_queries`、`truncated_queries` 生成 median 与 MAD
-  并且 旧 receipt 缺失这些字段时按零读取而不是解析失败
+  并且 旧 receipt 缺失这些字段时可读取但不进入样本，部分缺失字段会解析失败

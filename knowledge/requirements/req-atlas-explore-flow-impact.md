@@ -52,7 +52,7 @@ answers.
 
 [REQ-ATLAS-EXPLORE-MCP] MCP `atlas_explore` MUST remain hidden by default and become discoverable only through an explicit opt-in environment variable until real Atlas A/B evidence approves a default surface change.
 
-[REQ-ATLAS-EVAL-QUERY-METRICS] Atlas evaluation receipts MUST record response bytes, read-back calls, follow-up queries, and truncated queries in addition to the existing correctness-first metrics.
+[REQ-ATLAS-EVAL-QUERY-METRICS] Atlas evaluation receipts MUST record a query-metric schema version together with response bytes, read-back calls, follow-up queries, and truncated queries; legacy receipts MAY remain readable but MUST be counted separately and MUST NOT contribute synthetic zero samples, while partially populated query metrics MUST be rejected.
 
 [REQ-ATLAS-EXPLORE-NEGATIVE] Satisfying specs MUST cover unshrinkable output, stale/missing/escaping excerpt omission, ambiguous or unavailable flow, traversal exhaustion, worktree mismatch, zero/conflicting/failed affected VCS modes, option-like revisions, and forbidden filename-based test inference.
 

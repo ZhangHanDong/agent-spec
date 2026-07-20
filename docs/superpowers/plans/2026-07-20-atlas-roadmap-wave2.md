@@ -976,7 +976,7 @@ git commit -m "feat(atlas): add opt-in explore mcp tool"
 
 **Interfaces:**
 - Consumes: existing `RunReceipt`, `MetricsSummary`, paired run plan.
-- Produces: four backward-compatible receipt metrics and median/MAD summaries; still no default real-Agent execution.
+- Produces: four versioned receipt metrics, measured/legacy coverage, and median/MAD summaries; still no default real-Agent execution.
 
 - [ ] **Step 1: Write the failing backward-compatible metric test**
 
@@ -989,6 +989,7 @@ fn test_atlas_eval_receipts_measure_explore_readback_and_response_bytes() {
         receipt(Arm::Baseline, 1),
     ];
     let summary = summarize(&receipts).unwrap();
+    assert_eq!(summary.metrics.query_metrics_receipts, 3);
     assert_metric(&summary.metrics.response_bytes, 12_000.0, 4_000.0, 3);
     assert_metric(&summary.metrics.read_back_calls, 0.0, 0.0, 3);
     assert_metric(&summary.metrics.follow_up_queries, 1.0, 1.0, 3);
@@ -1007,7 +1008,9 @@ fn test_atlas_eval_receipts_measure_explore_readback_and_response_bytes() {
         assert_metric(metric, 0.0, 0.0, 1);
     }
     let legacy: RunReceipt = serde_json::from_str(LEGACY_RECEIPT_JSON).unwrap();
-    assert_eq!((legacy.response_bytes, legacy.read_back_calls, legacy.follow_up_queries, legacy.truncated_queries), (0, 0, 0, 0));
+    let legacy_summary = summarize(&[legacy]).unwrap();
+    assert_eq!(legacy_summary.metrics.legacy_query_metrics_receipts, 1);
+    assert_eq!(legacy_summary.metrics.response_bytes.samples, 0);
 }
 ```
 
@@ -1019,22 +1022,32 @@ cargo test test_atlas_eval_receipts_measure_explore_readback_and_response_bytes 
 
 Expected: compilation fails because the receipt and summary fields are absent.
 
-- [ ] **Step 3: Add serde-default receipt and summary fields**
+- [ ] **Step 3: Add versioned receipt and coverage fields**
 
-Add these exact receipt fields; all counts and byte values are `u64`:
+Add a `query_metrics_schema` presence marker and these receipt fields; all counts
+and byte values are `u64`:
 
 ```rust
-#[serde(default)] pub response_bytes: u64,
-#[serde(default)] pub read_back_calls: u64,
-#[serde(default)] pub follow_up_queries: u64,
-#[serde(default)] pub truncated_queries: u64,
+pub query_metrics_schema: Option<String>,
+pub response_bytes: u64,
+pub read_back_calls: u64,
+pub follow_up_queries: u64,
+pub truncated_queries: u64,
 ```
 
-Add matching non-optional `MetricSummary` fields to `MetricsSummary` and feed them through aggregate and every per-arm summarization. The test helper `assert_metric(value, median, mad, samples)` asserts all three fields. Keep correctness validation first.
+Add matching non-optional `MetricSummary` fields plus measured and legacy receipt
+counts to `MetricsSummary`. Feed only versioned, fully populated receipts through
+aggregate and per-arm query-metric summarization. Legacy receipts remain readable
+but contribute no synthetic zero samples; partial fields and unknown versions fail.
+The test helper `assert_metric(value, median, mad, samples)` asserts all three
+fields. Keep correctness validation first.
 
 - [ ] **Step 4: Harden the opt-in receipt boundary**
 
-Update the documented external agent receipt contract to emit the four fields. The runner remains a byte-preserving executable boundary and MUST NOT fabricate them; `summarize` supplies zero only for genuinely legacy JSON that omits them.
+Update the documented external agent receipt contract to emit the version and all
+four fields. The runner remains a byte-preserving executable boundary and MUST
+NOT fabricate them; `summarize` reports legacy coverage and excludes legacy
+receipts from the new distributions.
 
 - [ ] **Step 5: Update corpus rubrics without claiming results**
 
