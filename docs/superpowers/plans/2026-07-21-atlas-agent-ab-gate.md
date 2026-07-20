@@ -307,12 +307,12 @@ git commit -m "feat(atlas): gate concurrent serving promotion"
 - Consumes: checked plan plus one explicit external executable.
 - Produces: atomically replaced strict receipt bundle candidate.
 
-- [ ] **Step 1: Write RED runner test**
+- [x] **Step 1: Write RED runner test**
 
 Add `test_agent_ab_opt_in_runners_require_explicit_commands`. Invoke both scripts with their command
 environment variables removed; assert exit 2, empty stdout, no output file, and stable diagnostics.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```bash
 cargo test test_agent_ab_opt_in_runners_require_explicit_commands -- --nocapture
@@ -320,14 +320,14 @@ cargo test test_agent_ab_opt_in_runners_require_explicit_commands -- --nocapture
 
 Expected: failure because scripts do not exist.
 
-- [ ] **Step 3: Implement safe opt-in runners**
+- [x] **Step 3: Implement safe opt-in runners**
 
 Each runner validates its plan schema with `jq`, resolves one executable without `eval`, writes to a
 same-directory temporary file, and atomically renames only after the driver exits successfully and
 the JSON bundle has the expected schema. Extra driver arguments follow `--`. Signal/error cleanup
 removes only the temporary file.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 ```bash
 cargo test test_agent_ab_opt_in_runners_require_explicit_commands -- --nocapture

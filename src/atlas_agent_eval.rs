@@ -2371,4 +2371,35 @@ mod tests {
         let error = compile_serving_plan(&disabled).unwrap_err();
         assert_eq!(error.code(), "atlas-agent-ab-real-repository");
     }
+
+    #[test]
+    fn test_agent_ab_opt_in_runners_require_explicit_commands() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        for (script, variable, diagnostic) in [
+            (
+                "scripts/atlas-eval/run-agent-ab-opt-in.sh",
+                "ATLAS_EVAL_AGENT_COMMAND",
+                "atlas-agent-ab-command",
+            ),
+            (
+                "scripts/atlas-eval/run-serving-ab-opt-in.sh",
+                "ATLAS_EVAL_SERVING_COMMAND",
+                "atlas-serving-ab-command",
+            ),
+        ] {
+            let output = std::process::Command::new("bash")
+                .arg(root.join(script))
+                .arg("plan.json")
+                .arg("receipts.json")
+                .env_remove(variable)
+                .output()
+                .unwrap();
+            assert_eq!(output.status.code(), Some(2), "{script}");
+            assert!(output.stdout.is_empty(), "{script}");
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains(diagnostic),
+                "{script}"
+            );
+        }
+    }
 }
