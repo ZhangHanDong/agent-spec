@@ -348,7 +348,7 @@ pub struct ProjectionReceipt {
     pub retention_denominator: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum QueryLoadProfile {
     Light,

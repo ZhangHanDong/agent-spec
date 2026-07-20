@@ -284,7 +284,7 @@ git commit -m "feat(atlas): add bounded query service"
 - Consumes: Task 3 `QueryService`.
 - Produces: protocol-v2 context/cancel/service-status commands, pending response sockets and one fixed maintenance lane.
 
-- [ ] **Step 1: Write failing protocol and heartbeat tests**
+- [x] **Step 1: Write failing protocol and heartbeat tests**
 
 Add:
 
@@ -299,7 +299,7 @@ test_atlas_query_service_rejects_oversize_protocol_response
 The tests use listener/worker barriers. Assert status/service-status/stop responses are observed
 before releasing query or sync barriers; do not use a latency threshold as the assertion.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```bash
 cargo test atlas_daemon::tests::test_atlas_query_ -- --nocapture
@@ -308,27 +308,27 @@ cargo test atlas_daemon::tests::test_atlas_daemon_maintenance_lane -- --nocaptur
 
 Expected: missing protocol/service integration.
 
-- [ ] **Step 3: Upgrade the strict protocol**
+- [x] **Step 3: Upgrade the strict protocol**
 
 Set protocol and identity schema/version to v2. Extend `DaemonCommand` with `Context`, `Cancel` and
 `ServiceStatus`. Add optional strict payloads whose command/payload combinations are validated before
 admission. Add service response fields with `skip_serializing_if` so legacy status/sync response
 fields retain their existing shape. Unknown fields and invalid request ids fail before pinning.
 
-- [ ] **Step 4: Make query completion asynchronous to the listener**
+- [x] **Step 4: Make query completion asynchronous to the listener**
 
 The listener pins a snapshot, calls `try_submit`, and stores accepted `TcpStream` by request id. It
 drains `try_completion` each loop and writes one response. Busy/degraded/unavailable responses are
 written immediately. Cancel uses a second connection and never waits for the target query.
 
-- [ ] **Step 5: Move sync into one fixed maintenance lane**
+- [x] **Step 5: Move sync into one fixed maintenance lane**
 
 Use one bounded channel of capacity 1 and one lifetime worker. Both auto-sync and manual Sync enqueue
 the existing `sync_once`; manual request sockets wait in the main-loop map. Status and stop remain
 inline. Stop flips the existing build cancellation token, cancels query jobs, returns a verified
 response, removes the registry and performs bounded cooperative drain without clearing pending events.
 
-- [ ] **Step 6: Verify daemon regressions and commit**
+- [x] **Step 6: Verify daemon regressions and commit**
 
 ```bash
 cargo test atlas_daemon::tests -- --nocapture

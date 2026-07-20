@@ -70,8 +70,14 @@ fault-injection boundary. Production execution calls the pinned B5 compiler. Tes
 cancel, expire or panic without relying on OS timing.
 
 `src/atlas_daemon.rs` owns protocol v2, pending sockets and the listener loop. The listener never
-waits for query traversal or sync. It stores an accepted connection by request id, polls completion
-channels, and writes exactly one response. No request creates a thread.
+waits for query traversal, sync or blocking socket I/O. It incrementally reads a bounded set of
+nonblocking connections, stores admitted connections by request id, polls completion channels, and
+pre-encodes exactly one typed response. A priority egress queue serves control responses before bulk
+query and sync output while reserving a minimum bulk progress budget on every poll. Pending bulk
+work is capped at 256 sockets with 16 additional control slots. A context request that reaches the
+listener while bulk capacity is full receives a typed `busy` receipt through a control slot before
+the daemon pins a generation or admits worker work; manual sync is rejected before maintenance
+admission under the same condition. No request creates a thread.
 
 ## Configuration And Admission
 
@@ -99,6 +105,13 @@ Queue timeout and execution deadline are separate. Expired queued work is discar
 runner starts. Executing work checks a shared cancellation/deadline control before index loading,
 after retrieval, during candidate/source projection, and before final serialization. The service
 does not claim forceful preemption of arbitrary filesystem or operating-system calls.
+
+Shutdown boundedness means finite admitted work, bounded queues and cooperative checkpoints. It is
+not a hard wall-clock termination promise: Rust threads are not force-killed, and shutdown waits for
+an in-progress bounded phase to reach its next checkpoint so reader leases can be released cleanly.
+Watcher events are drained into the pending journal before watcher shutdown. While maintenance is
+outstanding, the listener does not race the sync transaction's runtime-status writes; it resumes
+runtime projection only after the maintenance lane has completed its serialized update.
 
 ## Snapshot And Failure Semantics
 

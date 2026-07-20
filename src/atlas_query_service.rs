@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 const RECEIPT_SCHEMA: &str = "agent-spec/atlas-query-service/receipt-v1";
+const RESPONSE_SCHEMA: &str = "agent-spec/atlas-query-service-response-v1";
 const INDEX_MEMORY_MULTIPLIER: u64 = 4;
 const MAX_REQUEST_ID_BYTES: usize = 64;
 
@@ -106,13 +107,13 @@ pub(crate) struct QueryServiceRequest {
     pub snapshot: rust_atlas::PinnedContextSnapshot,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum QueryServingMode {
     Worker,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct QueryServiceLimits {
     pub workers: usize,
     pub queue_capacity: usize,
@@ -135,7 +136,8 @@ impl From<QueryServiceConfig> for QueryServiceLimits {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct QueryServiceReceipt {
     pub schema: String,
     pub request_id: String,
@@ -169,6 +171,92 @@ pub(crate) struct QueryServiceReply {
     pub retry_after_ms: Option<u64>,
     #[serde(skip)]
     resources: Option<Arc<QueryReplyResources>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct QueryServiceWireReply {
+    pub schema: String,
+    pub outcome: QueryOutcome,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<serde_json::Value>,
+    pub receipt: QueryServiceReceipt,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnostic: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_after_ms: Option<u64>,
+}
+
+impl QueryServiceWireReply {
+    pub(crate) fn from_reply(reply: &QueryServiceReply) -> Result<Self, serde_json::Error> {
+        Ok(Self {
+            schema: RESPONSE_SCHEMA.to_string(),
+            outcome: reply.outcome,
+            context: reply
+                .context
+                .as_ref()
+                .map(serde_json::to_value)
+                .transpose()?,
+            receipt: reply.receipt.clone(),
+            diagnostic: reply.diagnostic.clone(),
+            retry_after_ms: reply.retry_after_ms,
+        })
+    }
+
+    pub(crate) fn oversize_failure(reply: &QueryServiceReply) -> Self {
+        let mut receipt = reply.receipt.clone();
+        receipt.outcome = QueryOutcome::Failed;
+        receipt.response_digest = None;
+        Self {
+            schema: RESPONSE_SCHEMA.to_string(),
+            outcome: QueryOutcome::Failed,
+            context: None,
+            receipt,
+            diagnostic: Some(
+                "atlas-query-response-too-large: finalized response exceeds 1 MiB".to_string(),
+            ),
+            retry_after_ms: None,
+        }
+    }
+
+    pub(crate) fn validate_shape(&self) -> Result<(), &'static str> {
+        if self.schema != RESPONSE_SCHEMA {
+            return Err("query response schema is unsupported");
+        }
+        if self.receipt.schema != RECEIPT_SCHEMA {
+            return Err("query receipt schema is unsupported");
+        }
+        if self.outcome != self.receipt.outcome {
+            return Err("query wire reply and receipt outcomes differ");
+        }
+        match self.outcome {
+            QueryOutcome::Success
+                if self.context.is_some()
+                    && self.diagnostic.is_none()
+                    && self.retry_after_ms.is_none() =>
+            {
+                Ok(())
+            }
+            QueryOutcome::Busy | QueryOutcome::Degraded
+                if self.context.is_none()
+                    && self.diagnostic.is_some()
+                    && self.retry_after_ms.is_some() =>
+            {
+                Ok(())
+            }
+            QueryOutcome::Timeout
+            | QueryOutcome::Cancelled
+            | QueryOutcome::Failed
+            | QueryOutcome::Unavailable
+                if self.context.is_none()
+                    && self.diagnostic.is_some()
+                    && self.retry_after_ms.is_none() =>
+            {
+                Ok(())
+            }
+            _ => Err("query wire outcome fields are not mutually exclusive"),
+        }
+    }
 }
 
 impl QueryServiceReply {
@@ -274,7 +362,7 @@ impl Clock for MonotonicClock {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct QueryServiceStatus {
     pub enabled: bool,
     pub workers: usize,
@@ -671,10 +759,56 @@ impl QueryService {
         }
     }
 
-    pub(crate) fn shutdown(&mut self) {
-        if self.sender.is_none() && self.workers.is_empty() {
-            return;
+    pub(crate) fn reject_before_admission(
+        &self,
+        request_id: String,
+        outcome: QueryOutcome,
+        diagnostic: String,
+    ) -> QueryServiceWireReply {
+        let now_ms = self.clock.now_ms();
+        let mut state = lock(&self.state);
+        match outcome {
+            QueryOutcome::Busy => state.busy = state.busy.saturating_add(1),
+            QueryOutcome::Timeout => state.timed_out = state.timed_out.saturating_add(1),
+            QueryOutcome::Cancelled => state.cancelled = state.cancelled.saturating_add(1),
+            QueryOutcome::Degraded => state.degraded = state.degraded.saturating_add(1),
+            QueryOutcome::Failed | QueryOutcome::Success => {
+                state.failed = state.failed.saturating_add(1)
+            }
+            QueryOutcome::Unavailable => state.unavailable = state.unavailable.saturating_add(1),
         }
+        let retry_after_ms = matches!(outcome, QueryOutcome::Busy | QueryOutcome::Degraded)
+            .then_some(self.config.retry_after_ms);
+        QueryServiceWireReply {
+            schema: RESPONSE_SCHEMA.to_string(),
+            outcome,
+            context: None,
+            receipt: QueryServiceReceipt {
+                schema: RECEIPT_SCHEMA.to_string(),
+                request_id,
+                serving_mode: QueryServingMode::Worker,
+                limits: self.config.into(),
+                reservation_bytes: 0,
+                enqueued_at_ms: now_ms,
+                started_at_ms: None,
+                completed_at_ms: now_ms,
+                queue_wait_ms: None,
+                execution_ms: None,
+                attempts: 0,
+                outcome,
+                generation: None,
+                graph_fingerprint: String::new(),
+                load_profile: None,
+                response_digest: None,
+                fallback_used: false,
+                fallback_generation: None,
+            },
+            diagnostic: Some(diagnostic),
+            retry_after_ms,
+        }
+    }
+
+    pub(crate) fn begin_shutdown(&mut self) {
         {
             let mut state = lock(&self.state);
             state.shutting_down = true;
@@ -683,9 +817,17 @@ impl QueryService {
             }
         }
         self.sender.take();
+    }
+
+    pub(crate) fn join(&mut self) {
         for handle in self.workers.drain(..) {
             let _ = handle.join();
         }
+    }
+
+    pub(crate) fn shutdown(&mut self) {
+        self.begin_shutdown();
+        self.join();
     }
 }
 
@@ -731,7 +873,12 @@ fn run_job(
     let early_outcome = {
         let mut service = lock(state);
         service.queued = service.queued.saturating_sub(1);
-        if job.control.checkpoint().is_err() {
+        if service.shutting_down {
+            Some((
+                QueryOutcome::Unavailable,
+                "atlas-query-unavailable: service stopped before execution",
+            ))
+        } else if job.control.checkpoint().is_err() {
             Some((
                 QueryOutcome::Cancelled,
                 "atlas-query-cancelled: cancelled before execution",
@@ -740,11 +887,6 @@ fn run_job(
             Some((
                 QueryOutcome::Timeout,
                 "atlas-query-timeout: queue deadline elapsed",
-            ))
-        } else if service.shutting_down {
-            Some((
-                QueryOutcome::Unavailable,
-                "atlas-query-unavailable: service stopped",
             ))
         } else {
             service.active += 1;
@@ -932,7 +1074,7 @@ fn reservation_bytes(
         .ok_or("atlas-query-busy: memory reservation overflow")
 }
 
-fn valid_request_id(request_id: &str) -> bool {
+pub(crate) fn valid_request_id(request_id: &str) -> bool {
     !request_id.is_empty()
         && request_id.len() <= MAX_REQUEST_ID_BYTES
         && request_id
@@ -1538,6 +1680,23 @@ mod tests {
         let success = next_completion(&service);
         assert_eq!(success.outcome, QueryOutcome::Success);
         success.validate_shape().unwrap();
+        let wire = QueryServiceWireReply::from_reply(&success).unwrap();
+        wire.validate_shape().unwrap();
+        let mut unknown_field = serde_json::to_value(&wire).unwrap();
+        unknown_field
+            .as_object_mut()
+            .unwrap()
+            .insert("unexpected".to_string(), serde_json::Value::Bool(true));
+        assert!(
+            serde_json::from_value::<QueryServiceWireReply>(unknown_field).is_err(),
+            "wire replies reject unknown fields"
+        );
+        let mut success_shaped_wire_error = wire.clone();
+        success_shaped_wire_error.outcome = QueryOutcome::Busy;
+        success_shaped_wire_error.receipt.outcome = QueryOutcome::Busy;
+        success_shaped_wire_error.diagnostic = Some("busy".to_string());
+        success_shaped_wire_error.retry_after_ms = Some(100);
+        assert!(success_shaped_wire_error.validate_shape().is_err());
         assert!(!service.cancel("success-shape"));
 
         for outcome in [

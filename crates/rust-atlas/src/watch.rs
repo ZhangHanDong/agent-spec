@@ -216,6 +216,21 @@ impl AtlasWatcher {
         })
     }
 
+    pub fn stop_and_drain(mut self, seen_ms: u64) -> Result<WatchDrain, AtlasError> {
+        let targets = self
+            .plan
+            .targets
+            .iter()
+            .map(|target| target.path.clone())
+            .collect::<Vec<_>>();
+        for target in targets {
+            if let Err(error) = self.watcher.unwatch(&target) {
+                self.degrade(error.to_string());
+            }
+        }
+        self.drain(seen_ms)
+    }
+
     fn degrade(&mut self, reason: String) {
         let (watched, total) = self.plan.coverage_counts();
         self.plan.coverage = WatchCoverage::Degraded {
