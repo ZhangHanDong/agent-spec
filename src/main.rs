@@ -12355,6 +12355,21 @@ Scenario: pass
             .unwrap();
             assert_eq!(default_profile, actual);
 
+            let empty_actual =
+                crate::spec_mcp::dispatch("atlas_explore", &serde_json::json!({"query": ""}), &ctx)
+                    .unwrap();
+            let empty_expected = rust_atlas::explore(
+                &ctx.code,
+                &graph_dir,
+                "",
+                &rust_atlas::ExploreOptions {
+                    profile: rust_atlas::ExploreProfile::Compact,
+                    frozen: true,
+                },
+            )
+            .unwrap();
+            assert_eq!(empty_actual, serde_json::to_value(empty_expected).unwrap());
+
             let error = crate::spec_mcp::dispatch(
                 "atlas_explore",
                 &serde_json::json!({"query": "MemStore", "profile": "wide"}),

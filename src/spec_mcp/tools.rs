@@ -388,7 +388,6 @@ fn atlas_tool(name: &str, args: &Value, ctx: &McpContext) -> Result<Value, Strin
             let query = args
                 .get("query")
                 .and_then(Value::as_str)
-                .filter(|query| !query.is_empty())
                 .ok_or("atlas_explore requires `query`")?;
             let profile = match args.get("profile") {
                 None => rust_atlas::ExploreProfile::Compact,
