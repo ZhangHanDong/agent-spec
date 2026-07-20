@@ -12918,6 +12918,95 @@ Scenario: pass
     }
 
     #[test]
+    fn test_atlas_mcp_discovery_is_static_and_no_daemon_queries_match() {
+        let (code, graph) = atlas_fixture_copy("atlas-mcp-no-daemon-parity");
+        rust_atlas::build(&code, &graph, &rust_atlas::BuildOptions::default()).unwrap();
+        let atlas_dir = code.join(".agent-spec");
+        fs::create_dir_all(&atlas_dir).unwrap();
+        let graph_dir = atlas_dir.join("graph");
+        fs::rename(&graph, &graph_dir).unwrap();
+        let ctx = crate::spec_mcp::McpContext {
+            knowledge: code.join("knowledge"),
+            specs: code.join("specs"),
+            code: code.clone(),
+        };
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let endpoint = listener.local_addr().unwrap().to_string();
+        let registry = graph_dir.join(".runtime/daemon.json");
+        let identity = serde_json::json!({
+            "schema_id": "agent-spec/atlas-daemon-identity-v1",
+            "schema_version": 1,
+            "worktree_root": fs::canonicalize(&code).unwrap().to_string_lossy(),
+            "graph_root": fs::canonicalize(&graph_dir).unwrap().to_string_lossy(),
+            "pid": std::process::id(),
+            "started_at_ms": 1,
+            "startup_nonce": "00000000000000000000000000000000",
+            "tool_version": env!("CARGO_PKG_VERSION"),
+            "atlas_schema_version": rust_atlas::SCHEMA_VERSION,
+            "endpoint": endpoint,
+        });
+        fs::write(&registry, serde_json::to_vec_pretty(&identity).unwrap()).unwrap();
+
+        let mut expected_tools = None;
+        for state in [
+            rust_atlas::live::LiveRuntimeState::Unavailable,
+            rust_atlas::live::LiveRuntimeState::Warming,
+            rust_atlas::live::LiveRuntimeState::Pending,
+            rust_atlas::live::LiveRuntimeState::Degraded,
+        ] {
+            rust_atlas::live::LiveRuntimeStatus::new(state)
+                .store(&graph_dir)
+                .unwrap();
+            let response = crate::spec_mcp::handle_request(
+                &serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/list"
+                }),
+                &ctx,
+            )
+            .unwrap();
+            let bytes = serde_json::to_vec(&response["result"]["tools"]).unwrap();
+            if let Some(expected) = &expected_tools {
+                assert_eq!(&bytes, expected, "tool discovery changed for {state:?}");
+            } else {
+                expected_tools = Some(bytes);
+            }
+        }
+        assert!(matches!(
+            listener.accept(),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
+        ));
+
+        fs::remove_file(&registry).unwrap();
+        let without_daemon = crate::spec_mcp::dispatch(
+            "atlas_query",
+            &serde_json::json!({"symbol": "atlas_basic::store::MemStore"}),
+            &ctx,
+        )
+        .unwrap();
+        fs::write(&registry, serde_json::to_vec_pretty(&identity).unwrap()).unwrap();
+        let with_registry = crate::spec_mcp::dispatch(
+            "atlas_query",
+            &serde_json::json!({"symbol": "atlas_basic::store::MemStore"}),
+            &ctx,
+        )
+        .unwrap();
+
+        let without_live = |mut value: serde_json::Value| {
+            value["status"].as_object_mut().unwrap().remove("live");
+            value
+        };
+        assert_eq!(without_live(with_registry), without_live(without_daemon));
+        assert!(matches!(
+            listener.accept(),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
+        ));
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
     fn test_mcp_atlas_search_returns_the_frozen_library_result() {
         let (code, graph) = atlas_fixture_copy("atlas-mcp-search");
         rust_atlas::build(&code, &graph, &rust_atlas::BuildOptions::default()).unwrap();

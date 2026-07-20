@@ -490,21 +490,21 @@ git commit -m "feat(atlas): reclaim generations with reader leases"
 ### Task 9: Preserve MCP Discovery And No-Daemon Parity
 
 **Files:**
-- Modify: `src/spec_mcp/tools.rs`
-- Modify: `src/spec_mcp/mod.rs`
+- Verify: `src/spec_mcp/tools.rs`
+- Verify: `src/spec_mcp/mod.rs`
 - Modify: `src/main.rs`
 
 **Interfaces:**
 - Consumes additive `AtlasStatus.live`.
 - Produces static discovery and local frozen queries with explicit runtime status.
 
-- [ ] **Step 1: Add failing `test_atlas_mcp_discovery_is_static_and_no_daemon_queries_match`**
+- [x] **Step 1: Add failing `test_atlas_mcp_discovery_is_static_and_no_daemon_queries_match`**
 
 Capture `tool_specs()` under unavailable/warming/pending/degraded files and assert byte identity.
 Query one generation with/without a daemon registry and compare facts after excluding additive
 runtime status. A test connector panics if discovery tries network access.
 
-- [ ] **Step 2: Run RED, preserve purity and verify**
+- [x] **Step 2: Run RED, preserve purity and verify**
 
 ```bash
 cargo test test_atlas_mcp_discovery_is_static_and_no_daemon_queries_match -- --exact
