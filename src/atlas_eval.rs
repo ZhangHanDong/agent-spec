@@ -81,6 +81,7 @@ pub enum QueryTier {
 pub enum QueryDiagnosticKind {
     Capability,
     Stale,
+    RuntimeBoundary,
     WorktreeMismatch,
     Truncated,
     Degraded,
@@ -1772,6 +1773,90 @@ mod tests {
             assert!(score.passed, "{case_id}: {:?}", score.failure_reasons);
             assert!(score.response_bytes > 0);
         }
+
+        std::fs::remove_dir_all(graph.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_query_live_runtime_boundary_probe_scores_current_flow() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let code = root.join("fixtures/atlas/runtime-boundaries");
+        let graph = temp_dir("atlas-query-live-runtime-boundary").join("graph");
+        rust_atlas::build(
+            &code,
+            &graph,
+            &rust_atlas::BuildOptions {
+                full: true,
+                scip_index: Some(code.join("scip-helper.json")),
+                dynamic_dispatch: false,
+            },
+        )
+        .expect("runtime-boundary fixture graph builds offline");
+        let flow = rust_atlas::flow(
+            &code,
+            &graph,
+            rust_atlas::FlowQuery::Between {
+                from: "atlas_runtime_boundaries::dispatch".to_string(),
+                to: "atlas_runtime_boundaries::callback_handler".to_string(),
+            },
+            &rust_atlas::FlowOptions {
+                frozen: true,
+                ..Default::default()
+            },
+        )
+        .expect("runtime-boundary flow runs");
+        assert_eq!(flow.state, rust_atlas::FlowState::NoPath);
+        assert_eq!(flow.status.scip.state, rust_atlas::LayerState::Fresh);
+        let callback = flow
+            .runtime_boundaries
+            .iter()
+            .find(|hint| hint.mechanism == rust_atlas::RuntimeBoundaryMechanism::CallbackRegistry)
+            .expect("callback boundary exists");
+
+        let corpus = load_query_corpus(&root.join("benchmarks/atlas/query-corpus.json"))
+            .expect("checked-in query corpus loads");
+        let mut results = load_query_results(&root.join("benchmarks/atlas/query-results.json"))
+            .expect("checked-in query results load");
+        let observation = results
+            .observations
+            .iter_mut()
+            .find(|observation| observation.case_id == "fixture-runtime-boundary-callback")
+            .expect("runtime-boundary observation exists");
+        observation.ranked_symbols = std::iter::once(callback.source.symbol.clone())
+            .chain(callback.candidates.iter().map(|node| node.symbol.clone()))
+            .collect();
+        observation.paths = callback
+            .candidates
+            .iter()
+            .map(|node| vec![callback.source.symbol.clone(), node.symbol.clone()])
+            .collect();
+        observation.evidence = vec![format!(
+            "fixtures/atlas/runtime-boundaries/{}",
+            callback.site.file
+        )];
+        observation.diagnostics = flow
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code.starts_with("atlas-flow-runtime-boundary"))
+            .map(|diagnostic| QueryDiagnostic {
+                kind: QueryDiagnosticKind::RuntimeBoundary,
+                code: diagnostic.code.clone(),
+            })
+            .collect();
+        observation.response_bytes = serde_json::to_vec(&flow).unwrap().len() as u64;
+        observation.duration_ms = 0;
+        observation.read_back_calls = 0;
+        observation.follow_up_queries = 0;
+
+        let receipt = score_query_results(&corpus, &results).expect("runtime boundary scores");
+        let score = receipt
+            .cases
+            .iter()
+            .find(|score| score.case_id == "fixture-runtime-boundary-callback")
+            .expect("runtime-boundary score exists");
+        assert!(score.passed, "{:?}", score.failure_reasons);
+        assert_eq!(score.path_precision, 1.0);
+        assert_eq!(score.path_recall, 1.0);
 
         std::fs::remove_dir_all(graph.parent().unwrap()).ok();
     }

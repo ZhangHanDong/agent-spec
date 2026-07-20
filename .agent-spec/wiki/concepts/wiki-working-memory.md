@@ -25,6 +25,9 @@ Atlas architecture, its explore/flow/impact source ownership, the authority
 concept, and the derived-authority decision. Updating an article requires
 regenerating that index and refreshing metadata before the wiki check can
 confirm source trace freshness.
+The Atlas pages also distinguish runtime-boundary working context from durable
+KLL and graph authority, so an agent can use the hints without promoting them
+to facts.
 
 ## Maintenance
 

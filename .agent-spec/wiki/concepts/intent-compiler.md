@@ -44,6 +44,11 @@ The CLI remains deterministic. AI may help draft candidate KLL requirements or
 ask reverse-interview questions from `requirements questions`, but reviewed
 `knowledge/requirements/*.md` artifacts remain the source of truth.
 
+Atlas runtime-boundary hints may explain where a static flow stopped, but the
+intent compiler does not treat those heuristic candidates as code bindings or
+acceptance evidence. Only governed graph facts and explicit Contract selectors
+enter plans, lifecycle, and trace ledgers.
+
 ## Maintenance
 
 Update this page when any listed `source_files` change in a way that alters the project understanding an agent should reuse.

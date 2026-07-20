@@ -15,6 +15,10 @@ status: draft
 ## Role
 
 Long-lived requirements and decisions with traceable liveness evidence.
+The runtime-boundary requirement records why query hints are useful while also
+forbidding those hints from becoming KLL, binding, lifecycle, or archive
+authority. Passing tests and stored trace evidence, not a heuristic candidate,
+establish whether the requirement remains honored.
 
 ## Maintenance
 

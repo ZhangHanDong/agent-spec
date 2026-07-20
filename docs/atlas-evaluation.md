@@ -180,7 +180,7 @@ Every case records:
 | `expected_paths` | Complete ordered symbol paths that must all be returned. |
 | `forbidden_symbols`, `forbidden_paths` | Known wrong answers; any hit fails correctness. |
 | `required_evidence` | Exact evidence labels that the observation must retain. |
-| `required_diagnostics` | Exact `{kind, code}` boundaries; kinds are `capability`, `stale`, `worktree-mismatch`, `truncated`, or `degraded`. |
+| `required_diagnostics` | Exact `{kind, code}` boundaries; kinds are `capability`, `stale`, `worktree-mismatch`, `truncated`, `degraded`, or `runtime-boundary`. |
 | `allowed_ambiguity` | Maximum extra returned symbols plus paths, bounded to `0..=64`; it never permits a forbidden hit. |
 | `rubric` | Human answer-quality criteria retained for later Agent A/B review. |
 | `source_ref` | Requirement, issue, or roadmap evidence that introduced the case. |
@@ -213,7 +213,9 @@ correctness and aggregate metrics use these deterministic rules:
   symbols and paths;
 - response bytes, latency, read-back calls, and follow-up queries report median
   and median absolute deviation;
-- capability and stale diagnostic counts remain visible in the aggregate.
+- capability and stale diagnostic counts remain visible in the aggregate;
+- runtime-boundary diagnostics are matched exactly per case and remain query
+  hints rather than graph facts.
 
 The receipt also records a BLAKE3 `corpus_fingerprint` and preserves each
 case's observed typed diagnostic codes. A structurally valid observation set
@@ -226,6 +228,13 @@ returned, required evidence or diagnostics are missing, or extra results exceed
 `allowed_ambiguity`. Therefore a symbol hit cannot hide a wrong path or stale
 authority. The scorer exposes measurements and case-local correctness; it does
 not import benchmark percentages from another project.
+
+Default live probes rebuild both the basic Atlas fixture and the
+runtime-boundary fixture. The latter projects the current disconnected `flow`
+result into an observation and requires the expected continuation path, source
+evidence, and `{kind: runtime-boundary, code: atlas-flow-runtime-boundary}`.
+This catches scanner or output regressions without treating a heuristic
+candidate as a persisted call edge.
 
 ## Regression Promotion Loop
 

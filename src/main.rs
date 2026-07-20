@@ -11143,6 +11143,31 @@ Scenario: verification metadata stays visible
     }
 
     #[test]
+    fn test_atlas_runtime_boundary_docs_and_wiki_describe_authority() {
+        let guide = include_str!("../docs/atlas-runtime-boundaries.md");
+        assert!(guide.contains("authority: query-hint"));
+        assert!(guide.contains("not proof"));
+        assert!(!guide.contains("--format json"));
+
+        let wiki_pages = [
+            include_str!("../.agent-spec/wiki/architecture/atlas.md"),
+            include_str!("../.agent-spec/wiki/concepts/atlas-authority.md"),
+            include_str!("../.agent-spec/wiki/decisions/atlas-derived-authority.md"),
+        ];
+        for page in wiki_pages {
+            assert!(page.contains("runtime-boundary"));
+            assert!(page.contains("query-hint"));
+            assert!(page.contains("graph"));
+            assert!(page.contains("lifecycle"));
+            assert!(
+                ["never", "cannot", "do not"]
+                    .iter()
+                    .any(|negation| page.contains(negation))
+            );
+        }
+    }
+
+    #[test]
     fn test_docs_describe_deepened_live_wiki_workflow() {
         let readme = include_str!("../README.md");
         let agents = include_str!("../AGENTS.md");
@@ -12026,6 +12051,7 @@ Scenario: pass
         let corpus = repo_root().join("benchmarks/atlas/query-corpus.json");
         let results = repo_root().join("benchmarks/atlas/query-results.json");
         let out = dir.join("query-regression.json");
+        let expected_corpus = crate::atlas_eval::load_query_corpus(&corpus).unwrap();
         let mut stdout = Vec::new();
 
         run_atlas_benchmark_cli(
@@ -12049,7 +12075,7 @@ Scenario: pass
         let receipt: crate::atlas_eval::QueryRegressionReceipt =
             serde_json::from_str(&fs::read_to_string(&out).unwrap()).unwrap();
         assert_eq!(receipt.schema, crate::atlas_eval::QUERY_REGRESSION_SCHEMA);
-        assert_eq!(receipt.corpus_version, "2026-07-20.1");
+        assert_eq!(receipt.corpus_version, expected_corpus.version);
         assert_eq!(receipt.aggregate.failed, 0);
         assert_eq!(
             fs::read_dir(&dir).unwrap().count(),
@@ -12067,6 +12093,10 @@ Scenario: pass
         let source_results = repo_root().join("benchmarks/atlas/query-results.json");
         let results = dir.join("failing-results.json");
         let out = dir.join("query-regression.json");
+        let expected_cases = crate::atlas_eval::load_query_corpus(&corpus)
+            .unwrap()
+            .cases
+            .len();
         let mut value: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(source_results).unwrap()).unwrap();
         value["observations"][0]["ranked_symbols"] = serde_json::json!([]);
@@ -12095,7 +12125,10 @@ Scenario: pass
         let receipt: crate::atlas_eval::QueryRegressionReceipt =
             serde_json::from_str(&fs::read_to_string(&out).unwrap()).unwrap();
         assert_eq!(receipt.aggregate.failed, 1);
-        assert_eq!(receipt.aggregate.passed + receipt.aggregate.failed, 4);
+        assert_eq!(
+            receipt.aggregate.passed + receipt.aggregate.failed,
+            expected_cases
+        );
 
         fs::remove_dir_all(dir).unwrap();
     }

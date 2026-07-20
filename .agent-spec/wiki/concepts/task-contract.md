@@ -28,6 +28,9 @@ verdict.
 `atlas impact` and `atlas affected` can identify code that deserves review,
 but they do not create Contract test selectors. Scenario-to-test obligations
 remain explicit in the Contract and are verified by lifecycle.
+Likewise, `flow.runtime_boundaries` may guide source inspection but cannot
+satisfy a Contract symbol, scenario, or test selector because it carries
+query-hint authority rather than graph provenance.
 
 ## Maintenance
 

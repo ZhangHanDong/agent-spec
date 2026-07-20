@@ -92,7 +92,11 @@ Compact/deep `explore` budgets are fixed at 8/32/48/8/4/20/16,000 and
 16/96/160/20/12/40/24,000 for seeds, nodes, edges, paths, excerpts, excerpt
 lines, and bytes. Excerpts require current source hashes. Treat `flow` states
 (`found`, `no-path`, `capability-unavailable`, `truncated`,
-`unknown-endpoint`, `ambiguous-endpoint`) as distinct. `affected` requires one
+`unknown-endpoint`, `ambiguous-endpoint`) as distinct. A fresh disconnected
+flow may include bounded `runtime_boundaries`; they explain async, channel,
+callback, reflection, or route boundaries as heuristic query hints and never
+become graph, impact, binding, lifecycle, or archive evidence. See
+`docs/atlas-runtime-boundaries.md`. `affected` requires one
 explicit, stdin, staged, worktree, or commit-range input and reports graph
 evidence, not inferred tests.
 

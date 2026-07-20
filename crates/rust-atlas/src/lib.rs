@@ -24,6 +24,7 @@ mod flow;
 mod impact;
 mod index;
 mod mir;
+mod runtime_boundary;
 mod status;
 mod traversal;
 
@@ -38,6 +39,9 @@ pub use flow::{FlowDiagnostic, FlowEndpoint, FlowOptions, FlowQuery, FlowResult,
 pub use impact::{ImpactDiagnostic, ImpactEntry, ImpactOptions, ImpactResult, impact};
 use index::write_json_atomic;
 pub use index::{QueryIndex, canonical_graph_fingerprint, load_query_index, rebuild_query_index};
+pub use runtime_boundary::{
+    RuntimeBoundaryAuthority, RuntimeBoundaryHint, RuntimeBoundaryMechanism,
+};
 pub use status::{AtlasStatus, GraphIdentity, LayerState, LayerStatus, require_authority, status};
 pub use traversal::{
     FlowState, GraphPath, PathConfidence, PathDirection, PathHop, TraversalLimits,

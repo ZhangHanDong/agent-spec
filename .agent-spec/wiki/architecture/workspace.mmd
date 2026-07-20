@@ -1,7 +1,20 @@
 graph TD
   agent_spec["agent-spec"]
+  rust_atlas["rust-atlas"]
+  agent_spec --> blake3
   agent_spec --> clap
+  agent_spec --> rust_atlas
   agent_spec --> serde
   agent_spec --> serde_json
   agent_spec --> thiserror
   agent_spec --> tokio
+  rust_atlas --> blake3
+  rust_atlas --> ignore
+  rust_atlas --> proc_macro2
+  rust_atlas --> protobuf
+  rust_atlas --> quote
+  rust_atlas --> scip
+  rust_atlas --> serde
+  rust_atlas --> serde_json
+  rust_atlas --> syn
+  rust_atlas --> thiserror

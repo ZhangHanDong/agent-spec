@@ -1,6 +1,6 @@
 {
   "schema": "agent-spec/atlas-eval/query-results-v1",
-  "corpus_version": "2026-07-20.1",
+  "corpus_version": "2026-07-20.2",
   "observations": [
     {
       "case_id": "fixture-symbol-mem-store",
@@ -69,6 +69,32 @@
       "response_bytes": 720,
       "duration_ms": 9,
       "read_back_calls": 1,
+      "follow_up_queries": 0
+    },
+    {
+      "case_id": "fixture-runtime-boundary-callback",
+      "ranked_symbols": [
+        "atlas_runtime_boundaries::dispatch",
+        "atlas_runtime_boundaries::callback_handler"
+      ],
+      "paths": [
+        [
+          "atlas_runtime_boundaries::dispatch",
+          "atlas_runtime_boundaries::callback_handler"
+        ]
+      ],
+      "evidence": [
+        "fixtures/atlas/runtime-boundaries/src/lib.rs"
+      ],
+      "diagnostics": [
+        {
+          "kind": "runtime-boundary",
+          "code": "atlas-flow-runtime-boundary"
+        }
+      ],
+      "response_bytes": 2048,
+      "duration_ms": 12,
+      "read_back_calls": 0,
       "follow_up_queries": 0
     },
     {

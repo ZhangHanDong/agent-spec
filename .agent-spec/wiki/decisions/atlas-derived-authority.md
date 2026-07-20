@@ -5,8 +5,11 @@ source_files:
   - crates/rust-atlas/src/lib.rs
   - crates/rust-atlas/src/index.rs
   - crates/rust-atlas/src/status.rs
+  - crates/rust-atlas/src/flow.rs
+  - crates/rust-atlas/src/runtime_boundary.rs
   - src/spec_mcp/tools.rs
   - docs/atlas-roadmap.md
+  - docs/atlas-runtime-boundaries.md
 tags:
   - atlas
   - derived-data
@@ -32,6 +35,12 @@ list, and makes `atlas_explore` unavailable to both discovery and dispatch
 unless explicitly enabled. Explore source excerpts require a current hash that
 matches graph metadata. KLL artifacts own durable requirements and decisions;
 lifecycle and replay establish current verification evidence.
+`runtime-boundary` candidates remain a `query-hint` even when they resolve to
+canonical nodes. Candidate lookup follows Rust type/function namespaces and
+expands inherent associated paths through indexed type declarations, but this
+extra precision does not increase authority. The hints do not gain edge provenance or enter impact,
+binding, lifecycle, trace, or archive authority without a later mechanism-
+specific promotion gate.
 The delivered impact graph therefore remains derived input until a later
 intent-aware consumer joins it to explicit bindings and Contract selectors.
 

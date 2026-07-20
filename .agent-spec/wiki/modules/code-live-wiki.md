@@ -96,6 +96,9 @@ agent-spec wiki check --code . --wiki .agent-spec/wiki
 
 Do not rely on `wiki init` to write deep prose. It intentionally creates a
 small deterministic scaffold; agents add durable understanding over time.
+When Atlas adds a query-only capability such as runtime-boundary hints, update
+both its architecture and authority articles so the wiki records the mechanism
+without confusing heuristic working context with persisted graph facts.
 
 Old wiki content should be summarized into `learnings/` or `archive/` pages with
 source links instead of being deleted abruptly. Non-goals: no built-in LLM

@@ -24,6 +24,9 @@ accepted KLL requirements or decisions.
 Reader-facing Atlas commands and budgets belong in README and agent guidance;
 the accepted requirement and Task Contract remain the normative statement of
 why those query surfaces and honesty boundaries exist.
+The wiki may summarize runtime-boundary behavior for agent navigation, while
+the KLL requirement owns its normative limits and the dedicated docs page owns
+the user-facing command contract.
 
 ## Maintenance
 

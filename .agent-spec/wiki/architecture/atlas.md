@@ -7,12 +7,14 @@ source_files:
   - crates/rust-atlas/src/status.rs
   - crates/rust-atlas/src/traversal.rs
   - crates/rust-atlas/src/flow.rs
+  - crates/rust-atlas/src/runtime_boundary.rs
   - crates/rust-atlas/src/impact.rs
   - crates/rust-atlas/src/affected.rs
   - crates/rust-atlas/src/explore.rs
   - src/main.rs
   - src/spec_mcp/tools.rs
   - specs/task-atlas-explore-flow-impact.spec.md
+  - specs/task-atlas-runtime-boundary-hints.spec.md
 tags:
   - atlas
   - code-graph
@@ -32,6 +34,24 @@ flow paths, and calculates reverse impact from symbols or changed files.
 `traversal.rs` owns the shared path, hop, state, limits, and ordering contract;
 surface modules compose it instead of redefining evidence or freshness.
 Query-index diagnostics require a rebuild instead of a shard-scan fallback.
+For disconnected flow, `runtime_boundary.rs` scans fresh Rust AST function
+bodies in source-first static-reachability order and returns bounded heuristic
+continuation hints for async, channel, callback, reflection, and route sites.
+Receiver roles come only from the AST access chain that produces the receiver,
+while qualified-self candidates retain their self type, trait path, generic
+arguments, and member during index lookup. Stale source or semantic layers do
+not expand the scan frontier; default trait methods derive their declaration
+module from graph containment before resolving lowercase relative paths or
+qualified `Self` trait members. Framework-route hints preserve handlers from
+both `route(path, handler)` and `service(handler)` forms. Generic reflection
+text remains visible while candidate lookup resolves its indexed type
+declaration and rejects same-symbol value functions. Callable hints retain only
+function nodes; `crate::Type::method` and related source-relative paths expand
+through the indexed type declaration to the canonical inherent-impl method.
+Namespace filtering runs before candidate fan-out. Bare candidates prefer an
+exact symbol in the source module before global suffix fallback. Frontier
+construction and AST scanning share one hash-validated per-file cache, applying
+node and byte budgets before another source read.
 
 ## Boundaries
 
@@ -43,6 +63,8 @@ and fixed output budgets. Affected results expose code nodes and paths but do
 not infer test coverage. The status model compares graph identity and reports
 syn, SCIP, and MIR separately, so consumers do not infer semantic freshness
 from syn refresh.
+`runtime-boundary` results carry `query-hint` authority: they never become graph
+edges or deterministic impact, binding, lifecycle, or archive evidence.
 
 ## Maintenance
 

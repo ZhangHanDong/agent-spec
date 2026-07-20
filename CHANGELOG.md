@@ -8,6 +8,29 @@ All notable changes to `agent-spec` are documented here. Format follows
 
 ### Added
 
+- Atlas disconnected `flow` queries now explain fresh Rust runtime boundaries
+  for async tasks, channels, callback registries, reflection, and framework
+  routes. The bounded AST-derived results are explicitly heuristic query hints:
+  they do not mutate graph shards or participate in impact, affected, binding,
+  lifecycle, or archive authority. The E3 live fixture scores their expected
+  continuation, source evidence, and exact diagnostic. Scans bind to a unique
+  function AST so same-line siblings cannot leak sites, and Rust-relative
+  candidate paths resolve from their source package, module, or impl context.
+  Qualified signatures share canonicalization; qualified-self candidates retain
+  type, trait, and generic identity. Receiver roles inspect only the AST access
+  chain that produces the receiver, ignoring arguments, index values, and
+  literals while requiring token boundaries. This avoids silent misses and
+  suffix lookalikes such as `ctx`/`tx`. Stale source nodes and stale SCIP/MIR
+  edges cannot expand the scan frontier, and default trait methods resolve
+  lowercase `self`/`super` plus qualified `Self` candidates from the trait
+  declaration. Framework-route hints preserve handlers from both two-argument
+  `route` calls and one-argument `service` calls; generic reflection text
+  resolves to its indexed type declaration without losing the displayed type.
+  Bare candidates prefer source-module exact matches, and a shared per-file
+  source cache applies node and byte limits before additional frontier reads.
+  Callable associated paths resolve through canonical inherent-impl symbols;
+  Rust type/value namespace filtering excludes impossible same-symbol nodes
+  before candidate fan-out is measured.
 - Atlas query-quality regression gate: a strict two-tier corpus combines
   deterministic fixtures with immutable true-repository revisions and scores
   ranked symbols, exact paths, required evidence, forbidden hits, ambiguity,

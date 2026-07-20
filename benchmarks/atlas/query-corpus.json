@@ -1,6 +1,6 @@
 {
   "schema": "agent-spec/atlas-eval/query-corpus-v1",
-  "version": "2026-07-20.1",
+  "version": "2026-07-20.2",
   "cases": [
     {
       "id": "fixture-symbol-mem-store",
@@ -119,6 +119,50 @@
         "Discloses stale semantic authority instead of presenting it as current."
       ],
       "source_ref": "REQ-ATLAS-WORKTREE-FRESHNESS",
+      "paired_fixture": null
+    },
+    {
+      "id": "fixture-runtime-boundary-callback",
+      "tier": "deterministic-fixture",
+      "task_class": "flow",
+      "repository": "fixtures/atlas/runtime-boundaries",
+      "revision": "fixture-v1",
+      "query": "Explain how dispatch continues to callback_handler when the static graph has no call edge.",
+      "expected_symbols": [
+        "atlas_runtime_boundaries::dispatch",
+        "atlas_runtime_boundaries::callback_handler"
+      ],
+      "expected_paths": [
+        [
+          "atlas_runtime_boundaries::dispatch",
+          "atlas_runtime_boundaries::callback_handler"
+        ]
+      ],
+      "forbidden_symbols": [
+        "atlas_runtime_boundaries::disconnected_target"
+      ],
+      "forbidden_paths": [
+        [
+          "atlas_runtime_boundaries::dispatch",
+          "atlas_runtime_boundaries::disconnected_target"
+        ]
+      ],
+      "required_evidence": [
+        "fixtures/atlas/runtime-boundaries/src/lib.rs"
+      ],
+      "required_diagnostics": [
+        {
+          "kind": "runtime-boundary",
+          "code": "atlas-flow-runtime-boundary"
+        }
+      ],
+      "allowed_ambiguity": 0,
+      "rubric": [
+        "Names the callback registration site as the point where the static path ends.",
+        "Keeps the caller boundary visible when fresh SCIP resolves the registration helper call.",
+        "Marks callback_handler as a query-hint continuation without creating a graph edge."
+      ],
+      "source_ref": "REQ-ATLAS-RUNTIME-BOUNDARY-HINTS",
       "paired_fixture": null
     },
     {

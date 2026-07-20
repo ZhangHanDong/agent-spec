@@ -65,6 +65,9 @@ available semantic layer blocks the definitive symbol evidence used by
 lifecycle. `atlas affected` may locate impacted code, but lifecycle binds only
 the explicit selectors declared by scenarios; filenames never become inferred
 test evidence.
+Atlas runtime-boundary candidates are also excluded from lifecycle authority:
+their query-hint classification can direct investigation but cannot prove a
+Contract symbol or scenario.
 
 ## Trace Implication
 

@@ -78,7 +78,11 @@ definitive provider, binding, lifecycle-symbol, and typed trace evidence.
 16/96/160/20/12/40/24,000 for seeds, nodes, edges, paths, excerpts, excerpt
 lines, and serialized bytes. Source excerpts require a current hash matching
 the graph metadata. `flow` keeps found, no-path, capability-unavailable,
-truncated, unknown-endpoint, and ambiguous-endpoint distinct. `affected`
+truncated, unknown-endpoint, and ambiguous-endpoint distinct. A fresh
+disconnected flow can add bounded `runtime_boundaries` for async tasks,
+channels, callback registries, reflection, and framework routes. Treat them as
+heuristic query hints, never graph facts or binding/lifecycle/archive evidence;
+see `docs/atlas-runtime-boundaries.md`. `affected`
 accepts exactly one explicit, stdin, staged, worktree, or commit-range input and
 never infers tests or coverage from filenames.
 

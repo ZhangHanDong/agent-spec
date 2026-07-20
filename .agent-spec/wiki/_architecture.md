@@ -4,6 +4,9 @@ type: architecture
 source_files:
   - Cargo.lock
   - Cargo.toml
+  - build.rs
+  - crates/rust-atlas/Cargo.toml
+  - crates/rust-atlas/src/lib.rs
   - src/main.rs
 ---
 # Architecture
@@ -14,7 +17,7 @@ source_files:
 - Project map data: [architecture/project-map.json](architecture/project-map.json)
 - Project map diagram: [architecture/project-map.mmd](architecture/project-map.mmd)
 - Provider: `rust-cargo`
-- Packages: 1
-- Dependencies: 5
-- Modules: 71
-- Module edges: 143
+- Packages: 2
+- Dependencies: 17
+- Modules: 78
+- Module edges: 151

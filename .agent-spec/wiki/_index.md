@@ -4,12 +4,12 @@ This index is generated from article frontmatter. Read it before opening individ
 
 ## Architecture
 
-- [Architecture](_architecture.md) — `Cargo.lock`, `Cargo.toml`, `src/main.rs`
-- [Rust Atlas Architecture](architecture/atlas.md) — `crates/rust-atlas/src/lib.rs`, `crates/rust-atlas/src/index.rs`, `crates/rust-atlas/src/status.rs`, `crates/rust-atlas/src/traversal.rs`, `crates/rust-atlas/src/flow.rs`, `crates/rust-atlas/src/impact.rs`, `crates/rust-atlas/src/affected.rs`, `crates/rust-atlas/src/explore.rs`, `src/main.rs`, `src/spec_mcp/tools.rs`, `specs/task-atlas-explore-flow-impact.spec.md`
+- [Architecture](_architecture.md) — `Cargo.lock`, `Cargo.toml`, `build.rs`, `crates/rust-atlas/Cargo.toml`, `crates/rust-atlas/src/lib.rs`, `src/main.rs`
+- [Rust Atlas Architecture](architecture/atlas.md) — `crates/rust-atlas/src/lib.rs`, `crates/rust-atlas/src/index.rs`, `crates/rust-atlas/src/status.rs`, `crates/rust-atlas/src/traversal.rs`, `crates/rust-atlas/src/flow.rs`, `crates/rust-atlas/src/runtime_boundary.rs`, `crates/rust-atlas/src/impact.rs`, `crates/rust-atlas/src/affected.rs`, `crates/rust-atlas/src/explore.rs`, `src/main.rs`, `src/spec_mcp/tools.rs`, `specs/task-atlas-explore-flow-impact.spec.md`, `specs/task-atlas-runtime-boundary-hints.spec.md`
 
 ## Concept
 
-- [Atlas Graph Authority](concepts/atlas-authority.md) — `crates/rust-atlas/src/status.rs`, `crates/rust-atlas/src/lib.rs`, `crates/rust-atlas/src/explore.rs`, `crates/rust-atlas/src/flow.rs`, `crates/rust-atlas/src/impact.rs`, `crates/rust-atlas/src/affected.rs`, `src/spec_knowledge/code_graph.rs`, `src/spec_verify/atlas_symbols.rs`, `docs/atlas-roadmap.md`
+- [Atlas Graph Authority](concepts/atlas-authority.md) — `crates/rust-atlas/src/status.rs`, `crates/rust-atlas/src/lib.rs`, `crates/rust-atlas/src/explore.rs`, `crates/rust-atlas/src/flow.rs`, `crates/rust-atlas/src/runtime_boundary.rs`, `crates/rust-atlas/src/impact.rs`, `crates/rust-atlas/src/affected.rs`, `src/spec_knowledge/code_graph.rs`, `src/spec_verify/atlas_symbols.rs`, `docs/atlas-roadmap.md`, `docs/atlas-runtime-boundaries.md`
 - [Cross-Project Wiki](concepts/cross-project-wiki.md) — `knowledge/requirements/req-cross-project-wiki.md`, `specs/task-cross-project-wiki.spec.md`, `src/spec_wiki/project_map.rs`, `src/spec_wiki/live.rs`
 - [Intent Compiler](concepts/intent-compiler.md) — `knowledge/requirements/req-requirements-compiler-plan-dag.md`, `src/spec_knowledge/requirement_plan.rs`, `src/spec_knowledge/trace_ledger.rs`, `src/spec_knowledge/test_obligations.rs`, `src/spec_knowledge/worktrees.rs`, `src/main.rs`
 - [Knowledge Liveness Layer](concepts/knowledge-liveness-layer.md) — `knowledge/requirements`, `src/spec_knowledge`
@@ -20,7 +20,7 @@ This index is generated from article frontmatter. Read it before opening individ
 
 ## Decision
 
-- [Atlas Derived Authority](decisions/atlas-derived-authority.md) — `crates/rust-atlas/src/lib.rs`, `crates/rust-atlas/src/index.rs`, `crates/rust-atlas/src/status.rs`, `src/spec_mcp/tools.rs`, `docs/atlas-roadmap.md`
+- [Atlas Derived Authority](decisions/atlas-derived-authority.md) — `crates/rust-atlas/src/lib.rs`, `crates/rust-atlas/src/index.rs`, `crates/rust-atlas/src/status.rs`, `crates/rust-atlas/src/flow.rs`, `crates/rust-atlas/src/runtime_boundary.rs`, `src/spec_mcp/tools.rs`, `docs/atlas-roadmap.md`, `docs/atlas-runtime-boundaries.md`
 - [Deterministic CLI](decisions/deterministic-cli.md) — `specs/task-code-live-wiki.spec.md`, `specs/task-code-live-wiki-deepening.spec.md`, `src/spec_wiki`
 - [Knowledge Versus Docs](decisions/knowledge-vs-docs.md) — `skills/agent-spec-wiki/SKILL.md`, `AGENTS.md`
 - [Wiki Path](decisions/wiki-path.md) — `knowledge/requirements/req-code-live-wiki.md`, `knowledge/requirements/req-code-live-wiki-deepening.md`, `.gitignore`
@@ -46,7 +46,7 @@ This index is generated from article frontmatter. Read it before opening individ
 
 ## Patterns
 
-- [Patterns](_patterns.md) — `Cargo.lock`, `Cargo.toml`, `src/main.rs`
+- [Patterns](_patterns.md) — `Cargo.lock`, `Cargo.toml`, `build.rs`, `crates/rust-atlas/Cargo.toml`, `crates/rust-atlas/src/lib.rs`, `src/main.rs`
 
 ## Project-flow
 

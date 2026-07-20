@@ -13,7 +13,9 @@ status: draft
 
 ## Role
 
-Primary command dispatch and text/json formatting entrypoint.
+Primary command dispatch and text/json formatting entrypoint. Atlas `flow`
+always emits JSON and accepts no `--format` flag; disconnected results may
+include bounded `runtime_boundaries` while preserving the existing flow state.
 
 ## Maintenance
 

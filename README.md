@@ -591,6 +591,11 @@ excerpts. In `flow`, `found` carries a path, `no-path` means a complete capable
 search found none, `capability-unavailable` means the graph cannot decide,
 `truncated` means a traversal limit stopped the search, and `unknown-endpoint`
 or `ambiguous-endpoint` reports endpoint resolution before traversal.
+For a fresh disconnected flow, Atlas may also report bounded query-time hints
+for async tasks, channels, callback registries, reflection, and framework
+routes. These `runtime_boundaries` explain where static flow stopped; they do
+not create graph edges or participate in impact, binding, lifecycle, or archive
+evidence. See [Rust Atlas Runtime Boundary Hints](docs/atlas-runtime-boundaries.md).
 `affected` accepts exactly one of explicit paths, `--stdin`,
 `--staged`, `--worktree`, or `--commit <range>` and reports code nodes and
 evidence paths; it never infers test selectors or coverage from filenames.

@@ -2,8 +2,8 @@
 
 > 当前正典 roadmap，修订于 2026-07-20。状态基线：`agent-spec` 1.1.0、
 > `rust-atlas` 0.2.0、Atlas 查询基线 `44e2f71`。Wave 1 的 E0、A2/B1、D1，Wave 2 的
-> B2/B3/B4，以及 Track C 的 C1/C2/C3 已交付；后续 track 的实现状态仍以本文件
-> 各条目为准。
+> B2/B3/B4、A3、A4 trait v1、A4.1、E3，以及 Track C 的 C1/C2/C3 已交付；后续
+> track 的实现状态仍以本文件各条目为准。
 >
 > 本文用能力轨道替代旧的单序列 Phase 编号。历史合约保留原名称以维持 trace 稳定，
 > 但其中的 `Phase 2`、`Phase 3` 不再代表当前排期。
@@ -105,6 +105,7 @@ Atlas 后续语义增强统一分为三档：
 | schema-version 门 | 已交付 | `read_meta` 强校验：不匹配即 `SchemaMismatch`，查询路径响亮失败并提示重建，build 降级全量重建（e90fcb5） |
 | E0 离线评测基线 | 已交付 | `REQ-ATLAS-AGENT-EVALUATION`、`specs/task-atlas-agent-evaluation.spec.md`、`docs/atlas-evaluation.md` |
 | E3 查询质量回归基础闭环 | 已交付 | `REQ-ATLAS-QUERY-QUALITY-REGRESSION`、两层 query corpus、live fixture probe、`atlas benchmark score` |
+| A4.1 runtime-boundary query hints | 已交付 | `REQ-ATLAS-RUNTIME-BOUNDARY-HINTS`、fresh-source AST scan、E3 runtime-boundary live probe |
 | A2 edge evidence 与 B1 query index/search | 已交付 | `REQ-ATLAS-EDGE-EVIDENCE-INDEX`、`specs/task-atlas-edge-evidence-index.spec.md`、schema v6 |
 | D1 worktree identity 与 layered freshness | 已交付 | `REQ-ATLAS-WORKTREE-FRESHNESS`、`specs/task-atlas-worktree-layered-freshness.spec.md` |
 | provider-neutral Code Graph IR 与 binding | 已交付 | `REQ-CODE-GRAPH-IR`、`specs/task-code-graph-ir-bindings.spec.md` |
@@ -214,7 +215,8 @@ MIR 应增强一个已经能够解释 evidence 和 flow 的消费层。因此它
 
 #### A4. Rust dynamic-dispatch enricher
 
-状态：Wave 3 已交付 trait-method v1；其他 mechanism 仍是未来工作。
+状态：Wave 3 已交付 trait-method v1；Wave 7 已交付 A4.1 query hint；A4.2 mechanism
+enricher plugins 仍是未来工作。
 
 v1 由 `atlas build --dynamic-dispatch` 显式启用，只从 resolved SCIP call 指向 trait method
 这一高精度 anchor 出发。它保留 exact declaration edge，并通过 resolved `ImplsTrait` 与
@@ -229,9 +231,16 @@ corpus、inert gate、fan-out policy 与 false-positive 验证。
 
 后续拆成两个互不混淆的交付面：
 
-- **A4.1 Dynamic boundary explanation**：当 `flow` 在注册表、channel、callback、反射或
+- **A4.1 Dynamic boundary explanation（已交付）**：当 `flow` 在注册表、channel、callback、反射或
   framework dispatch site 终止时，返回 site、mechanism、候选 continuation 和
-  `runtime-boundary` diagnostic。它是 query hint，不改 shard，不参与确定性 impact。
+  `runtime-boundary` diagnostic。查询按 source-first 顺序扫描 source 及其静态可达函数，因此
+  新鲜 SCIP helper edge 不会隐藏 caller 中的 runtime site。它是 query hint，不改 shard，
+  不参与确定性 impact。每次扫描先按 node name、signature 与 span 绑定唯一 function AST，避免
+  同行 sibling 误归属；签名比较共享 canonicalization，receiver role 只读取实际 receiver chain 的
+  AST identifier 并使用 token boundary；候选查找按 source context 规范化 Rust 相对路径，并保留
+  qualified-self 的类型、trait、generic arguments 与 member。stale source 不扩展 scan frontier，
+  stale SCIP/MIR edge 也不能引入 helper；default trait method 的 lowercase `self`/`super` 按 trait
+  declaration module 解析。
 - **A4.2 Mechanism enricher plugins**：closure/function pointer 优先消费 MIR；async spawn、
   channel、callback registry 与 framework route 各自拥有独立 extractor id、正反 fixture、
   fan-out 上限和 capability。不能用一个通用“猜测 edge”pass 混合所有 mechanism。
@@ -651,7 +660,7 @@ adapter。它们投影到同一 Code Graph IR，并通过 provider conformance t
 | 7 | A3 MIR overlay consumer（已交付） | A2、B1 | 已提供 compiler evidence 接入与治理；官方 producer 单独交付 |
 | 8 | A4 dynamic-dispatch enricher（trait v1 已交付） | A3、B3 | 已覆盖 trait method；其余机制按独立精度门扩展 |
 | 9 | E3 query quality regression loop（基础闭环已交付） | E0、B2/B3/B4 | 两层 corpus、live fixture probe 与 fingerprinted score gate 已提供晋升门；fresh pinned capture 持续执行 |
-| 10 | A4.1 runtime-boundary hints | A4 trait v1、B3、E3 | 先诚实解释静态图终点，再决定哪些机制值得写入候选边 |
+| 10 | A4.1 runtime-boundary hints（已交付） | A4 trait v1、B3、E3 | fresh-source AST query hint 已解释静态图终点，未把候选写成边 |
 | 11 | D2 incremental hardening | B1、D1 | 以 generation transaction、dependent frontier 和 orphan recovery 移除全图 rebuild 地板 |
 | 12 | D3 watch 与 daemon | D2 | 用 pending watermark、bounded retry 和 typed degraded 增加实时性能 |
 | 13 | B5 query context compiler | B2/B3/B4、E3 | 在可回归基线上优化 source/path/payload 编排；默认 MCP 变化仍受 E1 约束 |
@@ -719,6 +728,35 @@ mechanism 仍明确留在后续范围。
 evidence、diagnostic 和 query-cost 评分，以及带 corpus fingerprint 的原子 receipt。
 默认测试使用当前 fixture graph 的真实 search/flow 输出而不是只验证手写 JSON 自洽；
 pinned repository fresh capture、真实 Agent A/B 和默认 MCP surface 变化仍留在 E1。
+
+第七轮实施使用一个 runtime-boundary 合约：
+
+1. `REQ-ATLAS-RUNTIME-BOUNDARY-HINTS` → `task-atlas-runtime-boundary-hints`
+
+该 requirement 为 `accepted`。本轮只在 disconnected、非 truncated 且 endpoint 已解析的
+`flow` 上按 source-first 顺序扫描 fresh source 和静态可达 function body，使用 `syn` AST 区分
+async task、channel、callback registry、reflection 与 framework route。结果携带 source site、
+mechanism、静态 key、候选文本、最多 16 个 canonical candidate、`authority: query-hint` 与
+`confidence: heuristic`；查询最多扫描 8 个节点、200000 bytes 并输出 4 个 hint，超限显式
+truncated。它不写 shard、不改变 fingerprint，也不进入 impact、affected、binding、lifecycle
+或 archive authority。扫描只进入 name、signature、span 唯一匹配的 function AST，同行 sibling
+不能贡献 site；存储/解析 signature 共享 whitespace canonicalization，receiver role 只接受实际
+receiver chain 中完整或下划线分隔的 AST identifier，忽略 arguments、index values 与 literal；
+`crate`、`self`、`super`、`Self` 与 qualified candidate path 在 source context 中规范化，
+qualified-self 保留类型、trait、generic arguments 与 member 后再查 index；default trait method
+通过 `Contains` parent 区分 trait container 与 declaration module，并把 `<Self as Trait>::member`
+解析到 trait declaration member。framework route 同时保留 `route(path, handler)` 与
+`service(handler)` 的 continuation；generic reflection text 保持原样，但按其 indexed type
+declaration 解析。reflection lookup 只保留 type-namespace declaration，async/callback/route
+lookup 只保留 function declaration，并在 fan-out 计数前完成过滤。`crate::Type::method`、
+`self::Type::method` 与 source-relative associated callable 通过 type declaration 展开到
+canonical inherent-impl method symbol。bare candidate 优先 source-module exact match，不把
+sibling module 的同名 symbol 并入候选。frontier 与 AST scanner 共享 per-file source cache，并在新 source read 前应用
+8-node/200000-byte budget。stale source 不扩展后继，
+SCIP/MIR edge 只有对应 layer fresh 时才能扩展。E3 的
+runtime-boundary live fixture 使用 fresh SCIP helper edge，并直接对
+生产 flow 发出的 expected continuation、source evidence 与 exact diagnostic 做回归评分；A4.2
+持久化候选边仍受每个 mechanism 的独立晋升门约束。
 
 ## 7. 旧 Phase 映射
 

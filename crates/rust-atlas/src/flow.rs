@@ -8,7 +8,7 @@ use crate::traversal::{
 };
 use crate::{
     AtlasError, AtlasStatus, FlowState, GraphPath, LayerState, Node, PathHop, QueryIndex,
-    QueryOptions, TraversalLimits, indexed_query_state,
+    QueryOptions, RuntimeBoundaryHint, TraversalLimits, indexed_query_state,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,6 +56,10 @@ pub struct FlowResult {
     pub expansions: usize,
     pub truncated: bool,
     pub diagnostics: Vec<FlowDiagnostic>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub runtime_boundaries: Vec<RuntimeBoundaryHint>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub runtime_boundary_truncated: bool,
     pub status: AtlasStatus,
     pub stale: Vec<String>,
 }
@@ -66,14 +70,47 @@ pub fn flow(
     query: FlowQuery,
     options: &FlowOptions,
 ) -> Result<FlowResult, AtlasError> {
-    let (_, index, status) = indexed_query_state(
+    let (meta, index, status) = indexed_query_state(
         code_root,
         graph_dir,
         &QueryOptions {
             frozen: options.frozen,
         },
     )?;
-    flow_index(&index, query, options.clone(), &status)
+    let mut result = flow_index(&index, query.clone(), options.clone(), &status)?;
+    if matches!(
+        result.state,
+        FlowState::NoPath | FlowState::CapabilityUnavailable
+    ) {
+        let projection = crate::runtime_boundary::project_runtime_boundaries(
+            code_root,
+            &meta,
+            &index,
+            &status,
+            &query,
+            options.limits,
+        );
+        result.runtime_boundaries = projection.hints;
+        result.runtime_boundary_truncated = projection.truncated;
+        if !result.runtime_boundaries.is_empty() {
+            result.diagnostics.push(FlowDiagnostic {
+                code: "atlas-flow-runtime-boundary".into(),
+                message: "the static path ends at runtime dispatch; candidates are query hints, not graph edges".into(),
+            });
+        }
+        if result.runtime_boundary_truncated {
+            result.diagnostics.push(FlowDiagnostic {
+                code: "atlas-flow-runtime-boundary-truncated".into(),
+                message: "runtime-boundary scanning exhausted a configured query limit".into(),
+            });
+        }
+        result.diagnostics.sort_by(|left, right| {
+            left.code
+                .cmp(&right.code)
+                .then_with(|| left.message.cmp(&right.message))
+        });
+    }
+    Ok(result)
 }
 
 pub(crate) fn flow_index(
@@ -301,6 +338,8 @@ fn result_from_paths(
         expansions,
         truncated,
         diagnostics,
+        runtime_boundaries: Vec::new(),
+        runtime_boundary_truncated: false,
         status: status.clone(),
         stale: status.syn.stale_files.clone(),
     }
@@ -335,9 +374,15 @@ fn empty_result(
             code: code.into(),
             message: message.into(),
         }],
+        runtime_boundaries: Vec::new(),
+        runtime_boundary_truncated: false,
         status: status.clone(),
         stale: status.syn.stale_files.clone(),
     }
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[cfg(test)]
