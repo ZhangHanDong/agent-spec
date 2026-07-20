@@ -81,14 +81,14 @@ git commit -m "docs(atlas): define real agent evaluation gate"
 - Consumes: `atlas_eval::Corpus`, its case rubric and E0 fixed conditions.
 - Produces: `AgentExperiment`, `AgentRunPlan`, `compile_agent_plan`, and atomic JSON loaders/writers.
 
-- [ ] **Step 1: Write RED plan tests**
+- [x] **Step 1: Write RED plan tests**
 
 Add `test_agent_ab_plan_builds_three_symmetric_arms`,
 `test_agent_ab_plan_rejects_asymmetric_surface`, and
 `test_agent_ab_plan_requires_three_trials`. Construct the manifest in Rust so tests assert exact
 run count, arm order, shared environment fingerprint, B/A set difference, and C/B set difference.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```bash
 cargo test test_agent_ab_plan_builds_three_symmetric_arms -- --nocapture
@@ -98,14 +98,14 @@ cargo test test_agent_ab_plan_requires_three_trials -- --nocapture
 
 Expected: compile failure because `atlas_agent_eval` and plan APIs do not exist.
 
-- [ ] **Step 3: Implement strict experiment and plan types**
+- [x] **Step 3: Implement strict experiment and plan types**
 
 Define public serde types with `deny_unknown_fields`, fixed arm enums, global symmetric controls,
 tool surfaces, retention root, judge config, and stable fingerprints. `compile_agent_plan` validates
 the E0 corpus, rejects `/tmp` retention, validates the exact surface set relationships, and emits
 runs ordered by case, trial, then A/B/C.
 
-- [ ] **Step 4: Add CLI and checked-in inputs**
+- [x] **Step 4: Add CLI and checked-in inputs**
 
 Add:
 
@@ -121,7 +121,7 @@ Add `test_agent_ab_cli_writes_atomic_outputs` in `src/main.rs`; it invokes `agen
 parses the complete file, asserts empty stdout, and checks the destination directory has no
 same-prefix temporary file.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 ```bash
 cargo test agent_ab_plan -- --nocapture

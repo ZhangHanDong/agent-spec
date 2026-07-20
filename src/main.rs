@@ -2,6 +2,7 @@
 #![deny(unsafe_code)]
 #![allow(dead_code)]
 
+mod atlas_agent_eval;
 mod atlas_daemon;
 mod atlas_eval;
 mod atlas_query_service;
@@ -811,6 +812,15 @@ enum AtlasBenchmarkCommands {
     Plan {
         #[arg(long)]
         corpus: PathBuf,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Compile a symmetric three-arm real Agent evaluation plan
+    AgentPlan {
+        #[arg(long)]
+        corpus: PathBuf,
+        #[arg(long)]
+        experiment: PathBuf,
         #[arg(long)]
         out: Option<PathBuf>,
     },
@@ -4381,6 +4391,16 @@ fn cmd_atlas_benchmark_with_writer(
         AtlasBenchmarkCommands::Plan { corpus, out } => {
             let corpus = crate::atlas_eval::load_corpus(&corpus)?;
             let plan = crate::atlas_eval::compile_plan(&corpus)?;
+            emit(&plan, out.as_deref(), stdout)
+        }
+        AtlasBenchmarkCommands::AgentPlan {
+            corpus,
+            experiment,
+            out,
+        } => {
+            let corpus = crate::atlas_eval::load_corpus(&corpus)?;
+            let experiment = crate::atlas_agent_eval::load_agent_experiment(&experiment)?;
+            let plan = crate::atlas_agent_eval::compile_agent_plan(&corpus, &experiment)?;
             emit(&plan, out.as_deref(), stdout)
         }
         AtlasBenchmarkCommands::Summarize { receipts, out } => {
@@ -12667,6 +12687,71 @@ Scenario: pass
         );
         assert!(result.is_err(), "failure must map to a non-zero CLI exit");
         assert!(failure_stdout.is_empty());
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn test_agent_ab_cli_writes_atomic_outputs() {
+        let dir = make_temp_dir("atlas-agent-ab-cli");
+        let corpus = repo_root().join("benchmarks/atlas/corpus.json");
+        let experiment = dir.join("experiment.json");
+        let out = dir.join("agent-plan.json");
+        fs::write(
+            &experiment,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "schema": "agent-spec/atlas-eval/agent-experiment-v1",
+                "version": "cli-fixture-v1",
+                "controls": {
+                    "prompt_hooks": { "mode": "disabled" },
+                    "mcp_config": { "mode": "disabled" },
+                    "user_skills": { "mode": "disabled" },
+                    "tool_instructions": { "mode": "disabled" },
+                    "judge": { "mode": "rubric", "version": "judge-v1" }
+                },
+                "session_store": "artifacts/atlas-agent-ab",
+                "surfaces": {
+                    "baseline": ["grep", "read"],
+                    "atlas_primitives": ["atlas-explore", "atlas-search", "grep", "read"],
+                    "atlas_context": [
+                        "atlas-context", "atlas-explore", "atlas-search", "grep", "read"
+                    ]
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let mut stdout = Vec::new();
+        run_atlas_benchmark_cli(
+            &[
+                "agent-spec",
+                "atlas",
+                "benchmark",
+                "agent-plan",
+                "--corpus",
+                corpus.to_str().unwrap(),
+                "--experiment",
+                experiment.to_str().unwrap(),
+                "--out",
+                out.to_str().unwrap(),
+            ],
+            &mut stdout,
+        )
+        .unwrap();
+
+        assert!(stdout.is_empty());
+        let plan: crate::atlas_agent_eval::AgentRunPlan =
+            serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+        assert_eq!(plan.schema, crate::atlas_agent_eval::AGENT_PLAN_SCHEMA);
+        assert_eq!(plan.runs.len(), 72);
+        assert!(!fs::read_dir(&dir).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".agent-plan.json.")
+        }));
 
         fs::remove_dir_all(dir).unwrap();
     }
