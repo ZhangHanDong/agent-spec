@@ -427,6 +427,9 @@ enum AtlasCommands {
         /// Optional SCIP index (rust-analyzer protobuf or JSON) for resolved references
         #[arg(long)]
         scip: Option<PathBuf>,
+        /// Add bounded trait implementation candidates from resolved SCIP call anchors
+        #[arg(long)]
+        dynamic_dispatch: bool,
         /// Optional versioned rust-atlas MIR overlay (requires Cargo feature `mir`)
         #[cfg(feature = "mir")]
         #[arg(long, conflicts_with = "mir_driver")]
@@ -3723,6 +3726,7 @@ fn cmd_atlas(action: AtlasCommands) -> Result<(), Box<dyn std::error::Error>> {
             graph,
             full,
             scip,
+            dynamic_dispatch,
             #[cfg(feature = "mir")]
             mir,
             #[cfg(feature = "mir")]
@@ -3731,6 +3735,7 @@ fn cmd_atlas(action: AtlasCommands) -> Result<(), Box<dyn std::error::Error>> {
             let options = rust_atlas::BuildOptions {
                 full,
                 scip_index: scip,
+                dynamic_dispatch,
             };
             let report = {
                 #[cfg(feature = "mir")]
@@ -11809,6 +11814,7 @@ Scenario: pass
             &rust_atlas::BuildOptions {
                 full: false,
                 scip_index: Some(repo_root().join("fixtures/atlas/scip/index.json")),
+                dynamic_dispatch: false,
             },
         )
         .unwrap();
@@ -12389,6 +12395,22 @@ Scenario: pass
                 .is_err(),
                 "default CLI must reject {flag}"
             );
+        }
+    }
+
+    #[test]
+    fn test_atlas_dynamic_dispatch_cli_flag() {
+        let cli =
+            super::Cli::try_parse_from(["agent-spec", "atlas", "build", "--dynamic-dispatch"])
+                .unwrap();
+        match cli.command {
+            super::Commands::Atlas {
+                action:
+                    super::AtlasCommands::Build {
+                        dynamic_dispatch, ..
+                    },
+            } => assert!(dynamic_dispatch),
+            _ => panic!("expected atlas build"),
         }
     }
 

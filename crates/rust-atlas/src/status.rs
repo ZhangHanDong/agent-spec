@@ -28,8 +28,14 @@ pub enum LayerState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LayerStatus {
     pub state: LayerState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extractor: Option<String>,
     pub recorded_fingerprint: Option<String>,
     pub current_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recorded_source_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_source_fingerprint: Option<String>,
     pub stale_files: Vec<String>,
     pub diagnostics: Vec<String>,
 }
@@ -71,8 +77,11 @@ pub(crate) fn status_with_meta(
         } else {
             LayerState::Stale
         },
+        extractor: Some("syn".to_string()),
         recorded_fingerprint: Some(recorded_source_fingerprint.clone()),
         current_fingerprint: Some(current_source_fingerprint.clone()),
+        recorded_source_fingerprint: Some(recorded_source_fingerprint.clone()),
+        current_source_fingerprint: Some(current_source_fingerprint.clone()),
         stale_files,
         diagnostics: Vec::new(),
     };
@@ -216,8 +225,11 @@ fn scip_status(meta: &Meta, current_source_fingerprint: &str) -> LayerStatus {
         }
         return LayerStatus {
             state: LayerState::Stale,
+            extractor: capability.scip_tool.clone(),
             recorded_fingerprint: capability.scip_fingerprint.clone(),
             current_fingerprint: None,
+            recorded_source_fingerprint: capability.scip_source_fingerprint.clone(),
+            current_source_fingerprint: Some(current_source_fingerprint.to_string()),
             stale_files: Vec::new(),
             diagnostics,
         };
@@ -231,8 +243,11 @@ fn scip_status(meta: &Meta, current_source_fingerprint: &str) -> LayerStatus {
     if !missing.is_empty() {
         return LayerStatus {
             state: LayerState::Stale,
+            extractor: capability.scip_tool.clone(),
             recorded_fingerprint: capability.scip_fingerprint.clone(),
             current_fingerprint: None,
+            recorded_source_fingerprint: capability.scip_source_fingerprint.clone(),
+            current_source_fingerprint: Some(current_source_fingerprint.to_string()),
             stale_files: Vec::new(),
             diagnostics: missing,
         };
@@ -269,8 +284,11 @@ fn scip_status(meta: &Meta, current_source_fingerprint: &str) -> LayerStatus {
         } else {
             LayerState::Stale
         },
+        extractor: capability.scip_tool.clone(),
         recorded_fingerprint: Some(recorded_index.clone()),
         current_fingerprint: current_index,
+        recorded_source_fingerprint: Some(recorded_sources.clone()),
+        current_source_fingerprint: Some(current_source_fingerprint.to_string()),
         stale_files: Vec::new(),
         diagnostics,
     }
@@ -301,8 +319,11 @@ fn mir_status(meta: &Meta, current_source_fingerprint: &str) -> LayerStatus {
         }
         return LayerStatus {
             state: LayerState::Stale,
+            extractor: capability.mir_tool.clone(),
             recorded_fingerprint: capability.mir_fingerprint.clone(),
             current_fingerprint: None,
+            recorded_source_fingerprint: capability.mir_source_fingerprint.clone(),
+            current_source_fingerprint: Some(current_source_fingerprint.to_string()),
             stale_files: Vec::new(),
             diagnostics,
         };
@@ -316,8 +337,11 @@ fn mir_status(meta: &Meta, current_source_fingerprint: &str) -> LayerStatus {
     if !missing.is_empty() {
         return LayerStatus {
             state: LayerState::Stale,
+            extractor: capability.mir_tool.clone(),
             recorded_fingerprint: capability.mir_fingerprint.clone(),
             current_fingerprint: None,
+            recorded_source_fingerprint: capability.mir_source_fingerprint.clone(),
+            current_source_fingerprint: Some(current_source_fingerprint.to_string()),
             stale_files: Vec::new(),
             diagnostics: missing,
         };
@@ -353,8 +377,11 @@ fn mir_status(meta: &Meta, current_source_fingerprint: &str) -> LayerStatus {
         } else {
             LayerState::Stale
         },
+        extractor: capability.mir_tool.clone(),
         recorded_fingerprint: Some(recorded_overlay.clone()),
         current_fingerprint: current_overlay,
+        recorded_source_fingerprint: Some(recorded_sources.clone()),
+        current_source_fingerprint: Some(current_source_fingerprint.to_string()),
         stale_files: Vec::new(),
         diagnostics,
     }
@@ -363,8 +390,11 @@ fn mir_status(meta: &Meta, current_source_fingerprint: &str) -> LayerStatus {
 fn unavailable(diagnostic: &str) -> LayerStatus {
     LayerStatus {
         state: LayerState::Unavailable,
+        extractor: None,
         recorded_fingerprint: None,
         current_fingerprint: None,
+        recorded_source_fingerprint: None,
+        current_source_fingerprint: None,
         stale_files: Vec::new(),
         diagnostics: vec![diagnostic.to_string()],
     }
@@ -513,6 +543,7 @@ mod tests {
             &BuildOptions {
                 full: false,
                 scip_index: Some(scip_fixture()),
+                dynamic_dispatch: false,
             },
         )
         .unwrap();
@@ -591,6 +622,7 @@ mod tests {
             &BuildOptions {
                 full: false,
                 scip_index: Some(index),
+                dynamic_dispatch: false,
             },
         )
         .unwrap();
@@ -629,6 +661,7 @@ mod tests {
             &BuildOptions {
                 full: false,
                 scip_index: Some(index.clone()),
+                dynamic_dispatch: false,
             },
         )
         .unwrap();
@@ -735,6 +768,7 @@ mod tests {
             &BuildOptions {
                 full: false,
                 scip_index: Some(index.clone()),
+                dynamic_dispatch: false,
             },
         )
         .unwrap();
@@ -782,6 +816,7 @@ mod tests {
             &BuildOptions {
                 full: false,
                 scip_index: Some(index),
+                dynamic_dispatch: false,
             },
         )
         .unwrap();

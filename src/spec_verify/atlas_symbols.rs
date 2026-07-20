@@ -217,6 +217,7 @@ mod tests {
                 scip_index: Some(
                     Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/atlas/scip/index.json"),
                 ),
+                dynamic_dispatch: false,
             },
         )
         .unwrap();

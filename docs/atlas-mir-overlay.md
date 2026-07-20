@@ -47,7 +47,9 @@ rust-atlas-mir-driver --code <canonical-root> --out <graph>/mir-overlay.json
 
 `--mir` 与 `--mir-driver` 互斥。producer 非零退出、文件缺失、JSON/schema 错误、source
 fingerprint 不匹配、symbol 缺失或 CFG/call site 非法时，`atlas build` 仍返回成功的 syn
-加可选 SCIP graph，同时输出 `mir-extraction-failed` warning 并清除旧 MIR facts。
+加可选 SCIP graph，同时输出 `mir-extraction-failed` warning 并清除旧 MIR facts。consumer
+递归拒绝 extractor、CFG 和 site 等 nested object 的未知字段。完整 shard 集先写入 staging
+generation，再通过目录交换提交；任一 staging write 失败都不会部分修改当前 generation。
 
 ## Artifact
 
@@ -100,13 +102,14 @@ symbol，并且必须解析到函数节点；consumer 不接受猜测式 suffix 
 
 ## Query And Freshness
 
-canonical shards 保留 syn、SCIP 和 MIR 的原始证据。`atlas query` 对同一 source-target
-call/reference relation 返回最高 provenance（`mir > scip > syn`），但不删除低层 edge。
-函数 CFG summary 只来自 MIR overlay。
+canonical shards 保留 syn、SCIP 和 MIR 的原始证据。derived query index 对同一
+source-target call/reference relation 只投影最高 provenance（`mir > scip > syn`），因此
+`query`、`refs`、`flow`、`impact` 和 `explore` 共用同一 precedence，但不删除低层 shard
+evidence。函数 CFG summary 只来自 MIR overlay。
 
-`atlas status` 独立比较 overlay fingerprint 和 source fingerprint。syn refresh 后旧 MIR
-可以继续作为 stale evidence 存在，但 `require_authority` 会阻止它成为 definitive binding、
-impact 或 lifecycle evidence。
+`atlas status` 结构化返回 extractor identity、overlay recorded/current fingerprint 和 source
+recorded/current fingerprint。syn refresh 后旧 MIR 可以继续作为 stale evidence 存在，但
+`require_authority` 会阻止它成为 definitive binding、impact 或 lifecycle evidence。
 
 参考：[rustc_public API](https://doc.rust-lang.org/nightly/nightly-rustc/rustc_public/)、
 [rustc_public `run!`](https://doc.rust-lang.org/nightly/nightly-rustc/rustc_public/macro.run.html)、

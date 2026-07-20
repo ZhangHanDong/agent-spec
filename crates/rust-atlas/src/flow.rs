@@ -400,8 +400,11 @@ mod tests {
         };
         let layer = |state| LayerStatus {
             state,
+            extractor: None,
             recorded_fingerprint: None,
             current_fingerprint: None,
+            recorded_source_fingerprint: None,
+            current_source_fingerprint: None,
             stale_files: Vec::new(),
             diagnostics: Vec::new(),
         };

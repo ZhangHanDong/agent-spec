@@ -54,6 +54,12 @@ agent-spec atlas status --code . --graph .agent-spec/graph --format json
 agent-spec atlas check --code . --graph .agent-spec/graph
 ```
 
+`atlas build --scip <index> --dynamic-dispatch` opt-in enriches resolved trait
+method calls with at most 64 sorted implementation candidates. It preserves the
+exact declaration edge and marks the inferred edge unresolved,
+`bounded-candidates`, and `dispatch: trait`; see
+`docs/atlas-dynamic-dispatch.md`.
+
 MIR is opt-in. Build the binary with Cargo feature `mir`, then pass exactly one
 of `atlas build --mir <overlay.json>` or `--mir-driver <absolute-binary>`.
 Failures degrade with `mir-extraction-failed`, clear old MIR facts, and preserve

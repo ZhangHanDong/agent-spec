@@ -829,6 +829,7 @@ mod tests {
             &rust_atlas::BuildOptions {
                 full: false,
                 scip_index: Some(scip_fixture()),
+                dynamic_dispatch: false,
             },
         )
         .unwrap();
@@ -859,8 +860,11 @@ mod tests {
         fn layer(recorded: Option<&str>) -> rust_atlas::LayerStatus {
             rust_atlas::LayerStatus {
                 state: rust_atlas::LayerState::Fresh,
+                extractor: None,
                 recorded_fingerprint: recorded.map(str::to_string),
                 current_fingerprint: Some("current".to_string()),
+                recorded_source_fingerprint: None,
+                current_source_fingerprint: None,
                 stale_files: vec!["z.rs".to_string(), "a.rs".to_string()],
                 diagnostics: vec!["z diagnostic".to_string(), "a diagnostic".to_string()],
             }

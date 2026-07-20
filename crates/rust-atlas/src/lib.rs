@@ -18,6 +18,7 @@ use quote::ToTokens;
 use serde::{Deserialize, Serialize};
 
 mod affected;
+mod dynamic_dispatch;
 mod explore;
 mod flow;
 mod impact;
@@ -280,6 +281,12 @@ pub struct Capability {
     /// Source-set fingerprint declared by the current MIR overlay.
     #[serde(default)]
     pub mir_source_fingerprint: Option<String>,
+    /// Whether the bounded whole-graph dynamic-dispatch pass was enabled.
+    #[serde(default)]
+    pub dynamic_dispatch: bool,
+    /// Number of inferred bounded-candidate edges in this graph snapshot.
+    #[serde(default)]
+    pub dynamic_dispatch_edges: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -298,6 +305,7 @@ pub struct Meta {
 pub struct BuildOptions {
     pub full: bool,
     pub scip_index: Option<PathBuf>,
+    pub dynamic_dispatch: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -521,6 +529,7 @@ fn build_with_meta(
         }
     }
 
+    dynamic_dispatch::remove(&shards_dir, &files)?;
     resolve_syn_edges(&shards_dir, &files)?;
 
     let mut capability = Capability::default();
@@ -556,21 +565,29 @@ fn build_with_meta(
             options,
             retain_semantic_authority_fingerprints,
         ) {
-            Ok(Some(applied)) => {
-                capability.mir = true;
-                capability.mir_tool = Some(applied.tool);
-                capability.mir_overlay = Some(applied.overlay_path);
-                capability.mir_fingerprint = if retain_semantic_authority_fingerprints {
-                    retained_mir_fingerprint
-                } else {
-                    Some(applied.overlay_fingerprint)
-                };
-                capability.mir_source_fingerprint = if retain_semantic_authority_fingerprints {
-                    retained_mir_source_fingerprint
-                } else {
-                    Some(applied.source_fingerprint)
-                };
-            }
+            Ok(Some(applied)) => match commit_shard_generation(&shards_dir, &applied.shards) {
+                Ok(()) => {
+                    capability.mir = true;
+                    capability.mir_tool = Some(applied.tool);
+                    capability.mir_overlay = Some(applied.overlay_path);
+                    capability.mir_fingerprint = if retain_semantic_authority_fingerprints {
+                        retained_mir_fingerprint
+                    } else {
+                        Some(applied.overlay_fingerprint)
+                    };
+                    capability.mir_source_fingerprint = if retain_semantic_authority_fingerprints {
+                        retained_mir_source_fingerprint
+                    } else {
+                        Some(applied.source_fingerprint)
+                    };
+                }
+                Err(error @ AtlasError::Invariant(_)) => return Err(error),
+                Err(error) => diagnostics.push(BuildDiagnostic {
+                    code: "mir-extraction-failed".to_string(),
+                    severity: "warning".to_string(),
+                    message: format!("cannot commit MIR shard generation: {error}"),
+                }),
+            },
             Ok(None) => {}
             Err(message) => diagnostics.push(BuildDiagnostic {
                 code: "mir-extraction-failed".to_string(),
@@ -578,6 +595,13 @@ fn build_with_meta(
                 message,
             }),
         }
+    }
+    if opts.dynamic_dispatch {
+        let outcome =
+            dynamic_dispatch::enrich(&shards_dir, &files, dynamic_dispatch::MAX_CANDIDATES)?;
+        capability.dynamic_dispatch = true;
+        capability.dynamic_dispatch_edges = outcome.edges_added;
+        diagnostics.extend(outcome.diagnostics);
     }
     validate_graph(&shards_dir, &files)?;
 
@@ -657,10 +681,10 @@ pub fn query(
     })
 }
 
-fn preferred_query_edges(mut edges: Vec<Edge>) -> Vec<Edge> {
+pub(crate) fn preferred_query_edges(mut edges: Vec<Edge>) -> Vec<Edge> {
     let mut highest: BTreeMap<(String, String), Provenance> = BTreeMap::new();
     for edge in &edges {
-        if matches!(edge.kind, EdgeKind::Calls | EdgeKind::References) {
+        if is_precedence_relation(edge) {
             highest
                 .entry((edge.from.clone(), edge.to.clone()))
                 .and_modify(|current| *current = (*current).max(edge.provenance))
@@ -668,12 +692,18 @@ fn preferred_query_edges(mut edges: Vec<Edge>) -> Vec<Edge> {
         }
     }
     edges.retain(|edge| {
-        !matches!(edge.kind, EdgeKind::Calls | EdgeKind::References)
+        !is_precedence_relation(edge)
             || highest.get(&(edge.from.clone(), edge.to.clone())) == Some(&edge.provenance)
     });
     edges.sort();
     edges.dedup();
     edges
+}
+
+fn is_precedence_relation(edge: &Edge) -> bool {
+    matches!(edge.kind, EdgeKind::Calls | EdgeKind::References)
+        && edge.resolution == EdgeResolution::Resolved
+        && edge.candidates.is_empty()
 }
 
 /// Deterministic indexed symbol search with fixed match precedence.
@@ -770,10 +800,9 @@ pub fn tree(
 
 /// Incoming reference/call edges for a symbol.
 ///
-/// `References`/`Calls` edges are produced only by the semantic (SCIP) overlay;
-/// the syn baseline emits none. Without a `--scip` index this therefore returns
-/// an empty edge set for every symbol — that is "no semantic layer", not "no
-/// references". See `overlay_scip`.
+/// `References`/`Calls` edges come from semantic overlays. The derived query
+/// index projects the highest available provenance for each source-target
+/// relation while canonical shards retain every evidence layer.
 pub fn refs(
     code_root: &Path,
     graph_dir: &Path,
@@ -977,6 +1006,57 @@ fn shard_file_name(rel: &str) -> String {
 
 fn write_shard(shards_dir: &Path, shard: &Shard) -> Result<(), AtlasError> {
     write_json(&shards_dir.join(shard_file_name(&shard.file)), shard)
+}
+
+fn commit_shard_generation(
+    shards_dir: &Path,
+    shards: &BTreeMap<String, Shard>,
+) -> Result<(), AtlasError> {
+    commit_shard_generation_with(shards_dir, shards, write_shard)
+}
+
+fn commit_shard_generation_with(
+    shards_dir: &Path,
+    shards: &BTreeMap<String, Shard>,
+    mut writer: impl FnMut(&Path, &Shard) -> Result<(), AtlasError>,
+) -> Result<(), AtlasError> {
+    static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    let parent = shards_dir.parent().ok_or_else(|| {
+        AtlasError::Invariant(format!(
+            "shard directory {} has no parent",
+            shards_dir.display()
+        ))
+    })?;
+    let nonce = GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let suffix = format!("{}-{nonce}", std::process::id());
+    let staging = parent.join(format!(".shards-next-{suffix}"));
+    let backup = parent.join(format!(".shards-prev-{suffix}"));
+    std::fs::create_dir(&staging).map_err(io_err)?;
+
+    for shard in shards.values() {
+        if let Err(error) = writer(&staging, shard) {
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(error);
+        }
+    }
+    if let Err(error) = std::fs::rename(shards_dir, &backup) {
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err(io_err(error));
+    }
+    if let Err(error) = std::fs::rename(&staging, shards_dir) {
+        let rollback = std::fs::rename(&backup, shards_dir);
+        let _ = std::fs::remove_dir_all(&staging);
+        return match rollback {
+            Ok(()) => Err(io_err(error)),
+            Err(rollback_error) => Err(AtlasError::Invariant(format!(
+                "cannot activate shard generation ({error}) or restore baseline ({rollback_error}); baseline remains at {}",
+                backup.display()
+            ))),
+        };
+    }
+    let _ = std::fs::remove_dir_all(&backup);
+    Ok(())
 }
 
 fn read_shard(shards_dir: &Path, rel: &str) -> Result<Shard, AtlasError> {
@@ -1206,6 +1286,7 @@ fn refresh_stale_graph(
         &BuildOptions {
             full: false,
             scip_index,
+            dynamic_dispatch: meta.capability.dynamic_dispatch,
         },
         Some(meta),
         true,
@@ -2980,10 +3061,11 @@ fn remove_scip_edges(
 }
 
 fn remove_mir_facts(shards_dir: &Path, files: &BTreeMap<String, String>) -> Result<(), AtlasError> {
+    let mut shards = BTreeMap::new();
+    let mut changed = false;
     for rel in files.keys() {
         let mut shard = read_shard(shards_dir, rel)?;
         let old_edges = shard.edges.len();
-        let mut changed = false;
         shard
             .edges
             .retain(|edge| edge.provenance != Provenance::Mir);
@@ -2991,9 +3073,10 @@ fn remove_mir_facts(shards_dir: &Path, files: &BTreeMap<String, String>) -> Resu
         for node in &mut shard.nodes {
             changed |= node.cfg.take().is_some();
         }
-        if changed {
-            write_shard(shards_dir, &shard)?;
-        }
+        shards.insert(rel.clone(), shard);
+    }
+    if changed {
+        commit_shard_generation(shards_dir, &shards)?;
     }
     Ok(())
 }
@@ -4094,6 +4177,7 @@ impl std::fmt::Display for Local {
             &BuildOptions {
                 full: false,
                 scip_index: Some(scip_fixture()),
+                dynamic_dispatch: false,
             },
         )
         .unwrap();
@@ -4163,6 +4247,7 @@ impl std::fmt::Display for Local {
             &BuildOptions {
                 full: false,
                 scip_index: Some(scip_fixture()),
+                dynamic_dispatch: false,
             },
         )
         .unwrap();
@@ -4622,6 +4707,7 @@ impl std::fmt::Display for Local {
             &BuildOptions {
                 full: false,
                 scip_index: Some(scip_fixture()),
+                dynamic_dispatch: false,
             },
         )
         .unwrap();
@@ -4825,9 +4911,15 @@ impl std::fmt::Display for Local {
             line_end: 3,
             column_end: 12,
         });
+        let mut dynamic = scip.clone();
+        dynamic.resolution = EdgeResolution::Unresolved;
+        dynamic.dispatch = Some(DispatchKind::Trait);
+        dynamic.confidence = Some(EdgeConfidence::BoundedCandidates);
+        dynamic.candidates = vec!["impl-a".into(), "impl-b".into()];
 
-        let preferred = preferred_query_edges(vec![syn.clone(), scip, mir.clone()]);
-        assert_eq!(preferred, vec![mir]);
+        let preferred =
+            preferred_query_edges(vec![syn.clone(), scip, mir.clone(), dynamic.clone()]);
+        assert_eq!(preferred, vec![mir, dynamic]);
         assert_eq!(
             vec![syn].len(),
             1,
@@ -4882,6 +4974,24 @@ impl std::fmt::Display for Local {
         .unwrap();
         assert_eq!(result.status.syn.state, LayerState::Fresh);
         assert_eq!(result.status.mir.state, LayerState::Stale);
+        assert_eq!(
+            result.status.mir.extractor.as_deref(),
+            Some("rustc_public nightly-test")
+        );
+        assert_eq!(
+            result.status.mir.recorded_source_fingerprint.as_deref(),
+            Some(source_fingerprint.as_str())
+        );
+        assert!(
+            result.status.mir.current_source_fingerprint.is_some()
+                && result.status.mir.current_source_fingerprint
+                    != result.status.mir.recorded_source_fingerprint
+        );
+        assert!(result.status.mir.recorded_fingerprint.is_some());
+        assert_eq!(
+            result.status.mir.recorded_fingerprint,
+            result.status.mir.current_fingerprint
+        );
         assert!(
             result
                 .status
@@ -5105,6 +5215,310 @@ impl std::fmt::Display for Local {
         fs::remove_dir_all(code.parent().unwrap()).ok();
     }
 
+    #[test]
+    fn test_atlas_mir_generation_write_failure_keeps_baseline() {
+        let (code, graph) = copy_fixture("atlas-mir-generation-failure");
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let (meta, mut shards) = load_graph(&graph).unwrap();
+        let shards_dir = graph.join("shards");
+        let baseline = meta
+            .files
+            .keys()
+            .map(|rel| {
+                let path = shards_dir.join(shard_file_name(rel));
+                (path.clone(), fs::read(path).unwrap())
+            })
+            .collect::<BTreeMap<_, _>>();
+        for shard in &mut shards {
+            if let Some(node) = shard
+                .nodes
+                .iter_mut()
+                .find(|node| node.kind == NodeKind::Fn)
+            {
+                node.cfg = Some(CfgSummary {
+                    basic_blocks: 1,
+                    edges: 0,
+                    exits: 1,
+                    loop_headers: 0,
+                });
+            }
+        }
+        let updates = shards
+            .into_iter()
+            .map(|shard| (shard.file.clone(), shard))
+            .collect::<BTreeMap<_, _>>();
+        let mut writes = 0;
+        let error = commit_shard_generation_with(&shards_dir, &updates, |dir, shard| {
+            writes += 1;
+            if writes == 2 {
+                return Err(AtlasError::Io("injected second shard write failure".into()));
+            }
+            write_shard(dir, shard)
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("injected second shard"));
+        for (path, bytes) in baseline {
+            assert_eq!(fs::read(path).unwrap(), bytes);
+        }
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_mir_rejects_unknown_nested_wire_fields() {
+        let (code, graph) = copy_fixture("atlas-mir-strict-wire");
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let (meta, _) = load_graph(&graph).unwrap();
+        let source_fingerprint = status::source_fingerprint(&meta.files).unwrap();
+        let overlay = code.parent().unwrap().join("mir-overlay.json");
+        let base = serde_json::json!({
+            "schema": "rust-atlas/mir-overlay-v1",
+            "extractor": {"name": "rustc_public", "version": "nightly-test"},
+            "source_fingerprint": source_fingerprint,
+            "functions": [{
+                "symbol": "atlas_basic::service::run",
+                "cfg": {"basic_blocks": 2, "edges": 1, "exits": 1, "loop_headers": 0},
+                "calls": [{
+                    "target": "atlas_basic::store::impl atlas_basic::store::Store for atlas_basic::store::MemStore::get",
+                    "site": {"file": "src/service.rs", "line_start": 4, "column_start": 5, "line_end": 4, "column_end": 16},
+                    "dispatch": "static",
+                    "generic": false,
+                    "evidence": "strict wire test"
+                }]
+            }]
+        });
+        for pointer in [
+            "/extractor/unknown",
+            "/functions/0/cfg/unknown",
+            "/functions/0/calls/0/site/unknown",
+        ] {
+            let mut artifact = base.clone();
+            let (parent, key) = pointer.rsplit_once('/').unwrap();
+            artifact
+                .pointer_mut(parent)
+                .unwrap()
+                .as_object_mut()
+                .unwrap()
+                .insert(key.to_string(), serde_json::json!(true));
+            fs::write(&overlay, serde_json::to_vec(&artifact).unwrap()).unwrap();
+            let report = build_with_mir(
+                &code,
+                &graph,
+                &BuildOptions::default(),
+                &MirBuildOptions {
+                    overlay: Some(overlay.clone()),
+                    driver: None,
+                },
+            )
+            .unwrap();
+            assert_eq!(report.diagnostics[0].code, "mir-extraction-failed");
+            assert!(report.diagnostics[0].message.contains("unknown field"));
+        }
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    fn dynamic_trait_fixture(name: &str, implementation_count: usize) -> (PathBuf, PathBuf) {
+        let mut source = String::from(
+            "pub trait Handler { fn handle(&self) -> usize; }\n\
+             pub fn dispatch(value: &dyn Handler) -> usize { value.handle() }\n",
+        );
+        for index in 0..implementation_count {
+            source.push_str(&format!(
+                "pub struct Handler{index};\nimpl Handler for Handler{index} {{ fn handle(&self) -> usize {{ {index} }} }}\n"
+            ));
+        }
+        scratch_crate(name, &[("src/lib.rs", source.as_str())])
+    }
+
+    fn inject_resolved_trait_call(graph: &Path) -> (String, Vec<String>) {
+        let (_, shards) = load_graph(graph).unwrap();
+        let caller = shards
+            .iter()
+            .flat_map(|shard| &shard.nodes)
+            .find(|node| node.kind == NodeKind::Fn && node.symbol.ends_with("::dispatch"))
+            .unwrap()
+            .clone();
+        let trait_method = shards
+            .iter()
+            .flat_map(|shard| &shard.nodes)
+            .find(|node| node.kind == NodeKind::Fn && node.symbol.ends_with("::Handler::handle"))
+            .unwrap()
+            .clone();
+        let mut candidates = shards
+            .iter()
+            .flat_map(|shard| &shard.nodes)
+            .filter(|node| {
+                node.kind == NodeKind::Fn
+                    && node.symbol.contains("::impl ")
+                    && node.symbol.contains("::Handler for ")
+                    && node.symbol.ends_with("::handle")
+            })
+            .map(|node| node.id.clone())
+            .collect::<Vec<_>>();
+        candidates.sort();
+
+        let mut shard = read_shard(&graph.join("shards"), &caller.file).unwrap();
+        shard.edges.push(Edge {
+            from: caller.id,
+            to: trait_method.id,
+            target_text: Some(trait_method.symbol),
+            resolution: EdgeResolution::Resolved,
+            kind: EdgeKind::Calls,
+            provenance: Provenance::Scip,
+            site: Some(EdgeSite {
+                file: caller.file.clone(),
+                line_start: caller.line_start,
+                column_start: 1,
+                line_end: caller.line_start,
+                column_end: 2,
+            }),
+            extractor: Some(scip_extractor(Some("test-anchor"))),
+            dispatch: None,
+            confidence: Some(EdgeConfidence::Exact),
+            candidates: Vec::new(),
+            evidence: Some("test resolved trait call anchor".into()),
+            generic: false,
+        });
+        shard.edges.sort();
+        shard.edges.dedup();
+        write_shard(&graph.join("shards"), &shard).unwrap();
+        (caller.symbol, candidates)
+    }
+
+    #[test]
+    fn test_atlas_dynamic_dispatch_enriches_trait_call_and_flow() {
+        let (code, graph) = dynamic_trait_fixture("atlas_dynamic_flow", 2);
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let (caller, expected_candidates) = inject_resolved_trait_call(&graph);
+        let (meta, _) = load_graph(&graph).unwrap();
+
+        let outcome = dynamic_dispatch::enrich(
+            &graph.join("shards"),
+            &meta.files,
+            dynamic_dispatch::MAX_CANDIDATES,
+        )
+        .unwrap();
+        assert_eq!(outcome.edges_added, 1);
+        assert!(outcome.diagnostics.is_empty());
+
+        let (meta, shards) = load_graph(&graph).unwrap();
+        let edges = all_edges(&shards);
+        let inferred = edges
+            .iter()
+            .find(|edge| dynamic_dispatch::is_dynamic_edge(edge))
+            .unwrap();
+        assert_eq!(inferred.resolution, EdgeResolution::Unresolved);
+        assert_eq!(inferred.dispatch, Some(DispatchKind::Trait));
+        assert_eq!(inferred.confidence, Some(EdgeConfidence::BoundedCandidates));
+        assert_eq!(inferred.candidates, expected_candidates);
+        assert!(edges.iter().any(|edge| {
+            edge.from == inferred.from
+                && edge.to == inferred.to
+                && edge.provenance == Provenance::Scip
+                && edge.confidence == Some(EdgeConfidence::Exact)
+        }));
+
+        rebuild_query_index(&graph, &meta, &shards).unwrap();
+        let target = shards
+            .iter()
+            .flat_map(|shard| &shard.nodes)
+            .find(|node| node.id == inferred.candidates[0])
+            .unwrap();
+        let result = flow(
+            &code,
+            &graph,
+            FlowQuery::Between {
+                from: caller,
+                to: target.symbol.clone(),
+            },
+            &FlowOptions {
+                frozen: true,
+                ..FlowOptions::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(result.state, FlowState::Found);
+        assert_eq!(
+            result.shortest.unwrap().confidence,
+            PathConfidence::BoundedCandidates
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_dynamic_dispatch_is_inert_without_trait_call() {
+        let (code, graph) = dynamic_trait_fixture("atlas_dynamic_inert", 2);
+        let report = build(
+            &code,
+            &graph,
+            &BuildOptions {
+                dynamic_dispatch: true,
+                ..BuildOptions::default()
+            },
+        )
+        .unwrap();
+        assert!(report.capability.dynamic_dispatch);
+        assert_eq!(report.capability.dynamic_dispatch_edges, 0);
+        assert!(
+            all_edges(&load_graph(&graph).unwrap().1)
+                .iter()
+                .all(|edge| !dynamic_dispatch::is_dynamic_edge(edge))
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_dynamic_dispatch_fanout_fails_closed() {
+        let (code, graph) = dynamic_trait_fixture("atlas_dynamic_fanout", 65);
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let (_, expected_candidates) = inject_resolved_trait_call(&graph);
+        assert_eq!(expected_candidates.len(), 65);
+        let (meta, _) = load_graph(&graph).unwrap();
+        let outcome = dynamic_dispatch::enrich(
+            &graph.join("shards"),
+            &meta.files,
+            dynamic_dispatch::MAX_CANDIDATES,
+        )
+        .unwrap();
+        assert_eq!(outcome.edges_added, 0);
+        assert_eq!(outcome.diagnostics[0].code, "dynamic-dispatch-truncated");
+        assert!(
+            all_edges(&load_graph(&graph).unwrap().1)
+                .iter()
+                .all(|edge| !dynamic_dispatch::is_dynamic_edge(edge))
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_default_build_removes_dynamic_dispatch_edges() {
+        let (code, graph) = dynamic_trait_fixture("atlas_dynamic_cleanup", 1);
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let (caller, candidates) = inject_resolved_trait_call(&graph);
+        let (meta, _) = load_graph(&graph).unwrap();
+        dynamic_dispatch::enrich(
+            &graph.join("shards"),
+            &meta.files,
+            dynamic_dispatch::MAX_CANDIDATES,
+        )
+        .unwrap();
+        assert_eq!(candidates.len(), 1);
+
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let (_, shards) = load_graph(&graph).unwrap();
+        assert!(
+            all_edges(&shards)
+                .iter()
+                .all(|edge| !dynamic_dispatch::is_dynamic_edge(edge))
+        );
+        assert!(node(&shards, &caller).is_some());
+        assert!(
+            all_edges(&shards)
+                .iter()
+                .any(|edge| edge.provenance == Provenance::Syn)
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
     #[cfg(unix)]
     #[test]
     fn test_atlas_mir_driver_uses_fixed_argv_and_degrades_on_failure() {
@@ -5160,6 +5574,7 @@ impl std::fmt::Display for Local {
             &BuildOptions {
                 full: false,
                 scip_index: Some(scip_fixture()),
+                dynamic_dispatch: false,
             },
         )
         .unwrap();
@@ -5223,6 +5638,7 @@ impl std::fmt::Display for Local {
             &BuildOptions {
                 full: false,
                 scip_index: Some(scip_protobuf_fixture()),
+                dynamic_dispatch: false,
             },
         )
         .unwrap();
@@ -5248,6 +5664,7 @@ impl std::fmt::Display for Local {
             &BuildOptions {
                 full: false,
                 scip_index: Some(scip_fixture()),
+                dynamic_dispatch: false,
             },
         )
         .unwrap();
@@ -5272,6 +5689,7 @@ impl std::fmt::Display for Local {
             &BuildOptions {
                 full: false,
                 scip_index: Some(scip_fixture()),
+                dynamic_dispatch: false,
             },
         )
         .unwrap();
@@ -5354,6 +5772,7 @@ impl std::fmt::Display for Local {
             &BuildOptions {
                 full: false,
                 scip_index: Some(scip_protobuf_fixture()),
+                dynamic_dispatch: false,
             },
         )
         .unwrap();
@@ -5407,6 +5826,7 @@ impl std::fmt::Display for Local {
             &BuildOptions {
                 full: false,
                 scip_index: Some(index_path),
+                dynamic_dispatch: false,
             },
         )
         .unwrap();
@@ -5458,6 +5878,7 @@ impl std::fmt::Display for Local {
             &BuildOptions {
                 full: false,
                 scip_index: Some(index_path),
+                dynamic_dispatch: false,
             },
         )
         .unwrap();
@@ -5504,6 +5925,7 @@ impl std::fmt::Display for Local {
             &BuildOptions {
                 full: false,
                 scip_index: Some(scip_protobuf_fixture()),
+                dynamic_dispatch: false,
             },
         )
         .unwrap();
@@ -5527,6 +5949,7 @@ impl std::fmt::Display for Local {
             &BuildOptions {
                 full: false,
                 scip_index: Some(scip_protobuf_fixture()),
+                dynamic_dispatch: false,
             },
         )
         .unwrap();
@@ -5564,6 +5987,7 @@ impl std::fmt::Display for Local {
             &BuildOptions {
                 full: false,
                 scip_index: Some(scip_protobuf_fixture()),
+                dynamic_dispatch: false,
             },
         )
         .unwrap();
@@ -5634,6 +6058,7 @@ impl std::fmt::Display for Local {
             &BuildOptions {
                 full: false,
                 scip_index: Some(index_path),
+                dynamic_dispatch: false,
             },
         )
         .unwrap();
@@ -5697,6 +6122,7 @@ impl std::fmt::Display for Local {
             &BuildOptions {
                 full: false,
                 scip_index: Some(scip_protobuf_fixture()),
+                dynamic_dispatch: false,
             },
         )
         .unwrap();
@@ -5739,6 +6165,7 @@ impl std::fmt::Display for Local {
             &BuildOptions {
                 full: false,
                 scip_index: Some(idx.clone()),
+                dynamic_dispatch: false,
             },
         )
         .unwrap();

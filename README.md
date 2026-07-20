@@ -550,6 +550,16 @@ agent-spec atlas status --code . --graph .agent-spec/graph --format json
 agent-spec atlas check --code . --graph .agent-spec/graph
 ```
 
+Bounded Rust trait-dispatch candidates are opt-in and require a SCIP call
+anchor. The original exact declaration edge remains; the enricher adds a
+separate unresolved candidate edge with a hard fan-out cap:
+
+```bash
+agent-spec atlas build --code . --scip target/index.scip --dynamic-dispatch
+```
+
+See [Rust Atlas Dynamic Dispatch](docs/atlas-dynamic-dispatch.md).
+
 MIR activation is an opt-in Cargo feature and consumes a versioned external
 producer artifact. The stable JSON consumer carries no compiler dependency;
 the default build neither compiles nor invokes a MIR producer:
@@ -561,7 +571,9 @@ cargo run --features mir -- atlas build --code . --mir-driver /absolute/path/to/
 
 The two MIR modes are mutually exclusive. Extraction or validation failure
 returns a `mir-extraction-failed` build warning, clears previous MIR facts, and
-keeps the syn plus optional SCIP graph usable. The repository currently ships
+keeps the syn plus optional SCIP graph usable. MIR shards commit as one staged
+generation, and status exposes extractor plus artifact/source fingerprints.
+The repository currently ships
 the protocol, consumer, and driver adapter, not an official `rustc_public`
 producer binary. See [Rust Atlas MIR Overlay](docs/atlas-mir-overlay.md).
 

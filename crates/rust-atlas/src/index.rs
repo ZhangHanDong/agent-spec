@@ -4,9 +4,10 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::traversal::canonical_edge_signature;
+use crate::traversal::{canonical_edge_signature, confidence_cost};
 use crate::{
-    AtlasError, Capability, Edge, MatchKind, Meta, Node, SCHEMA_VERSION, SearchHit, Shard,
+    AtlasError, Capability, Edge, EdgeResolution, MatchKind, Meta, Node, SCHEMA_VERSION, SearchHit,
+    Shard,
 };
 
 const QUERY_INDEX_FILE: &str = "query-index.json";
@@ -123,12 +124,14 @@ impl QueryIndex {
             .collect();
         nodes.sort_by(|left, right| left.id.cmp(&right.id));
 
-        let edges: Vec<Edge> = shards
-            .iter()
-            .flat_map(|shard| shard.edges.iter().cloned().map(canonical_edge))
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
+        let edges = crate::preferred_query_edges(
+            shards
+                .iter()
+                .flat_map(|shard| shard.edges.iter().cloned().map(canonical_edge))
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect(),
+        );
 
         let locators = Locators::from_tables(&nodes, &edges);
 
@@ -363,12 +366,21 @@ fn canonicalize_adjacent_locators(
 ) {
     for values in locators.values_mut() {
         values.sort_by(|left, right| {
+            let left_edge = &edges[left.edge_position];
+            let right_edge = &edges[right.edge_position];
             nodes[left.node_position]
                 .id
                 .cmp(&nodes[right.node_position].id)
                 .then_with(|| {
-                    canonical_edge_signature(&edges[left.edge_position])
-                        .cmp(&canonical_edge_signature(&edges[right.edge_position]))
+                    confidence_cost(left_edge, left_edge.resolution != EdgeResolution::Resolved)
+                        .cmp(&confidence_cost(
+                            right_edge,
+                            right_edge.resolution != EdgeResolution::Resolved,
+                        ))
+                })
+                .then_with(|| right_edge.provenance.cmp(&left_edge.provenance))
+                .then_with(|| {
+                    canonical_edge_signature(left_edge).cmp(&canonical_edge_signature(right_edge))
                 })
         });
         let mut seen = BTreeSet::new();
@@ -782,6 +794,78 @@ mod tests {
         assert_eq!(index.outgoing_edges_for("caller-a").count(), 1);
         assert_eq!(index.incoming_edges_for("target").take(1).count(), 1);
         assert_eq!(index.target_nodes("target").count(), 1);
+    }
+
+    #[test]
+    fn test_query_index_projects_highest_provenance_relations() {
+        let meta = sample_meta();
+        let nodes = vec![
+            search_node("caller", "pkg::caller", "src/lib.rs", 1),
+            search_node("target", "pkg::target", "src/lib.rs", 2),
+        ];
+        let mut syn = test_edge("caller", "target");
+        syn.kind = EdgeKind::References;
+        syn.provenance = Provenance::Syn;
+        let mut scip = test_edge("caller", "target");
+        scip.provenance = Provenance::Scip;
+        let mut mir = scip.clone();
+        mir.provenance = Provenance::Mir;
+        let index = QueryIndex::from_graph(
+            &meta,
+            &[Shard {
+                file: "src/lib.rs".into(),
+                hash: "hash".into(),
+                unparsed: None,
+                nodes,
+                edges: vec![syn, scip, mir.clone()],
+            }],
+        );
+
+        assert_eq!(index.edges, vec![mir]);
+        assert_eq!(index.outgoing_edges_for("caller").count(), 1);
+        assert_eq!(index.incoming_edges_for("target").count(), 1);
+    }
+
+    #[test]
+    fn test_query_index_adjacent_projection_prefers_exact_edge_over_candidate_target() {
+        let meta = sample_meta();
+        let nodes = vec![
+            search_node("caller", "pkg::caller", "src/lib.rs", 1),
+            search_node("a-trait-method", "pkg::Service::run", "src/lib.rs", 2),
+            search_node(
+                "z-impl-method",
+                "pkg::impl Service for Target::run",
+                "src/lib.rs",
+                3,
+            ),
+        ];
+        let mut exact = test_edge("caller", "z-impl-method");
+        exact.provenance = Provenance::Mir;
+        exact.confidence = Some(crate::EdgeConfidence::Exact);
+        let mut candidate = test_edge("caller", "a-trait-method");
+        candidate.resolution = EdgeResolution::Unresolved;
+        candidate.confidence = Some(crate::EdgeConfidence::BoundedCandidates);
+        candidate.candidates = vec!["z-impl-method".into()];
+        let index = QueryIndex::from_graph(
+            &meta,
+            &[Shard {
+                file: "src/lib.rs".into(),
+                hash: "hash".into(),
+                unparsed: None,
+                nodes,
+                edges: vec![candidate, exact.clone()],
+            }],
+        );
+
+        assert_eq!(index.edges.len(), 2);
+        let incoming = index
+            .incoming_neighbors_for("z-impl-method")
+            .collect::<Vec<_>>();
+        assert_eq!(incoming.len(), 1);
+        assert_eq!(incoming[0].1, &exact);
+        let outgoing = index.outgoing_neighbors_for("caller").collect::<Vec<_>>();
+        assert_eq!(outgoing.len(), 1);
+        assert_eq!(outgoing[0].1, &exact);
     }
 
     type SearchIndexErrorMatcher = fn(&AtlasError) -> bool;

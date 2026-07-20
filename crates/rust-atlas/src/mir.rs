@@ -6,7 +6,7 @@ use serde::Deserialize;
 
 use super::{
     AtlasError, CfgSummary, DispatchKind, Edge, EdgeConfidence, EdgeKind, EdgeResolution, EdgeSite,
-    ExtractorIdentity, MirBuildOptions, NodeKind, Provenance, Shard, read_shard, write_shard,
+    ExtractorIdentity, MirBuildOptions, NodeKind, Provenance, Shard, read_shard,
 };
 
 const MIR_OVERLAY_SCHEMA: &str = "rust-atlas/mir-overlay-v1";
@@ -17,22 +17,30 @@ pub(super) struct MirApplied {
     pub overlay_path: String,
     pub overlay_fingerprint: String,
     pub source_fingerprint: String,
+    pub shards: BTreeMap<String, Shard>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MirOverlay {
     schema: String,
-    extractor: ExtractorIdentity,
+    extractor: MirExtractor,
     source_fingerprint: String,
     functions: Vec<MirFunction>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct MirExtractor {
+    name: String,
+    version: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct MirFunction {
     symbol: String,
-    cfg: CfgSummary,
+    cfg: MirCfg,
     #[serde(default)]
     calls: Vec<MirCall>,
 }
@@ -41,11 +49,53 @@ struct MirFunction {
 #[serde(deny_unknown_fields)]
 struct MirCall {
     target: String,
-    site: EdgeSite,
+    site: MirSite,
     dispatch: DispatchKind,
     #[serde(default)]
     generic: bool,
     evidence: String,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MirCfg {
+    basic_blocks: usize,
+    edges: usize,
+    exits: usize,
+    loop_headers: usize,
+}
+
+impl From<MirCfg> for CfgSummary {
+    fn from(value: MirCfg) -> Self {
+        Self {
+            basic_blocks: value.basic_blocks,
+            edges: value.edges,
+            exits: value.exits,
+            loop_headers: value.loop_headers,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MirSite {
+    file: String,
+    line_start: usize,
+    column_start: usize,
+    line_end: usize,
+    column_end: usize,
+}
+
+impl From<MirSite> for EdgeSite {
+    fn from(value: MirSite) -> Self {
+        Self {
+            file: value.file,
+            line_start: value.line_start,
+            column_start: value.column_start,
+            line_end: value.line_end,
+            column_end: value.column_end,
+        }
+    }
 }
 
 pub(super) fn prepare_and_overlay(
@@ -159,7 +209,7 @@ fn overlay_mir(
             .iter_mut()
             .find(|node| node.id == caller_id)
             .ok_or_else(|| format!("MIR caller `{}` disappeared", function.symbol))?;
-        caller.cfg = Some(function.cfg);
+        caller.cfg = Some(function.cfg.into());
         changed.insert(caller_file.clone());
 
         for call in &function.calls {
@@ -178,8 +228,11 @@ fn overlay_mir(
                 resolution: EdgeResolution::Resolved,
                 kind: EdgeKind::Calls,
                 provenance: Provenance::Mir,
-                site: Some(call.site.clone()),
-                extractor: Some(overlay.extractor.clone()),
+                site: Some(call.site.clone().into()),
+                extractor: Some(ExtractorIdentity {
+                    name: overlay.extractor.name.clone(),
+                    version: overlay.extractor.version.clone(),
+                }),
                 dispatch: Some(call.dispatch),
                 confidence: Some(EdgeConfidence::Exact),
                 candidates: Vec::new(),
@@ -195,7 +248,6 @@ fn overlay_mir(
         };
         shard.edges.sort();
         shard.edges.dedup();
-        write_shard(shards_dir, shard).map_err(|error| error.to_string())?;
     }
 
     let tool = match overlay.extractor.version.as_deref() {
@@ -210,6 +262,7 @@ fn overlay_mir(
         overlay_path: absolute.to_string_lossy().into_owned(),
         overlay_fingerprint,
         source_fingerprint: overlay.source_fingerprint,
+        shards,
     })
 }
 
