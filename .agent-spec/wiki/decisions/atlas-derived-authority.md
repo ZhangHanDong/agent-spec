@@ -5,11 +5,14 @@ source_files:
   - crates/rust-atlas/src/lib.rs
   - crates/rust-atlas/src/index.rs
   - crates/rust-atlas/src/status.rs
+  - crates/rust-atlas/src/live.rs
+  - crates/rust-atlas/src/generation.rs
   - crates/rust-atlas/src/flow.rs
   - crates/rust-atlas/src/runtime_boundary.rs
   - src/spec_mcp/tools.rs
   - docs/atlas-roadmap.md
   - docs/atlas-runtime-boundaries.md
+  - docs/atlas-live-runtime.md
 tags:
   - atlas
   - derived-data
@@ -35,6 +38,11 @@ list, and makes `atlas_explore` unavailable to both discovery and dispatch
 unless explicitly enabled. Explore source excerpts require a current hash that
 matches graph metadata. KLL artifacts own durable requirements and decisions;
 lifecycle and replay establish current verification evidence.
+The optional watcher/daemon, pending watermark, retry counters, reader lease,
+and `degraded` state are also derived runtime data. They can require a sync or
+rebuild but cannot replace graph freshness, KLL, lifecycle, or trace evidence.
+No-daemon reads remain a supported authority-equivalent path for the same
+committed generation.
 `runtime-boundary` candidates remain a `query-hint` even when they resolve to
 canonical nodes. Candidate lookup follows Rust type/function namespaces and
 expands inherent associated paths through indexed type declarations, but this
@@ -52,3 +60,6 @@ exposure policy changes.
 Atlas D2 now commits the complete derived graph as one generation. This
 strengthens publication consistency without promoting graph facts to KLL truth
 or changing default MCP exposure.
+
+Atlas D3 adds bounded refresh and fail-closed reclamation without changing that
+decision.

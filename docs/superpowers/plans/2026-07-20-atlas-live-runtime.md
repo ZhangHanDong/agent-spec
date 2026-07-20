@@ -537,7 +537,7 @@ git commit -m "feat(atlas): expose live state without query coupling"
 - Modify: `CHANGELOG.md`
 - Modify: `src/main.rs`
 
-- [ ] **Step 1: Add failing matrix and docs tests**
+- [x] **Step 1: Add failing matrix and docs tests**
 
 ```text
 test_atlas_live_runtime_acceptance_matrix_records_receipts
@@ -549,7 +549,7 @@ competing writer, stale registry, disconnect, active reader, ambiguous lease, ab
 no-daemon parity. Receipts contain watermark, pending before/after, retries, state, generation,
 writer identity and reclamation.
 
-- [ ] **Step 2: Run RED, add fixtures/docs, then mark roadmap D3 delivered**
+- [x] **Step 2: Run RED, add fixtures/docs, then mark roadmap D3 delivered**
 
 ```bash
 cargo test test_atlas_live_runtime_acceptance_matrix_records_receipts -- --exact
@@ -558,7 +558,7 @@ cargo test test_atlas_live_runtime_docs_match_cli_and_authority_boundaries -- --
 
 Document exact commands/defaults/state/recovery/authority boundaries. Keep B5/E1/F1 pending.
 
-- [ ] **Step 3: Refresh wiki and run docs gates**
+- [x] **Step 3: Refresh wiki and run docs gates**
 
 ```bash
 target/debug/agent-spec wiki meta update --code . --wiki .agent-spec/wiki
@@ -567,7 +567,7 @@ target/debug/agent-spec wiki check --code . --wiki .agent-spec/wiki
 bash scripts/docs-lint.sh
 ```
 
-- [ ] **Step 4: Dogfood start/status/sync/stop and no-daemon query**
+- [x] **Step 4: Dogfood start/status/sync/stop and no-daemon query**
 
 ```bash
 target/debug/agent-spec atlas build --code . --graph .agent-spec/graph
@@ -578,7 +578,7 @@ target/debug/agent-spec atlas daemon stop --code . --graph .agent-spec/graph
 target/debug/agent-spec atlas query rust_atlas::build --code . --graph .agent-spec/graph --frozen
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add fixtures/atlas/live-runtime docs/atlas-live-runtime.md docs/atlas-incremental-builds.md \

@@ -8,6 +8,15 @@ All notable changes to `agent-spec` are documented here. Format follows
 
 ### Added
 
+- Atlas D3 optional live runtime: a shared build/watch scope, bounded platform
+  watcher, persisted pending watermark, separate writer/ordinary retry budgets,
+  typed `warming`/`healthy`/`pending`/`degraded`/`unavailable` states, and a
+  loopback identity handshake provide explicit local daemon supervision. Every
+  query pins its immutable generation with a reader lease; single-writer
+  reclamation retains active or ambiguous generations and cleans abandoned
+  staging idempotently. MCP discovery remains static and no-daemon queries read
+  the same graph facts. Live state remains derived and cannot replace graph
+  freshness, KLL, Task Contract, or lifecycle authority.
 - Atlas D2 incremental hardening: builds now publish immutable committed
   generations behind one atomic pointer; read surfaces pin and report the same
   generation. A content-addressed Cargo input plan, source-owned module
@@ -19,7 +28,8 @@ All notable changes to `agent-spec` are documented here. Format follows
   Automatic refresh preserves committed Cargo inputs; capability changes use
   explicit full frontiers, shard phases stream by batch, and byte admission
   covers source, serialized graph, and overlays. Failed post-commit orphan
-  cleanup remains recoverable. D3 watcher/daemon behavior remains out of scope.
+  cleanup remains recoverable. D3 composes these primitives without changing
+  their publication contract.
 - Atlas disconnected `flow` queries now explain fresh Rust runtime boundaries
   for async tasks, channels, callback registries, reflection, and framework
   routes. The bounded AST-derived results are explicitly heuristic query hints:

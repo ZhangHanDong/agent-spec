@@ -109,3 +109,6 @@ decisions.
 
 Atlas D2 was reviewed here; wiki freshness still tracks source changes and does
 not infer freshness from the Atlas generation pointer.
+
+Atlas D3 was reviewed here; wiki stale checks remain Git/source based and do
+not infer freshness from daemon health or pending watermarks.

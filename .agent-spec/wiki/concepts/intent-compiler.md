@@ -55,3 +55,6 @@ Update this page when any listed `source_files` change in a way that alters the 
 
 Atlas D2 was reviewed here; graph publication changed, but governed bindings
 and explicit Contract selectors remain the intent compiler boundary.
+
+Atlas D3 was reviewed here; watcher and daemon state can trigger refresh but
+cannot transition a requirement or create execution evidence.

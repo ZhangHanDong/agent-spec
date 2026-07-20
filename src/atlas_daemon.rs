@@ -22,6 +22,7 @@ const REGISTRY_FILE: &str = "daemon.json";
 const MAX_PROTOCOL_BYTES: usize = 1024 * 1024;
 const IO_TIMEOUT: Duration = Duration::from_secs(1);
 const START_TIMEOUT: Duration = Duration::from_secs(5);
+const SYNC_RESPONSE_TIMEOUT: Duration = Duration::from_secs(600);
 const DEBOUNCE: Duration = Duration::from_millis(100);
 
 #[derive(Debug, thiserror::Error)]
@@ -581,7 +582,7 @@ fn send_to_identity(
     let mut stream = TcpStream::connect_timeout(&endpoint, IO_TIMEOUT)
         .map_err(|error| DaemonError::Unavailable(error.to_string()))?;
     stream
-        .set_read_timeout(Some(IO_TIMEOUT))
+        .set_read_timeout(Some(command_read_timeout(command)))
         .map_err(io_error)?;
     stream
         .set_write_timeout(Some(IO_TIMEOUT))
@@ -609,6 +610,13 @@ fn send_to_identity(
         ));
     }
     Ok(response)
+}
+
+fn command_read_timeout(command: DaemonCommand) -> Duration {
+    match command {
+        DaemonCommand::Status | DaemonCommand::Stop => IO_TIMEOUT,
+        DaemonCommand::Sync => SYNC_RESPONSE_TIMEOUT,
+    }
 }
 
 fn registry_path(graph: &Path) -> PathBuf {
@@ -816,6 +824,17 @@ mod tests {
         send_command(code, graph, DaemonCommand::Stop).unwrap();
         handle.join().unwrap();
         assert!(!registry_path(graph).exists());
+    }
+
+    #[test]
+    fn test_atlas_daemon_sync_uses_bounded_long_operation_timeout() {
+        assert_eq!(command_read_timeout(DaemonCommand::Status), IO_TIMEOUT);
+        assert_eq!(command_read_timeout(DaemonCommand::Stop), IO_TIMEOUT);
+        assert_eq!(
+            command_read_timeout(DaemonCommand::Sync),
+            Duration::from_secs(600)
+        );
+        assert!(command_read_timeout(DaemonCommand::Sync) > START_TIMEOUT);
     }
 
     #[test]

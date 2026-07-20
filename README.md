@@ -548,6 +548,10 @@ agent-spec atlas impact <symbol> --depth 3 --code . --graph .agent-spec/graph --
 agent-spec atlas affected --worktree --code . --graph .agent-spec/graph --frozen
 agent-spec atlas status --code . --graph .agent-spec/graph --format json
 agent-spec atlas check --code . --graph .agent-spec/graph
+agent-spec atlas daemon start --code . --graph .agent-spec/graph
+agent-spec atlas daemon status --code . --graph .agent-spec/graph
+agent-spec atlas daemon sync --code . --graph .agent-spec/graph
+agent-spec atlas daemon stop --code . --graph .agent-spec/graph
 ```
 
 Builds publish one immutable committed generation containing metadata, shards,
@@ -563,8 +567,14 @@ content-addressed Cargo input plan. `--frontier-limit`, `--batch-size`, and
 `--working-byte-limit` set deterministic resource boundaries. These D2 build
 primitives preserve committed Cargo inputs during automatic refresh, use an
 explicit full frontier for capability changes, and keep post-commit orphan
-maintenance failures recoverable. They do not start a watcher or daemon. See
-[Rust Atlas Incremental Builds](docs/atlas-incremental-builds.md).
+maintenance failures recoverable. D3 optionally wraps them with a bounded
+watcher and daemon. It persists a pending watermark, reports `degraded`
+explicitly, and keeps separate writer-lock and ordinary retry budgets. Queries
+hold a reader lease while using an immutable generation; ambiguous leases block
+reclamation. Static MCP discovery and no-daemon queries remain available. Live
+state never replaces graph freshness, KLL, or lifecycle authority. See
+[Rust Atlas Incremental Builds](docs/atlas-incremental-builds.md) and
+[Rust Atlas Live Runtime](docs/atlas-live-runtime.md).
 
 Bounded Rust trait-dispatch candidates are opt-in and require a SCIP call
 anchor. The original exact declaration edge remains; the enricher adds a

@@ -79,6 +79,10 @@ agent-spec atlas impact <symbol> --depth 3 --code . --graph .agent-spec/graph --
 agent-spec atlas affected --worktree --code . --graph .agent-spec/graph --frozen
 agent-spec atlas status --code . --graph .agent-spec/graph --format json
 agent-spec atlas check --code . --graph .agent-spec/graph
+agent-spec atlas daemon start --code . --graph .agent-spec/graph
+agent-spec atlas daemon status --code . --graph .agent-spec/graph
+agent-spec atlas daemon sync --code . --graph .agent-spec/graph
+agent-spec atlas daemon stop --code . --graph .agent-spec/graph
 ```
 
 `atlas build` publishes one complete committed generation; all read surfaces
@@ -89,9 +93,14 @@ bounded reverse-dependent frontier; configure `--frontier-limit`,
 resolution, validation, staging, or authority rewrite. Cancellation and build
 failure preserve the old generation and orphan work for a later recovery build.
 Automatic refresh reuses committed Cargo inputs; capability changes use an
-explicit full-frontier fallback. These are D2 build primitives, not a watcher
-or daemon. See
-`docs/atlas-incremental-builds.md`.
+explicit full-frontier fallback. The optional D3 watcher/daemon wraps these D2
+build primitives, persists a
+pending watermark and exposes typed `degraded` state. Writer-lock and ordinary
+failures have separate bounded retries. Queries hold a reader lease until their
+immutable generation read ends; ambiguous leases prevent reclamation. MCP
+discovery and no-daemon queries remain deterministic. Live state never replaces
+graph freshness, KLL, or lifecycle authority. See
+`docs/atlas-incremental-builds.md` and `docs/atlas-live-runtime.md`.
 
 `status` reports recorded/current graph identity and the three layer states;
 syn fresh is not authority for a stale SCIP or MIR layer. Rebuild after

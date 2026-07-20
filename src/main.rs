@@ -11270,7 +11270,7 @@ Scenario: verification metadata stays visible
     }
 
     #[test]
-    fn test_atlas_incremental_docs_describe_generation_and_d3_boundary() {
+    fn test_atlas_incremental_docs_describe_generation_and_live_runtime_boundary() {
         let guide = include_str!("../docs/atlas-incremental-builds.md");
         let roadmap = include_str!("../docs/atlas-roadmap.md");
         let skill = include_str!("../skills/agent-spec-tool-first/SKILL.md");
@@ -11281,16 +11281,123 @@ Scenario: verification metadata stays visible
             }
             assert!(content.contains("watcher"));
             assert!(content.contains("daemon"));
-            assert!(
-                ["does not", "not a watcher", "仍未启用", "不启动"]
-                    .iter()
-                    .any(|boundary| content.contains(boundary)),
-                "D3 boundary is not explicit"
-            );
+            assert!(content.contains("D2"));
+            assert!(content.contains("D3"));
         }
         assert!(guide.contains("derived working data"));
         assert!(wiki.contains("derived"));
         assert!(roadmap.contains("Wave 8 已交付"));
+        assert!(roadmap.contains("Wave 9"));
+    }
+
+    #[test]
+    fn test_atlas_live_runtime_acceptance_matrix_records_receipts() {
+        let root = repo_root();
+        let matrix_path = root.join("fixtures/atlas/live-runtime/matrix.json");
+        let matrix_text = fs::read_to_string(&matrix_path)
+            .unwrap_or_else(|error| panic!("{}: {error}", matrix_path.display()));
+        let matrix: serde_json::Value = serde_json::from_str(&matrix_text).unwrap();
+        assert_eq!(matrix["schema"], "rust-atlas/live-runtime-matrix-v1");
+
+        let expected_cases = [
+            "coalescing",
+            "mid-sync",
+            "failed-sync",
+            "writer-retry-exhaustion",
+            "ordinary-retry-exhaustion",
+            "transient-recovery",
+            "competing-writer",
+            "stale-registry",
+            "client-disconnect",
+            "active-reader",
+            "ambiguous-lease",
+            "abandoned-staging",
+            "no-daemon-parity",
+        ];
+        let cases = matrix["cases"].as_array().unwrap();
+        assert_eq!(cases.len(), expected_cases.len());
+        let spec = fs::read_to_string(root.join("specs/task-atlas-live-runtime.spec.md")).unwrap();
+
+        for expected in expected_cases {
+            let case = cases
+                .iter()
+                .find(|case| case["case"] == expected)
+                .unwrap_or_else(|| panic!("missing live-runtime matrix case `{expected}`"));
+            let selector = case["test_selector"].as_str().unwrap();
+            assert!(
+                spec.contains(selector),
+                "matrix selector `{selector}` is not governed by the D3 Task Contract"
+            );
+            let receipt = case["receipt"].as_object().unwrap();
+            for field in [
+                "watermark",
+                "pending_before",
+                "pending_after",
+                "retries",
+                "state",
+                "generation",
+                "writer_identity",
+                "reclamation",
+            ] {
+                assert!(
+                    receipt.contains_key(field),
+                    "case `{expected}` is missing receipt field `{field}`"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_atlas_live_runtime_docs_match_cli_and_authority_boundaries() {
+        let root = repo_root();
+        let read = |path: &str| {
+            fs::read_to_string(root.join(path)).unwrap_or_else(|error| panic!("{path}: {error}"))
+        };
+        let guide = read("docs/atlas-live-runtime.md");
+        let roadmap = read("docs/atlas-roadmap.md");
+        let incremental = read("docs/atlas-incremental-builds.md");
+        let readme = read("README.md");
+        let agents = read("AGENTS.md");
+        let skill = read("skills/agent-spec-tool-first/SKILL.md");
+        let wiki = read(".agent-spec/wiki/architecture/atlas.md");
+
+        for command in [
+            "atlas daemon start",
+            "atlas daemon status",
+            "atlas daemon sync",
+            "atlas daemon stop",
+        ] {
+            assert!(guide.contains(command), "guide is missing `{command}`");
+        }
+        for content in [
+            &guide,
+            &roadmap,
+            &incremental,
+            &readme,
+            &agents,
+            &skill,
+            &wiki,
+        ] {
+            for term in [
+                "watcher",
+                "watermark",
+                "degraded",
+                "reader lease",
+                "no-daemon",
+            ] {
+                assert!(
+                    content.contains(term),
+                    "live-runtime docs are missing `{term}`"
+                );
+            }
+        }
+        for authority in ["graph freshness", "KLL", "lifecycle"] {
+            assert!(
+                guide.contains(authority),
+                "live runtime authority boundary is missing `{authority}`"
+            );
+        }
+        assert!(roadmap.contains("#### D3. 可选 watch 与 daemon mode\n\n状态：已交付"));
     }
 
     #[test]

@@ -1,0 +1,189 @@
+{
+  "schema": "rust-atlas/live-runtime-matrix-v1",
+  "requirement": "REQ-ATLAS-LIVE-RUNTIME",
+  "spec": "specs/task-atlas-live-runtime.spec.md",
+  "cases": [
+    {
+      "case": "coalescing",
+      "test_selector": "test_atlas_watcher_records_source_and_manifest_events",
+      "receipt": {
+        "watermark": { "snapshot": 0, "latest": 2, "acknowledged_through": 0 },
+        "pending_before": [],
+        "pending_after": ["src/lib.rs"],
+        "retries": { "writer_lock": 0, "ordinary": 0 },
+        "state": "pending",
+        "generation": "unchanged",
+        "writer_identity": "not-acquired",
+        "reclamation": { "state": "not-run", "removed": [] }
+      }
+    },
+    {
+      "case": "mid-sync",
+      "test_selector": "test_atlas_pending_watermark_preserves_mid_sync_events",
+      "receipt": {
+        "watermark": { "snapshot": 1, "latest": 2, "acknowledged_through": 1 },
+        "pending_before": ["src/lib.rs@1"],
+        "pending_after": ["src/lib.rs@2"],
+        "retries": { "writer_lock": 0, "ordinary": 0 },
+        "state": "pending",
+        "generation": "committed",
+        "writer_identity": "single-writer",
+        "reclamation": { "state": "completed", "removed": [] }
+      }
+    },
+    {
+      "case": "failed-sync",
+      "test_selector": "test_atlas_failed_sync_preserves_pending_events",
+      "receipt": {
+        "watermark": { "snapshot": 2, "latest": 2, "acknowledged_through": 0 },
+        "pending_before": ["Cargo.toml", "src/lib.rs"],
+        "pending_after": ["Cargo.toml", "src/lib.rs"],
+        "retries": { "writer_lock": 0, "ordinary": 1 },
+        "state": "pending",
+        "generation": "prior-generation",
+        "writer_identity": "released-after-failure",
+        "reclamation": { "state": "not-run", "removed": [] }
+      }
+    },
+    {
+      "case": "writer-retry-exhaustion",
+      "test_selector": "test_atlas_retry_budget_degrades_without_dropping_pending",
+      "receipt": {
+        "watermark": { "snapshot": 1, "latest": 1, "acknowledged_through": 0 },
+        "pending_before": ["src/lib.rs"],
+        "pending_after": ["src/lib.rs"],
+        "retries": { "writer_lock": 6, "ordinary": 0 },
+        "state": "degraded",
+        "generation": "prior-generation",
+        "writer_identity": "busy",
+        "reclamation": { "state": "not-run", "removed": [] }
+      }
+    },
+    {
+      "case": "ordinary-retry-exhaustion",
+      "test_selector": "test_atlas_retry_budget_degrades_without_dropping_pending",
+      "receipt": {
+        "watermark": { "snapshot": 1, "latest": 1, "acknowledged_through": 0 },
+        "pending_before": ["src/lib.rs"],
+        "pending_after": ["src/lib.rs"],
+        "retries": { "writer_lock": 0, "ordinary": 6 },
+        "state": "degraded",
+        "generation": "prior-generation",
+        "writer_identity": "released-after-failure",
+        "reclamation": { "state": "not-run", "removed": [] }
+      }
+    },
+    {
+      "case": "transient-recovery",
+      "test_selector": "test_atlas_retry_state_resets_after_successful_sync",
+      "receipt": {
+        "watermark": { "snapshot": 2, "latest": 2, "acknowledged_through": 2 },
+        "pending_before": ["src/lib.rs"],
+        "pending_after": [],
+        "retries": { "writer_lock": 0, "ordinary": 0 },
+        "state": "healthy",
+        "generation": "committed",
+        "writer_identity": "single-writer",
+        "reclamation": { "state": "completed", "removed": [] }
+      }
+    },
+    {
+      "case": "competing-writer",
+      "test_selector": "test_atlas_writer_lock_allows_only_one_build",
+      "receipt": {
+        "watermark": { "snapshot": 0, "latest": 0, "acknowledged_through": 0 },
+        "pending_before": [],
+        "pending_after": [],
+        "retries": { "writer_lock": 1, "ordinary": 0 },
+        "state": "healthy",
+        "generation": "unchanged",
+        "writer_identity": "existing-single-writer",
+        "reclamation": { "state": "not-run", "removed": [] }
+      }
+    },
+    {
+      "case": "stale-registry",
+      "test_selector": "test_atlas_daemon_single_writer_recovers_stale_registry_and_pid_reuse",
+      "receipt": {
+        "watermark": { "snapshot": 0, "latest": 0, "acknowledged_through": 0 },
+        "pending_before": [],
+        "pending_after": [],
+        "retries": { "writer_lock": 0, "ordinary": 0 },
+        "state": "healthy",
+        "generation": "unchanged",
+        "writer_identity": "new-live-handshake",
+        "reclamation": { "state": "not-run", "removed": [] }
+      }
+    },
+    {
+      "case": "client-disconnect",
+      "test_selector": "test_atlas_daemon_client_disconnect_does_not_stop_server",
+      "receipt": {
+        "watermark": { "snapshot": 0, "latest": 0, "acknowledged_through": 0 },
+        "pending_before": [],
+        "pending_after": [],
+        "retries": { "writer_lock": 0, "ordinary": 0 },
+        "state": "healthy",
+        "generation": "unchanged",
+        "writer_identity": "same-live-handshake",
+        "reclamation": { "state": "not-run", "removed": [] }
+      }
+    },
+    {
+      "case": "active-reader",
+      "test_selector": "test_atlas_reader_lease_preserves_old_generation_until_drop",
+      "receipt": {
+        "watermark": { "snapshot": 0, "latest": 0, "acknowledged_through": 0 },
+        "pending_before": [],
+        "pending_after": [],
+        "retries": { "writer_lock": 0, "ordinary": 0 },
+        "state": "healthy",
+        "generation": "old-generation-pinned",
+        "writer_identity": "single-writer",
+        "reclamation": { "state": "retained-active-reader", "removed": [] }
+      }
+    },
+    {
+      "case": "ambiguous-lease",
+      "test_selector": "test_atlas_reclamation_retains_generations_for_ambiguous_lease",
+      "receipt": {
+        "watermark": { "snapshot": 0, "latest": 0, "acknowledged_through": 0 },
+        "pending_before": [],
+        "pending_after": [],
+        "retries": { "writer_lock": 0, "ordinary": 0 },
+        "state": "healthy",
+        "generation": "current-generation",
+        "writer_identity": "single-writer",
+        "reclamation": { "state": "fail-closed", "removed": [] }
+      }
+    },
+    {
+      "case": "abandoned-staging",
+      "test_selector": "test_atlas_safe_reclamation_cleans_abandoned_staging_idempotently",
+      "receipt": {
+        "watermark": { "snapshot": 0, "latest": 0, "acknowledged_through": 0 },
+        "pending_before": [],
+        "pending_after": [],
+        "retries": { "writer_lock": 0, "ordinary": 0 },
+        "state": "healthy",
+        "generation": "current-generation",
+        "writer_identity": "single-writer",
+        "reclamation": { "state": "completed-idempotently", "removed": ["abandoned-staging"] }
+      }
+    },
+    {
+      "case": "no-daemon-parity",
+      "test_selector": "test_atlas_mcp_discovery_is_static_and_no_daemon_queries_match",
+      "receipt": {
+        "watermark": { "snapshot": 0, "latest": 0, "acknowledged_through": 0 },
+        "pending_before": [],
+        "pending_after": [],
+        "retries": { "writer_lock": 0, "ordinary": 0 },
+        "state": "unavailable",
+        "generation": "same-query-generation",
+        "writer_identity": "not-contacted",
+        "reclamation": { "state": "not-run", "removed": [] }
+      }
+    }
+  ]
+}

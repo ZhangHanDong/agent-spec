@@ -3,6 +3,7 @@ title: "Main CLI"
 type: module
 source_files:
   - src/main.rs
+  - src/atlas_daemon.rs
 tags:
   - cli
   - commands
@@ -23,3 +24,8 @@ Update this page when any listed `source_files` change in a way that alters the 
 
 Atlas D2 adds deterministic build flags for input identity, frontier size,
 batch size, and working bytes; command dispatch ownership remains here.
+
+Atlas D3 adds `atlas daemon start|serve|status|sync|stop`. The optional watcher
+persists a pending watermark and typed `degraded` state; queries use a reader
+lease and preserve no-daemon behavior. Live runtime state is derived and never
+replaces graph freshness, KLL, or lifecycle authority.

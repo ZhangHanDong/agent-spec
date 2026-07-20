@@ -35,3 +35,6 @@ Update this page when any listed `source_files` change in a way that alters the 
 
 Atlas D2 was reviewed here; wiki articles may summarize generation state but
 remain working memory rather than graph or KLL authority.
+
+Atlas D3 was reviewed here; watcher, watermark, daemon, and reader-lease facts
+remain derived runtime context and must not be promoted by the wiki.

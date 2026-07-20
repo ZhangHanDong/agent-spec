@@ -52,6 +52,10 @@ agent-spec atlas impact <symbol> --depth 3 --code . --graph .agent-spec/graph --
 agent-spec atlas affected --worktree --code . --graph .agent-spec/graph --frozen
 agent-spec atlas status --code . --graph .agent-spec/graph --format json
 agent-spec atlas check --code . --graph .agent-spec/graph
+agent-spec atlas daemon start --code . --graph .agent-spec/graph
+agent-spec atlas daemon status --code . --graph .agent-spec/graph
+agent-spec atlas daemon sync --code . --graph .agent-spec/graph
+agent-spec atlas daemon stop --code . --graph .agent-spec/graph
 ```
 
 Atlas builds publish one committed generation. Query and status results pin and
@@ -63,8 +67,13 @@ authority files. Use `--features`, `--target`, `--cfg`, `--frontier-limit`,
 input/resource identity. Cancellation, overflow, and failed publication leave
 the prior generation readable; later builds recover orphan work. Automatic
 refresh preserves committed Cargo inputs, and capability changes report an
-explicit full-frontier fallback. D2 does not enable a watcher or daemon. See
-`docs/atlas-incremental-builds.md`.
+explicit full-frontier fallback. The optional D3 watcher/daemon persists a
+pending watermark and exposes typed `degraded` state. Writer-lock and ordinary
+failures have separate bounded retries. Queries hold a reader lease until their
+immutable generation read ends; ambiguous leases prevent reclamation. MCP
+discovery and no-daemon queries remain deterministic. This runtime never
+replaces graph freshness, KLL, or lifecycle authority. See
+`docs/atlas-incremental-builds.md` and `docs/atlas-live-runtime.md`.
 
 `atlas build --scip <index> --dynamic-dispatch` opt-in enriches resolved trait
 method calls with at most 64 sorted implementation candidates. It preserves the

@@ -5,6 +5,11 @@ source_files:
   - crates/rust-atlas/src/lib.rs
   - crates/rust-atlas/src/index.rs
   - crates/rust-atlas/src/generation.rs
+  - crates/rust-atlas/src/live.rs
+  - crates/rust-atlas/src/locking.rs
+  - crates/rust-atlas/src/scope.rs
+  - crates/rust-atlas/src/sync.rs
+  - crates/rust-atlas/src/watch.rs
   - crates/rust-atlas/src/input_plan.rs
   - crates/rust-atlas/src/incremental.rs
   - crates/rust-atlas/src/status.rs
@@ -15,10 +20,13 @@ source_files:
   - crates/rust-atlas/src/affected.rs
   - crates/rust-atlas/src/explore.rs
   - src/main.rs
+  - src/atlas_daemon.rs
   - src/spec_mcp/tools.rs
+  - docs/atlas-live-runtime.md
   - specs/task-atlas-explore-flow-impact.spec.md
   - specs/task-atlas-runtime-boundary-hints.spec.md
   - specs/task-atlas-incremental-hardening.spec.md
+  - specs/task-atlas-live-runtime.spec.md
 tags:
   - atlas
   - code-graph
@@ -69,9 +77,18 @@ after pointer commit. A failed post-commit clear rebases the queue for the next
 recovery build. Healthy zero-change builds validate artifact digests and
 perform no staging, resolution, validation, or authority rewrite. Every read
 surface pins and reports one generation id.
-Only current-transaction staging is cleaned in D2. Reclaiming another process's
-staging or an old committed generation requires D3 single-writer identity and a
-reader-retention contract.
+Only current-transaction staging is cleaned in D2. D3 adds an optional bounded
+watcher and local daemon over the same `AtlasScope`. A persisted pending
+watermark survives failed sync; separate retry budgets expose `degraded`
+instead of retrying forever. Query results scope pending paths to represented
+files while global status retains the complete journal.
+
+Every query owns a reader lease for its pinned generation. Under the
+single-writer lock, reclamation removes an old generation only after an
+exclusive reader scan proves it inactive; malformed or unreadable lease state
+fails closed. The daemon registry is accepted only after a loopback identity
+handshake. Static MCP discovery and no-daemon reads do not require daemon
+liveness.
 
 ## Boundaries
 
@@ -85,8 +102,10 @@ syn, SCIP, and MIR separately, so consumers do not infer semantic freshness
 from syn refresh.
 `runtime-boundary` results carry `query-hint` authority: they never become graph
 edges or deterministic impact, binding, lifecycle, or archive evidence.
-Incremental D2 does not start a watcher or daemon; event watermarks, retry, and
-daemon lifecycle remain D3 work.
+Live runtime state is also derived: watcher health, watermark, daemon identity,
+reader lease, and `degraded` status never replace graph freshness, KLL, or
+lifecycle authority. Stopping the daemon preserves no-daemon access to the last
+committed generation.
 
 ## Maintenance
 

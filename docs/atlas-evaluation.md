@@ -14,6 +14,17 @@ inputs are `benchmarks/atlas/query-corpus.json` and
 `benchmarks/atlas/query-results.json`. They detect retrieval regressions; they
 are not fresh observations from the pinned repository.
 
+## Live Runtime Conditions
+
+D3's optional watcher and daemon do not change query correctness. Evaluation
+must record whether an arm ran in no-daemon mode or through the daemon, the
+pinned generation, pending watermark, live state, retry counts, reader lease,
+and whether the runtime was `degraded`. Never compare a warmed daemon arm with
+a cold baseline without labeling that condition. E1 concurrent experiments
+must also report queue and transport behavior; live status does not replace
+graph freshness, KLL, or lifecycle authority. See
+[Rust Atlas Live Runtime](atlas-live-runtime.md).
+
 ## Workflow
 
 Start by validating the corpus, then compile its paired plan:

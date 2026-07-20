@@ -24,3 +24,6 @@ source_files:
 
 Reviewed for Atlas D2: committed generations change graph publication, not the
 workspace package or dependency topology summarized above.
+
+Reviewed for Atlas D3: the optional local daemon adds runtime modules but no
+workspace package or external service dependency.

@@ -70,15 +70,17 @@ failures. Invalid zero limits fail before work starts. Cancellation and the
 working-byte ceiling are checked before publication, so neither can expose a
 partial generation.
 
-## Boundary
+## Live Runtime Boundary
 
-D2 provides deterministic incremental build primitives only. It does not
-start a filesystem watcher or daemon, schedule retries, maintain event
-watermarks, or make auto-sync claims. Those behaviors belong to roadmap D3 and
-must preserve the same generation, orphan, cancellation, and no-daemon
-contracts.
+D2 remains the deterministic build primitive. D3 now wraps it with an optional
+watcher and daemon that persist a pending watermark, apply bounded retries, and
+report `warming`, `healthy`, `pending`, `degraded`, or `unavailable`. See
+[Rust Atlas Live Runtime](atlas-live-runtime.md) for commands, defaults, and
+recovery. The no-daemon path continues to read the same immutable generations.
 
-D2 only removes staging owned by the current transaction. It deliberately
-retains committed generations and does not reclaim another process's staging;
-cross-process reclamation requires the D3 single-writer and reader-retention
-contract.
+D2 removes staging owned by its current transaction. D3 cross-process
+maintenance additionally requires the graph writer lease and a reader lease
+scan before reclaiming old generations or abandoned staging. Ambiguous lease
+state fails closed. Neither layer changes graph freshness, KLL, or lifecycle
+authority, and maintenance warnings do not invalidate an already committed
+generation.

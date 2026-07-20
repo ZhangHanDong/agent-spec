@@ -38,3 +38,6 @@ Update this page when any listed `source_files` change in a way that alters the 
 
 Atlas D2 was reviewed here; generation and resource controls remain execution
 mechanics governed by explicit Task Contract scenarios.
+
+Atlas D3 was reviewed here; pending or degraded runtime state does not satisfy
+a scenario, and no-daemon lifecycle verification remains supported.

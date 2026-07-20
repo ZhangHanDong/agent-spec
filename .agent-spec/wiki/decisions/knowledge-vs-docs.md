@@ -34,3 +34,6 @@ Update this page when any listed `source_files` change in a way that alters the 
 
 Atlas D2 was reviewed here; the reader guide remains in `docs/`, the normative
 requirement remains in `knowledge/`, and generated graph data remains derived.
+
+Atlas D3 follows the same routing: `docs/atlas-live-runtime.md` is the reader
+guide, `REQ-ATLAS-LIVE-RUNTIME` is normative, and `.runtime/` state is derived.

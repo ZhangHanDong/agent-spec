@@ -5,6 +5,8 @@ source_files:
   - crates/rust-atlas/src/status.rs
   - crates/rust-atlas/src/lib.rs
   - crates/rust-atlas/src/generation.rs
+  - crates/rust-atlas/src/live.rs
+  - crates/rust-atlas/src/sync.rs
   - crates/rust-atlas/src/incremental.rs
   - crates/rust-atlas/src/explore.rs
   - crates/rust-atlas/src/flow.rs
@@ -16,6 +18,7 @@ source_files:
   - docs/atlas-roadmap.md
   - docs/atlas-runtime-boundaries.md
   - docs/atlas-incremental-builds.md
+  - docs/atlas-live-runtime.md
 tags:
   - atlas
   - freshness
@@ -37,8 +40,13 @@ fresh syn baseline does not make a stale SCIP overlay authoritative.
 shards, query index, input plan, and overlay capability become visible only as
 one committed generation. Cancellation, resource failure, or publication
 failure leaves the old generation active and retains orphan work. A healthy
-zero-change build does not rewrite derived authority. This is an incremental
-build contract, not a watcher or daemon freshness claim.
+zero-change build does not rewrite derived authority.
+
+D3 adds a separate live status with watcher health, pending watermark, retry
+state, and daemon availability. A reader lease pins each query generation while
+safe reclamation fails closed on ambiguous leases. `pending` or `degraded`
+means refresh work is outstanding; it does not make stale graph facts current.
+Static MCP discovery and no-daemon reads remain independent of daemon liveness.
 
 ## Consumers
 

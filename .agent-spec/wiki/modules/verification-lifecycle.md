@@ -87,3 +87,6 @@ test, code path, worktree, and commit failed.
 
 Atlas D2 was reviewed here; lifecycle consumes one pinned graph generation and
 does not treat generation publication as scenario evidence by itself.
+
+Atlas D3 was reviewed here; a reader lease protects that pinned generation,
+while watcher/daemon state remains diagnostic rather than scenario evidence.
