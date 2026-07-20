@@ -13690,4 +13690,14 @@ Scenario: pass
             "non-parity tasks must be exempt from the behavior matrix"
         );
     }
+
+    #[test]
+    fn test_build_script_tracks_linked_worktree_and_branch_head() {
+        let build = include_str!("../build.rs");
+        assert!(build.contains("--git-path"));
+        assert!(build.contains("--symbolic-full-name"));
+        assert!(build.contains("cargo:rerun-if-changed={head}"));
+        assert!(build.contains("cargo:rerun-if-changed={branch_ref}"));
+        assert!(!build.contains("cargo:rerun-if-changed=.git/HEAD"));
+    }
 }
