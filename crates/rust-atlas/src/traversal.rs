@@ -64,6 +64,7 @@ pub(crate) enum EndpointResolution {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PathEnumeration {
     pub paths: Vec<GraphPath>,
+    pub highest_confidence: Option<GraphPath>,
     pub expansions: usize,
     pub truncated: bool,
 }
@@ -146,22 +147,11 @@ pub(crate) fn enumerate_paths(
         }
     }
 
-    paths.sort_by_cached_key(|path| {
-        (
-            path.hops.len(),
-            path.hops
-                .iter()
-                .map(|hop| confidence_cost(&hop.edge, hop.candidate))
-                .sum::<usize>(),
-            canonical_path_signature(path),
-        )
-    });
-    if paths.len() > limits.max_paths {
-        paths.truncate(limits.max_paths);
-        truncated = true;
-    }
+    let highest_confidence = highest_confidence_path(&paths);
+    truncated |= bound_paths(&mut paths, limits.max_paths);
     Ok(PathEnumeration {
         paths,
+        highest_confidence,
         expansions,
         truncated,
     })
@@ -179,7 +169,54 @@ pub(crate) fn confidence_cost(edge: &Edge, candidate: bool) -> usize {
     }
 }
 
-fn validate_limits(limits: TraversalLimits) -> Result<(), AtlasError> {
+pub(crate) fn path_total_cost(path: &GraphPath) -> usize {
+    path.hops
+        .iter()
+        .map(|hop| confidence_cost(&hop.edge, hop.candidate))
+        .sum()
+}
+
+pub(crate) fn sort_paths(paths: &mut [GraphPath]) {
+    paths.sort_by_cached_key(|path| {
+        (
+            path.hops.len(),
+            path_total_cost(path),
+            canonical_path_signature(path),
+        )
+    });
+}
+
+pub(crate) fn highest_confidence_path(paths: &[GraphPath]) -> Option<GraphPath> {
+    paths
+        .iter()
+        .min_by(|left, right| {
+            path_total_cost(left)
+                .cmp(&path_total_cost(right))
+                .then_with(|| left.hops.len().cmp(&right.hops.len()))
+                .then_with(|| canonical_path_signature(left).cmp(&canonical_path_signature(right)))
+        })
+        .cloned()
+}
+
+pub(crate) fn bound_paths(paths: &mut Vec<GraphPath>, max_paths: usize) -> bool {
+    sort_paths(paths);
+    if paths.len() <= max_paths {
+        return false;
+    }
+    let highest_confidence = highest_confidence_path(paths);
+    paths.truncate(max_paths);
+    if max_paths >= 2
+        && let Some(highest_confidence) = highest_confidence
+        && !paths.contains(&highest_confidence)
+    {
+        paths.pop();
+        paths.push(highest_confidence);
+        sort_paths(paths);
+    }
+    true
+}
+
+pub(crate) fn validate_limits(limits: TraversalLimits) -> Result<(), AtlasError> {
     if !(1..=32).contains(&limits.max_depth) {
         return Err(AtlasError::TraversalLimit {
             detail: format!(
@@ -204,6 +241,7 @@ fn validate_limits(limits: TraversalLimits) -> Result<(), AtlasError> {
 fn empty_enumeration() -> PathEnumeration {
     PathEnumeration {
         paths: Vec::new(),
+        highest_confidence: None,
         expansions: 0,
         truncated: false,
     }
@@ -235,21 +273,35 @@ fn path_neighbors(index: &QueryIndex, path: &PartialPath) -> Vec<(Node, PathHop)
     let Some(current) = path.nodes.last() else {
         return Vec::new();
     };
+    edge_targets_for(index, index.outgoing_edges([current.id.as_str()]))
+        .into_iter()
+        .filter(|(node, _)| !path.nodes.iter().any(|visited| visited.id == node.id))
+        .collect()
+}
+
+pub(crate) fn edge_targets(index: &QueryIndex, edge: &Edge) -> Vec<(Node, PathHop)> {
+    edge_targets_for(index, [edge])
+}
+
+fn edge_targets_for<'a>(
+    index: &QueryIndex,
+    edges: impl IntoIterator<Item = &'a Edge>,
+) -> Vec<(Node, PathHop)> {
     let mut neighbors = Vec::new();
-    for edge in index.outgoing_edges([current.id.as_str()]) {
+    for edge in edges {
         match edge.resolution {
             EdgeResolution::Resolved => {
-                add_target_neighbors(index, path, edge, &edge.to, false, &mut neighbors);
+                add_target_neighbors(index, edge, &edge.to, false, &mut neighbors);
             }
             EdgeResolution::Unresolved if edge.candidates.is_empty() => {
-                add_target_neighbors(index, path, edge, &edge.to, true, &mut neighbors);
+                add_target_neighbors(index, edge, &edge.to, true, &mut neighbors);
             }
             EdgeResolution::Unresolved => {
                 let mut candidates = edge.candidates.clone();
                 candidates.sort();
                 candidates.dedup();
                 for candidate in candidates {
-                    add_target_neighbors(index, path, edge, &candidate, true, &mut neighbors);
+                    add_target_neighbors(index, edge, &candidate, true, &mut neighbors);
                 }
             }
             EdgeResolution::External => {}
@@ -271,16 +323,12 @@ fn path_neighbors(index: &QueryIndex, path: &PartialPath) -> Vec<(Node, PathHop)
 
 fn add_target_neighbors(
     index: &QueryIndex,
-    path: &PartialPath,
     edge: &Edge,
     target: &str,
     candidate: bool,
     neighbors: &mut Vec<(Node, PathHop)>,
 ) {
     for node in resolution_nodes(resolve_endpoint(index, target)) {
-        if path.nodes.iter().any(|visited| visited.id == node.id) {
-            continue;
-        }
         neighbors.push((
             node.clone(),
             PathHop {
@@ -301,8 +349,11 @@ fn resolution_nodes(resolution: EndpointResolution) -> Vec<Node> {
 }
 
 fn complete_path(path: &PartialPath) -> GraphPath {
-    let confidence = path
-        .hops
+    graph_path(path.nodes.clone(), path.hops.clone())
+}
+
+pub(crate) fn graph_path(nodes: Vec<Node>, hops: Vec<PathHop>) -> GraphPath {
+    let confidence = hops
         .iter()
         .map(|hop| confidence_cost(&hop.edge, hop.candidate))
         .max()
@@ -312,13 +363,13 @@ fn complete_path(path: &PartialPath) -> GraphPath {
             _ => PathConfidence::Heuristic,
         });
     GraphPath {
-        nodes: path.nodes.clone(),
-        hops: path.hops.clone(),
+        nodes,
+        hops,
         confidence,
     }
 }
 
-fn canonical_path_signature(path: &GraphPath) -> Vec<u8> {
+pub(crate) fn canonical_path_signature(path: &GraphPath) -> Vec<u8> {
     serde_json::to_vec(&(path.nodes.as_slice(), path.hops.as_slice())).unwrap_or_default()
 }
 
@@ -556,6 +607,35 @@ mod tests {
             vec!["a", "c", "z"]
         );
         assert!(enumeration.truncated);
+    }
+
+    #[test]
+    fn max_paths_preserves_shortest_and_highest_confidence_extremes() {
+        let mut nodes = vec![node("a"), node("x"), node("y"), node("z")];
+        let mut edges = vec![
+            edge("a", "x", EdgeConfidence::Exact),
+            edge("x", "y", EdgeConfidence::Exact),
+            edge("y", "z", EdgeConfidence::Exact),
+        ];
+        for index in 0..8 {
+            let middle = format!("b{index}");
+            nodes.push(node(&middle));
+            edges.push(edge("a", &middle, EdgeConfidence::BoundedCandidates));
+            edges.push(edge(&middle, "z", EdgeConfidence::Exact));
+        }
+        let graph = index(&nodes, &edges);
+        let enumeration =
+            enumerate_paths(&graph, "a", Some("z"), TraversalLimits::flow_default()).unwrap();
+
+        assert_eq!(enumeration.paths.len(), 8);
+        assert!(enumeration.truncated);
+        assert!(
+            enumeration
+                .paths
+                .iter()
+                .any(|path| { path.confidence == PathConfidence::Exact && path.hops.len() == 3 })
+        );
+        assert!(enumeration.paths.iter().any(|path| path.hops.len() == 2));
     }
 
     #[test]

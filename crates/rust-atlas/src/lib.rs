@@ -17,10 +17,12 @@ use std::process::Command;
 use quote::ToTokens;
 use serde::{Deserialize, Serialize};
 
+mod flow;
 mod index;
 mod status;
 mod traversal;
 
+pub use flow::{FlowDiagnostic, FlowEndpoint, FlowOptions, FlowQuery, FlowResult, flow};
 use index::write_json_atomic;
 pub use index::{QueryIndex, canonical_graph_fingerprint, load_query_index, rebuild_query_index};
 pub use status::{AtlasStatus, GraphIdentity, LayerState, LayerStatus, require_authority, status};

@@ -172,6 +172,7 @@ pub(crate) enum EndpointResolution {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PathEnumeration {
     pub paths: Vec<GraphPath>,
+    pub highest_confidence: Option<GraphPath>,
     pub expansions: usize,
     pub truncated: bool,
 }
@@ -184,7 +185,7 @@ pub(crate) struct PathEnumeration {
 TraversalLimit { detail: String },
 ```
 
-`resolve_endpoint(index, value)` checks exact id/symbol before sorted suffix matches. `enumerate_paths(index, start, end, limits)` returns `Result<PathEnumeration, AtlasError>`. Sort complete paths by `(hop count, total confidence cost, canonical node/hop signature)`. `confidence_cost` maps exact and implicit resolved edges to 0, chosen bounded candidates or `BoundedCandidates` to 10, and `Heuristic` plus otherwise-unresolved edges to 100. A path's `PathConfidence` is its worst hop class.
+`resolve_endpoint(index, value)` checks exact id/symbol before sorted suffix matches. `enumerate_paths(index, start, end, limits)` returns `Result<PathEnumeration, AtlasError>`. Sort complete paths by `(hop count, total confidence cost, canonical node/hop signature)`. `paths` is bounded by `max_paths`, while `highest_confidence` retains the global best discovered path separately so the mandatory shortest and highest-confidence fields remain truthful even when `max_paths == 1`. `confidence_cost` maps exact and implicit resolved edges to 0, chosen bounded candidates or `BoundedCandidates` to 10, and `Heuristic` plus otherwise-unresolved edges to 100. A path's `PathConfidence` is its worst hop class.
 
 - [ ] **Step 4: Add deterministic path-enumeration tests**
 
@@ -319,7 +320,7 @@ pub struct FlowResult {
 }
 ```
 
-Use schema `agent-spec/rust-atlas/flow-v1`. Resolve exact id/symbol first and suffix candidates second. More than one candidate produces `AmbiguousEndpoint`; no candidate produces `UnknownEndpoint`.
+`FlowOptions::default()` uses `TraversalLimits::flow_default()` with `frozen: false`. Use schema `agent-spec/rust-atlas/flow-v1`. Resolve exact id/symbol first and suffix candidates second. More than one candidate produces `AmbiguousEndpoint`; no candidate produces `UnknownEndpoint`.
 
 - [ ] **Step 4: Implement endpoint and outcome precedence**
 
