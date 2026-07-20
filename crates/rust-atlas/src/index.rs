@@ -4,6 +4,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::traversal::canonical_edge_signature;
 use crate::{
     AtlasError, Capability, Edge, MatchKind, Meta, Node, SCHEMA_VERSION, SearchHit, Shard,
 };
@@ -366,11 +367,9 @@ fn canonicalize_adjacent_locators(
                 .id
                 .cmp(&nodes[right.node_position].id)
                 .then_with(|| {
-                    edges[left.edge_position]
-                        .kind
-                        .cmp(&edges[right.edge_position].kind)
+                    canonical_edge_signature(&edges[left.edge_position])
+                        .cmp(&canonical_edge_signature(&edges[right.edge_position]))
                 })
-                .then_with(|| edges[left.edge_position].cmp(&edges[right.edge_position]))
         });
         let mut seen = BTreeSet::new();
         values.retain(|locator| {

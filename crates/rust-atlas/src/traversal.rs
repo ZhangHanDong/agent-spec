@@ -373,6 +373,14 @@ pub(crate) fn canonical_path_signature(path: &GraphPath) -> Vec<u8> {
     serde_json::to_vec(&(path.nodes.as_slice(), path.hops.as_slice())).unwrap_or_default()
 }
 
+pub(crate) fn canonical_edge_signature(edge: &Edge) -> Vec<u8> {
+    serde_json::to_vec(edge).unwrap_or_default()
+}
+
+pub(crate) fn canonical_hop_signature(hop: &PathHop) -> Vec<u8> {
+    serde_json::to_vec(hop).unwrap_or_default()
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {

@@ -4,7 +4,8 @@ use std::path::Path;
 use serde::Serialize;
 
 use crate::traversal::{
-    EndpointResolution, canonical_path_signature, graph_path, resolve_endpoint,
+    EndpointResolution, canonical_hop_signature, canonical_path_signature, graph_path,
+    resolve_endpoint,
 };
 use crate::{
     AtlasError, AtlasStatus, EdgeKind, GraphPath, Node, PathDirection, PathHop, QueryIndex,
@@ -567,20 +568,7 @@ fn excluded_neighbor(node: &Node, settled: &BTreeSet<String>, path: &GraphPath) 
 }
 
 fn canonical_hop_cmp(left: &PathHop, right: &PathHop) -> std::cmp::Ordering {
-    left.edge
-        .cmp(&right.edge)
-        .then_with(|| left.chosen_target.cmp(&right.chosen_target))
-        .then_with(|| left.candidate.cmp(&right.candidate))
-        .then_with(|| {
-            path_direction_rank(left.direction).cmp(&path_direction_rank(right.direction))
-        })
-}
-
-fn path_direction_rank(direction: PathDirection) -> u8 {
-    match direction {
-        PathDirection::Forward => 0,
-        PathDirection::Reverse => 1,
-    }
+    canonical_hop_signature(left).cmp(&canonical_hop_signature(right))
 }
 
 #[cfg(test)]
@@ -979,6 +967,66 @@ mod tests {
                 .map(|entry| entry.node.id.as_str())
                 .collect::<Vec<_>>(),
             vec!["a", "z"]
+        );
+    }
+
+    #[test]
+    fn impact_parallel_edges_use_serialized_path_tie_break() {
+        let mut reference = edge("kind-caller", "seed", EdgeKind::References);
+        reference.provenance = Provenance::Syn;
+        let mut call = edge("kind-caller", "seed", EdgeKind::Calls);
+        call.provenance = Provenance::Mir;
+
+        let mut syn = edge("provenance-caller", "seed", EdgeKind::Calls);
+        syn.provenance = Provenance::Syn;
+        let mut mir = edge("provenance-caller", "seed", EdgeKind::Calls);
+        mir.provenance = Provenance::Mir;
+
+        let mut column_two = edge("site-caller", "seed", EdgeKind::Calls);
+        column_two.site = Some(EdgeSite {
+            file: "src/site.rs".into(),
+            line_start: 1,
+            column_start: 2,
+            line_end: 1,
+            column_end: 3,
+        });
+        let mut column_ten = column_two.clone();
+        column_ten.site.as_mut().unwrap().column_start = 10;
+        column_ten.site.as_mut().unwrap().column_end = 11;
+
+        let traversal = impact_many_index(
+            &index(
+                vec![
+                    node("seed", NodeKind::Fn),
+                    node("kind-caller", NodeKind::Fn),
+                    node("provenance-caller", NodeKind::Fn),
+                    node("site-caller", NodeKind::Fn),
+                ],
+                vec![reference, call, syn, mir, column_two, column_ten],
+            ),
+            &[node("seed", NodeKind::Fn)],
+            &ImpactOptions {
+                max_nodes: 3,
+                ..ImpactOptions::default()
+            },
+        )
+        .unwrap();
+
+        let selected = |id: &str| {
+            &traversal
+                .affected
+                .iter()
+                .find(|entry| entry.node.id == id)
+                .unwrap()
+                .path
+                .hops[0]
+                .edge
+        };
+        assert_eq!(selected("kind-caller").kind, EdgeKind::Calls);
+        assert_eq!(selected("provenance-caller").provenance, Provenance::Mir);
+        assert_eq!(
+            selected("site-caller").site.as_ref().unwrap().column_start,
+            10
         );
     }
 }
