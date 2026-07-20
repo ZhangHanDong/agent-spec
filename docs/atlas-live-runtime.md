@@ -24,6 +24,10 @@ time, and random nonce. A stale registry is not process-liveness proof.
 Status, stop, connect, and protocol writes use a one-second I/O timeout. A
 manual sync response has a bounded ten-minute timeout because it executes a D2
 build; startup still requires a verified handshake within five seconds.
+After a transient transport reset or response EOF, the client retries the
+idempotent `status` and `stop` commands once after 10 ms against the same
+verified daemon identity. It never retries `sync`, so an ambiguous response
+cannot duplicate build work.
 The D3 server handles one control request at a time, so status can time out
 while an explicit or startup sync owns that loop. D4 is responsible for
 control-plane isolation and concurrent query backpressure; callers can retry

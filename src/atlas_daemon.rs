@@ -565,7 +565,24 @@ fn send_command(
     command: DaemonCommand,
 ) -> Result<DaemonResponse, DaemonError> {
     let identity = read_registry(graph)?;
-    send_to_identity(&identity, code, graph, command)
+    match send_to_identity(&identity, code, graph, command) {
+        Err(error)
+            if command_allows_transient_retry(command) && is_transient_command_error(&error) =>
+        {
+            std::thread::sleep(Duration::from_millis(10));
+            send_to_identity(&identity, code, graph, command)
+        }
+        result => result,
+    }
+}
+
+fn command_allows_transient_retry(command: DaemonCommand) -> bool {
+    matches!(command, DaemonCommand::Status | DaemonCommand::Stop)
+}
+
+fn is_transient_command_error(error: &DaemonError) -> bool {
+    matches!(error, DaemonError::Io(_) | DaemonError::Unavailable(_))
+        || matches!(error, DaemonError::Protocol(detail) if detail == "daemon closed without a response")
 }
 
 fn send_to_identity(
@@ -835,6 +852,9 @@ mod tests {
             Duration::from_secs(600)
         );
         assert!(command_read_timeout(DaemonCommand::Sync) > START_TIMEOUT);
+        assert!(command_allows_transient_retry(DaemonCommand::Status));
+        assert!(command_allows_transient_retry(DaemonCommand::Stop));
+        assert!(!command_allows_transient_retry(DaemonCommand::Sync));
     }
 
     #[test]
