@@ -449,8 +449,9 @@ git commit -m "feat(atlas): add opt-in concurrent MCP context"
 ## Task 7: Add The D4 Correctness And Measurement Receipt
 
 **Files:**
+- Modify: `Cargo.toml`
 - Modify: `src/atlas_eval.rs`
-- Modify: `src/main.rs`
+- Modify: `src/atlas_daemon.rs`
 - Create: `fixtures/atlas/concurrent-query/Cargo.toml`
 - Create: `fixtures/atlas/concurrent-query/src/lib.rs`
 - Create: `benchmarks/atlas/concurrent-query-receipt-v1.json`
@@ -461,20 +462,20 @@ git commit -m "feat(atlas): add opt-in concurrent MCP context"
 - Produces: `ConcurrentQueryReceipt`, strict scorer/gate and checked-in direct/worker matrix.
 - E1 consumes: serving mode plus receipt path/hash; B5 `QueryLoadProfile` remains the workload authority.
 
-- [ ] **Step 1: Write failing strict receipt tests**
+- [x] **Step 1: Write failing strict receipt tests**
 
 Add parse failures for wrong schema, unknown fields, duplicate request ids, missing failed runs,
 success without context digest, non-success with digest, mixed generation/fingerprint and promoted
 measurement thresholds. Add the acceptance selector
 `test_atlas_concurrent_query_checked_in_receipt_is_passing`.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```bash
 cargo test atlas_eval::tests::test_atlas_concurrent_query_ -- --nocapture
 ```
 
-- [ ] **Step 3: Implement schema and gate**
+- [x] **Step 3: Implement schema and gate**
 
 Use schema `agent-spec/atlas-eval/concurrent-query-v1`. Record workload/revision/config, per-request
 B5 load profile, typed outcome, reservation, attempts, generation/fingerprint, response digest,
@@ -482,25 +483,25 @@ lease cleanup and pool counters. Store queue/service/heartbeat timing, response 
 a `measurements` object that the correctness gate validates for shape but never compares to a pass
 threshold.
 
-- [ ] **Step 4: Build the checked-in matrix**
+- [x] **Step 4: Build the checked-in matrix**
 
 Cover light, traversal, source-heavy and mixed direct/worker parity; queue and memory busy; queued
 timeout; executing cancel; one retry/repeated panic; publish race; stop; unavailable; fallback; two
 worktrees. Retain every failed injected run as an expected typed case. Generate stable request ids
 and canonical response digests from the fixture.
 
-- [ ] **Step 5: Extend the opt-in E1 hook without promoting defaults**
+- [x] **Step 5: Extend the opt-in E1 hook without promoting defaults**
 
 Add direct/worker serving mode and D4 receipt hash/path to `RunReceipt`. The opt-in shell runner
 requires an explicit agent command and explicit D4 mode; it must not manufacture worker benefit or
 drop failed trials. No threshold is added until E1 baseline evidence exists.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 ```bash
 cargo test atlas_eval::tests::test_atlas_concurrent_query_ -- --nocapture
 cargo test test_atlas_context_compiler_checked_in_regression_receipt_is_passing -- --nocapture
-git add src/atlas_eval.rs src/main.rs fixtures/atlas/concurrent-query \
+git add Cargo.toml src/atlas_eval.rs src/atlas_daemon.rs fixtures/atlas/concurrent-query \
   benchmarks/atlas/concurrent-query-receipt-v1.json scripts/atlas-eval/run-opt-in.sh
 git commit -m "test(atlas): gate concurrent query serving"
 ```

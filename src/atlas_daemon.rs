@@ -1948,6 +1948,29 @@ mod tests {
         )
     }
 
+    fn send_cancel(
+        identity: &DaemonIdentity,
+        code: &Path,
+        graph: &Path,
+        request_id: &str,
+    ) -> Result<DaemonResponse, DaemonError> {
+        send_request_to_identity(
+            identity,
+            code,
+            graph,
+            DaemonRequest {
+                schema_id: PROTOCOL_SCHEMA.to_string(),
+                schema_version: PROTOCOL_VERSION,
+                identity: identity.clone(),
+                command: DaemonCommand::Cancel,
+                context: None,
+                cancel: Some(DaemonCancelRequest {
+                    request_id: request_id.to_string(),
+                }),
+            },
+        )
+    }
+
     fn socket_pair() -> (TcpStream, TcpStream) {
         let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
         let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
@@ -2550,6 +2573,169 @@ mod tests {
         handle.join().unwrap();
         assert!(!registry_path(&graph).exists());
         fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_query_service_isolates_concurrent_worktrees() {
+        let (left_code, left_graph) = fixture("query-worktree-left");
+        let (right_code, right_graph) = fixture("query-worktree-right");
+        fs::write(
+            right_code.join("src/lib.rs"),
+            "pub fn value() -> u32 { 2 }\npub fn right_only() {}\n",
+        )
+        .unwrap();
+        rust_atlas::build(
+            &left_code,
+            &left_graph,
+            &rust_atlas::BuildOptions::default(),
+        )
+        .unwrap();
+        rust_atlas::build(
+            &right_code,
+            &right_graph,
+            &rust_atlas::BuildOptions::default(),
+        )
+        .unwrap();
+
+        let (left_started_tx, left_started_rx) = mpsc::channel();
+        let (right_started_tx, right_started_rx) = mpsc::channel();
+        let left_release = Arc::new(Barrier::new(2));
+        let right_release = Arc::new(Barrier::new(2));
+        let config = crate::atlas_query_service::QueryServiceConfig {
+            workers: 1,
+            queue_capacity: 1,
+            ..crate::atlas_query_service::QueryServiceConfig::default()
+        };
+        let (left_identity, left_handle) = spawn_test_server_with_runners(
+            &left_code,
+            &left_graph,
+            config,
+            Arc::new(BarrierQueryRunner {
+                inner: crate::atlas_query_service::PinnedContextRunner::new(
+                    &left_code,
+                    &left_graph,
+                ),
+                started: left_started_tx,
+                release: Arc::clone(&left_release),
+            }),
+            Arc::new(SyncOnceRunner),
+        );
+        let (right_identity, right_handle) = spawn_test_server_with_runners(
+            &right_code,
+            &right_graph,
+            config,
+            Arc::new(BarrierQueryRunner {
+                inner: crate::atlas_query_service::PinnedContextRunner::new(
+                    &right_code,
+                    &right_graph,
+                ),
+                started: right_started_tx,
+                release: Arc::clone(&right_release),
+            }),
+            Arc::new(SyncOnceRunner),
+        );
+        assert_ne!(left_identity, right_identity);
+        assert_ne!(left_identity.worktree_root, right_identity.worktree_root);
+        assert_ne!(left_identity.graph_root, right_identity.graph_root);
+        assert_ne!(left_identity.startup_nonce, right_identity.startup_nonce);
+
+        let spawn_query = |identity: DaemonIdentity, code: PathBuf, graph: PathBuf| {
+            thread::spawn(move || send_context(&identity, &code, &graph, "same-query-id", "value"))
+        };
+        let left_query = spawn_query(left_identity.clone(), left_code.clone(), left_graph.clone());
+        let right_query = spawn_query(
+            right_identity.clone(),
+            right_code.clone(),
+            right_graph.clone(),
+        );
+        let left_generation = left_started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
+        let right_generation = right_started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
+        assert_ne!(left_generation, right_generation);
+
+        for (identity, code, graph) in [
+            (&left_identity, &left_code, &left_graph),
+            (&right_identity, &right_code, &right_graph),
+        ] {
+            let status = send_to_identity(identity, code, graph, DaemonCommand::ServiceStatus)
+                .unwrap()
+                .service
+                .unwrap();
+            assert_eq!(status.active, 1);
+            assert_eq!(status.outstanding, 1);
+            assert_eq!(status.accepted, 1);
+        }
+
+        assert!(
+            send_cancel(&left_identity, &left_code, &left_graph, "same-query-id")
+                .unwrap()
+                .cancel
+                .unwrap()
+                .cancelled
+        );
+        left_release.wait();
+        let left_reply = left_query.join().unwrap().unwrap().query.unwrap();
+        assert_eq!(
+            left_reply.outcome,
+            crate::atlas_query_service::QueryOutcome::Cancelled
+        );
+
+        let right_status = send_to_identity(
+            &right_identity,
+            &right_code,
+            &right_graph,
+            DaemonCommand::ServiceStatus,
+        )
+        .unwrap()
+        .service
+        .unwrap();
+        assert_eq!(right_status.active, 1);
+        assert_eq!(right_status.cancelled, 0);
+        assert!(
+            send_cancel(&right_identity, &right_code, &right_graph, "same-query-id")
+                .unwrap()
+                .cancel
+                .unwrap()
+                .cancelled
+        );
+        right_release.wait();
+        let right_reply = right_query.join().unwrap().unwrap().query.unwrap();
+        assert_eq!(
+            right_reply.outcome,
+            crate::atlas_query_service::QueryOutcome::Cancelled
+        );
+        assert_ne!(
+            left_reply.receipt.graph_fingerprint,
+            right_reply.receipt.graph_fingerprint
+        );
+        assert_ne!(
+            left_reply.receipt.generation,
+            right_reply.receipt.generation
+        );
+
+        for (identity, code, graph) in [
+            (&left_identity, &left_code, &left_graph),
+            (&right_identity, &right_code, &right_graph),
+        ] {
+            let status = send_to_identity(identity, code, graph, DaemonCommand::ServiceStatus)
+                .unwrap()
+                .service
+                .unwrap();
+            assert_eq!(status.active, 0);
+            assert_eq!(status.outstanding, 0);
+            assert_eq!(status.reserved_bytes, 0);
+            assert_eq!(status.accepted, 1);
+            assert_eq!(status.completed, 1);
+            assert_eq!(status.cancelled, 1);
+        }
+
+        stop_server(&left_code, &left_graph, left_handle);
+        stop_server(&right_code, &right_graph, right_handle);
+        fs::remove_dir_all(left_code.parent().unwrap()).ok();
+        fs::remove_dir_all(right_code.parent().unwrap()).ok();
     }
 
     #[test]

@@ -9,7 +9,104 @@ pub const QUERY_METRICS_SCHEMA: &str = "agent-spec/atlas-eval/query-metrics-v1";
 pub const QUERY_CORPUS_SCHEMA: &str = "agent-spec/atlas-eval/query-corpus-v1";
 pub const QUERY_RESULTS_SCHEMA: &str = "agent-spec/atlas-eval/query-results-v1";
 pub const QUERY_REGRESSION_SCHEMA: &str = "agent-spec/atlas-eval/query-regression-v1";
+pub const CONCURRENT_QUERY_SCHEMA: &str = "agent-spec/atlas-eval/concurrent-query-v1";
 pub const QUERY_MAX_AMBIGUITY: usize = 64;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConcurrentQueryReceipt {
+    pub schema: String,
+    pub version: String,
+    pub fixture: ConcurrentQueryFixture,
+    pub config: ConcurrentQueryConfig,
+    pub runs: Vec<ConcurrentQueryRun>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConcurrentQueryFixture {
+    pub repository: String,
+    pub revision: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConcurrentQueryConfig {
+    pub workers: usize,
+    pub queue_capacity: usize,
+    pub queue_timeout_ms: u64,
+    pub deadline_ms: u64,
+    pub memory_budget_bytes: u64,
+    pub retry_after_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ConcurrentServingMode {
+    Direct,
+    Worker,
+    FallbackDirect,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConcurrentQueryRun {
+    pub request_id: String,
+    pub case_id: String,
+    pub serving_mode: ConcurrentServingMode,
+    pub profile: rust_atlas::QueryLoadProfile,
+    pub outcome: crate::atlas_query_service::QueryOutcome,
+    pub expected_failure: bool,
+    pub reservation_bytes: u64,
+    pub attempts: u8,
+    pub generation: Option<String>,
+    pub graph_fingerprint: Option<String>,
+    pub response_digest: Option<String>,
+    pub reader_leases_after: usize,
+    pub pool: ConcurrentQueryPoolSnapshot,
+    pub worktree: ConcurrentQueryWorktree,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parity_group: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker_outcome: Option<crate::atlas_query_service::QueryOutcome>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback_generation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback_graph_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnostic: Option<String>,
+    pub measurements: ConcurrentQueryMeasurements,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConcurrentQueryPoolSnapshot {
+    pub queued: usize,
+    pub active: usize,
+    pub outstanding: usize,
+    pub reserved_bytes: u64,
+    pub accepted: u64,
+    pub completed: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConcurrentQueryWorktree {
+    pub id: String,
+    pub root_fingerprint: String,
+    pub daemon_identity: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConcurrentQueryMeasurements {
+    pub queue_wait_ms: u64,
+    pub service_ms: u64,
+    pub heartbeat_ms: u64,
+    pub response_bytes: u64,
+    pub cpu_ms: u64,
+    pub rss_bytes: u64,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -247,6 +344,13 @@ pub enum Arm {
     Baseline,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EvalServingMode {
+    Direct,
+    Worker,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunPlan {
@@ -295,6 +399,12 @@ pub struct RunReceipt {
     pub read_back_calls: u64,
     pub follow_up_queries: u64,
     pub truncated_queries: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub atlas_serving_mode: Option<EvalServingMode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub concurrent_query_receipt_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub concurrent_query_receipt_hash: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -320,6 +430,12 @@ struct RunReceiptWire {
     follow_up_queries: Option<u64>,
     #[serde(default)]
     truncated_queries: Option<u64>,
+    #[serde(default)]
+    atlas_serving_mode: Option<EvalServingMode>,
+    #[serde(default)]
+    concurrent_query_receipt_path: Option<String>,
+    #[serde(default)]
+    concurrent_query_receipt_hash: Option<String>,
 }
 
 impl TryFrom<RunReceiptWire> for RunReceipt {
@@ -347,6 +463,30 @@ impl TryFrom<RunReceiptWire> for RunReceipt {
         if wire.query_metrics_schema.is_none() && values.iter().flatten().any(|value| *value != 0) {
             return Err("non-zero query metrics require query_metrics_schema".into());
         }
+        let d4_fields = [
+            wire.atlas_serving_mode.is_some(),
+            wire.concurrent_query_receipt_path.is_some(),
+            wire.concurrent_query_receipt_hash.is_some(),
+        ];
+        if d4_fields.iter().filter(|present| **present).count() != 0
+            && !d4_fields.iter().all(|present| *present)
+        {
+            return Err(
+                "D4 metadata must provide serving mode, receipt path and receipt hash together"
+                    .into(),
+            );
+        }
+        if wire
+            .concurrent_query_receipt_path
+            .as_deref()
+            .is_some_and(str::is_empty)
+            || wire
+                .concurrent_query_receipt_hash
+                .as_deref()
+                .is_some_and(|value| !is_lower_hex(value))
+        {
+            return Err("D4 receipt path and SHA-256 hash are invalid".into());
+        }
 
         Ok(Self {
             case_id: wire.case_id,
@@ -364,6 +504,9 @@ impl TryFrom<RunReceiptWire> for RunReceipt {
             read_back_calls: wire.read_back_calls.unwrap_or(0),
             follow_up_queries: wire.follow_up_queries.unwrap_or(0),
             truncated_queries: wire.truncated_queries.unwrap_or(0),
+            atlas_serving_mode: wire.atlas_serving_mode,
+            concurrent_query_receipt_path: wire.concurrent_query_receipt_path,
+            concurrent_query_receipt_hash: wire.concurrent_query_receipt_hash,
         })
     }
 }
@@ -489,6 +632,421 @@ pub fn load_query_results(path: &Path) -> Result<QueryResults, EvalError> {
             format!("failed to parse {}: {error}", path.display()),
         )
     })
+}
+
+pub fn load_concurrent_query_receipt(path: &Path) -> Result<ConcurrentQueryReceipt, EvalError> {
+    let bytes = std::fs::read(path).map_err(|error| {
+        EvalError::new(
+            "atlas-concurrent-query-load",
+            format!("failed to read {}: {error}", path.display()),
+        )
+    })?;
+    serde_json::from_slice(&bytes).map_err(|error| {
+        EvalError::new(
+            "atlas-concurrent-query-parse",
+            format!("failed to parse {}: {error}", path.display()),
+        )
+    })
+}
+
+pub fn gate_concurrent_query_receipt(receipt: &ConcurrentQueryReceipt) -> Result<(), EvalError> {
+    if receipt.schema != CONCURRENT_QUERY_SCHEMA {
+        return Err(EvalError::new(
+            "atlas-concurrent-query-schema",
+            format!(
+                "expected schema {CONCURRENT_QUERY_SCHEMA}, found {}",
+                receipt.schema
+            ),
+        ));
+    }
+    if receipt.version.trim().is_empty()
+        || !receipt.fixture.repository.starts_with("fixtures/atlas/")
+        || receipt.fixture.revision.trim().is_empty()
+    {
+        return Err(EvalError::new(
+            "atlas-concurrent-query-fixture",
+            "versioned receipt must name a fixture repository and revision",
+        ));
+    }
+    let config = receipt.config;
+    if config.workers != 2
+        || config.queue_capacity != 4
+        || config.queue_timeout_ms != 2_000
+        || config.deadline_ms != 20_000
+        || config.memory_budget_bytes != 268_435_456
+        || config.retry_after_ms != 100
+    {
+        return Err(EvalError::new(
+            "atlas-concurrent-query-config",
+            "receipt must use the fixed D4 prototype configuration",
+        ));
+    }
+    if receipt.runs.is_empty() {
+        return Err(EvalError::new(
+            "atlas-concurrent-query-matrix",
+            "concurrent query receipt has no runs",
+        ));
+    }
+
+    let mut request_ids = BTreeSet::new();
+    let mut case_ids = BTreeSet::new();
+    let mut outcomes = BTreeSet::new();
+    let mut profiles = BTreeSet::new();
+    let mut parity_groups: BTreeMap<&str, Vec<&ConcurrentQueryRun>> = BTreeMap::new();
+    for run in &receipt.runs {
+        validate_concurrent_query_run(run)?;
+        if !request_ids.insert(run.request_id.as_str()) {
+            return Err(EvalError::new(
+                "atlas-concurrent-query-duplicate",
+                format!("duplicate request id {}", run.request_id),
+            ));
+        }
+        case_ids.insert(run.case_id.as_str());
+        outcomes.insert(query_outcome_name(run.outcome));
+        profiles.insert(query_load_profile_name(run.profile));
+        if let Some(group) = run.parity_group.as_deref() {
+            parity_groups.entry(group).or_default().push(run);
+        }
+    }
+
+    let expected_outcomes = BTreeSet::from([
+        "busy",
+        "cancelled",
+        "degraded",
+        "failed",
+        "success",
+        "timeout",
+        "unavailable",
+    ]);
+    let expected_profiles = BTreeSet::from(["light", "mixed", "source-heavy", "traversal"]);
+    if outcomes != expected_outcomes || profiles != expected_profiles {
+        return Err(EvalError::new(
+            "atlas-concurrent-query-matrix",
+            "receipt must cover every typed outcome and B5 query load profile",
+        ));
+    }
+    for required in [
+        "queue-busy",
+        "memory-busy",
+        "queued-timeout",
+        "executing-cancel",
+        "panic-retry",
+        "repeated-panic",
+        "circuit-degraded",
+        "publish-race",
+        "stop-unavailable",
+        "fallback-direct",
+        "worktree-left",
+        "worktree-right",
+    ] {
+        if !case_ids.contains(required) {
+            return Err(EvalError::new(
+                "atlas-concurrent-query-matrix",
+                format!("receipt is missing required case {required}"),
+            ));
+        }
+    }
+    validate_concurrent_matrix_cases(receipt)?;
+    validate_concurrent_parity(&parity_groups)?;
+    validate_concurrent_worktrees(receipt)?;
+    Ok(())
+}
+
+fn validate_concurrent_query_run(run: &ConcurrentQueryRun) -> Result<(), EvalError> {
+    if run.request_id.trim().is_empty()
+        || run.case_id.trim().is_empty()
+        || run.worktree.id.trim().is_empty()
+        || !is_lower_hex(&run.worktree.root_fingerprint)
+        || run.worktree.daemon_identity.trim().is_empty()
+    {
+        return Err(EvalError::new(
+            "atlas-concurrent-query-run",
+            "run ids and worktree identity must be non-empty and fingerprinted",
+        ));
+    }
+    if run.generation.is_some() != run.graph_fingerprint.is_some()
+        || run
+            .generation
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        || run
+            .graph_fingerprint
+            .as_deref()
+            .is_some_and(|value| !is_lower_hex(value))
+    {
+        return Err(EvalError::new(
+            "atlas-concurrent-query-snapshot",
+            format!(
+                "run {} must record generation and graph fingerprint together",
+                run.request_id
+            ),
+        ));
+    }
+    if run.reader_leases_after != 0
+        || run.pool.queued != 0
+        || run.pool.active != 0
+        || run.pool.outstanding != 0
+        || run.pool.reserved_bytes != 0
+        || run.pool.completed > run.pool.accepted
+    {
+        return Err(EvalError::new(
+            "atlas-concurrent-query-resources",
+            format!(
+                "run {} retained a lease or pool reservation",
+                run.request_id
+            ),
+        ));
+    }
+
+    let success = run.outcome == crate::atlas_query_service::QueryOutcome::Success;
+    if run.expected_failure == success
+        || success
+            && (run
+                .response_digest
+                .as_deref()
+                .is_none_or(|value| !is_lower_hex(value))
+                || run.generation.is_none()
+                || run.diagnostic.is_some()
+                || run.measurements.response_bytes == 0)
+        || !success
+            && (run.response_digest.is_some()
+                || run.diagnostic.as_deref().is_none_or(str::is_empty)
+                || run.measurements.response_bytes != 0)
+    {
+        return Err(EvalError::new(
+            "atlas-concurrent-query-run",
+            format!(
+                "run {} has inconsistent typed outcome fields",
+                run.request_id
+            ),
+        ));
+    }
+
+    if run.serving_mode == ConcurrentServingMode::FallbackDirect {
+        if run.outcome != crate::atlas_query_service::QueryOutcome::Success
+            || !matches!(
+                run.worker_outcome,
+                Some(
+                    crate::atlas_query_service::QueryOutcome::Busy
+                        | crate::atlas_query_service::QueryOutcome::Degraded
+                        | crate::atlas_query_service::QueryOutcome::Unavailable
+                )
+            )
+            || run.fallback_generation != run.generation
+            || run.fallback_graph_fingerprint != run.graph_fingerprint
+        {
+            return Err(EvalError::new(
+                "atlas-concurrent-query-fallback",
+                format!("run {} has an incomplete fallback receipt", run.request_id),
+            ));
+        }
+    } else if run.worker_outcome.is_some()
+        || run.fallback_generation.is_some()
+        || run.fallback_graph_fingerprint.is_some()
+    {
+        return Err(EvalError::new(
+            "atlas-concurrent-query-fallback",
+            format!(
+                "run {} mixes fallback fields into another mode",
+                run.request_id
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_concurrent_matrix_cases(receipt: &ConcurrentQueryReceipt) -> Result<(), EvalError> {
+    let expected = [
+        (
+            "queue-busy",
+            crate::atlas_query_service::QueryOutcome::Busy,
+            None,
+        ),
+        (
+            "memory-busy",
+            crate::atlas_query_service::QueryOutcome::Busy,
+            None,
+        ),
+        (
+            "queued-timeout",
+            crate::atlas_query_service::QueryOutcome::Timeout,
+            Some(0),
+        ),
+        (
+            "executing-cancel",
+            crate::atlas_query_service::QueryOutcome::Cancelled,
+            Some(1),
+        ),
+        (
+            "panic-retry",
+            crate::atlas_query_service::QueryOutcome::Success,
+            Some(2),
+        ),
+        (
+            "repeated-panic",
+            crate::atlas_query_service::QueryOutcome::Failed,
+            Some(2),
+        ),
+        (
+            "circuit-degraded",
+            crate::atlas_query_service::QueryOutcome::Degraded,
+            Some(0),
+        ),
+        (
+            "publish-race",
+            crate::atlas_query_service::QueryOutcome::Success,
+            Some(1),
+        ),
+        (
+            "stop-unavailable",
+            crate::atlas_query_service::QueryOutcome::Unavailable,
+            Some(0),
+        ),
+    ];
+    for (case_id, outcome, attempts) in expected {
+        let run = receipt
+            .runs
+            .iter()
+            .find(|run| run.case_id == case_id)
+            .ok_or_else(|| {
+                EvalError::new(
+                    "atlas-concurrent-query-matrix",
+                    format!("receipt is missing required case {case_id}"),
+                )
+            })?;
+        if run.outcome != outcome || attempts.is_some_and(|value| run.attempts != value) {
+            return Err(EvalError::new(
+                "atlas-concurrent-query-matrix",
+                format!("case {case_id} has the wrong outcome or attempt count"),
+            ));
+        }
+    }
+    let fallback = receipt
+        .runs
+        .iter()
+        .find(|run| run.case_id == "fallback-direct")
+        .ok_or_else(|| {
+            EvalError::new(
+                "atlas-concurrent-query-matrix",
+                "receipt is missing fallback-direct",
+            )
+        })?;
+    if fallback.serving_mode != ConcurrentServingMode::FallbackDirect {
+        return Err(EvalError::new(
+            "atlas-concurrent-query-matrix",
+            "fallback-direct must use fallback-direct serving mode",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_concurrent_parity(
+    parity_groups: &BTreeMap<&str, Vec<&ConcurrentQueryRun>>,
+) -> Result<(), EvalError> {
+    if parity_groups.len() != 4 {
+        return Err(EvalError::new(
+            "atlas-concurrent-query-parity",
+            "receipt must contain four direct/worker parity groups",
+        ));
+    }
+    let mut profiles = BTreeSet::new();
+    for (group, runs) in parity_groups {
+        if runs.len() != 2 {
+            return Err(EvalError::new(
+                "atlas-concurrent-query-parity",
+                format!("parity group {group} must contain exactly two runs"),
+            ));
+        }
+        let direct = runs
+            .iter()
+            .find(|run| run.serving_mode == ConcurrentServingMode::Direct);
+        let worker = runs
+            .iter()
+            .find(|run| run.serving_mode == ConcurrentServingMode::Worker);
+        let (Some(direct), Some(worker)) = (direct, worker) else {
+            return Err(EvalError::new(
+                "atlas-concurrent-query-parity",
+                format!("parity group {group} needs direct and worker runs"),
+            ));
+        };
+        if direct.outcome != crate::atlas_query_service::QueryOutcome::Success
+            || worker.outcome != crate::atlas_query_service::QueryOutcome::Success
+            || direct.profile != worker.profile
+            || direct.generation != worker.generation
+            || direct.graph_fingerprint != worker.graph_fingerprint
+            || direct.response_digest != worker.response_digest
+        {
+            return Err(EvalError::new(
+                "atlas-concurrent-query-parity",
+                format!("parity group {group} has different semantic results"),
+            ));
+        }
+        profiles.insert(query_load_profile_name(direct.profile));
+    }
+    if profiles != BTreeSet::from(["light", "mixed", "source-heavy", "traversal"]) {
+        return Err(EvalError::new(
+            "atlas-concurrent-query-parity",
+            "parity groups must cover all four B5 load profiles",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_concurrent_worktrees(receipt: &ConcurrentQueryReceipt) -> Result<(), EvalError> {
+    let runs = receipt
+        .runs
+        .iter()
+        .filter(|run| matches!(run.case_id.as_str(), "worktree-left" | "worktree-right"))
+        .collect::<Vec<_>>();
+    let distinct = |value: fn(&ConcurrentQueryRun) -> Option<&str>| {
+        runs.iter()
+            .filter_map(|run| value(run))
+            .collect::<BTreeSet<_>>()
+            .len()
+            == 2
+    };
+    if runs.len() != 2
+        || !distinct(|run| Some(run.worktree.id.as_str()))
+        || !distinct(|run| Some(run.worktree.root_fingerprint.as_str()))
+        || !distinct(|run| Some(run.worktree.daemon_identity.as_str()))
+        || !distinct(|run| run.generation.as_deref())
+        || !distinct(|run| run.graph_fingerprint.as_deref())
+        || runs[0].request_id == runs[1].request_id
+    {
+        return Err(EvalError::new(
+            "atlas-concurrent-query-worktree",
+            "worktree matrix must retain two fully distinct roots, daemons, snapshots and requests",
+        ));
+    }
+    Ok(())
+}
+
+fn query_outcome_name(outcome: crate::atlas_query_service::QueryOutcome) -> &'static str {
+    match outcome {
+        crate::atlas_query_service::QueryOutcome::Success => "success",
+        crate::atlas_query_service::QueryOutcome::Busy => "busy",
+        crate::atlas_query_service::QueryOutcome::Timeout => "timeout",
+        crate::atlas_query_service::QueryOutcome::Cancelled => "cancelled",
+        crate::atlas_query_service::QueryOutcome::Degraded => "degraded",
+        crate::atlas_query_service::QueryOutcome::Failed => "failed",
+        crate::atlas_query_service::QueryOutcome::Unavailable => "unavailable",
+    }
+}
+
+fn query_load_profile_name(profile: rust_atlas::QueryLoadProfile) -> &'static str {
+    match profile {
+        rust_atlas::QueryLoadProfile::Light => "light",
+        rust_atlas::QueryLoadProfile::Traversal => "traversal",
+        rust_atlas::QueryLoadProfile::SourceHeavy => "source-heavy",
+        rust_atlas::QueryLoadProfile::Mixed => "mixed",
+    }
+}
+
+fn is_lower_hex(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 pub fn validate_query_corpus(corpus: &QueryCorpus) -> Result<(), EvalError> {
@@ -1681,6 +2239,9 @@ mod tests {
             read_back_calls: 0,
             follow_up_queries: 0,
             truncated_queries: 0,
+            atlas_serving_mode: None,
+            concurrent_query_receipt_path: None,
+            concurrent_query_receipt_hash: None,
         }
     }
 
@@ -1964,6 +2525,157 @@ mod tests {
             assert!(context.projection_retained <= context.projection_above_relevance);
             assert!(context.retrieval_returned <= context.retrieval_total);
         }
+    }
+
+    #[test]
+    fn test_atlas_concurrent_query_receipt_rejects_invalid_contracts() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let path = root.join("benchmarks/atlas/concurrent-query-receipt-v1.json");
+        let receipt = load_concurrent_query_receipt(&path).expect("checked-in receipt loads");
+
+        let mut wrong_schema = receipt.clone();
+        wrong_schema.schema = "agent-spec/atlas-eval/concurrent-query-v0".into();
+        assert_eq!(
+            gate_concurrent_query_receipt(&wrong_schema)
+                .unwrap_err()
+                .code(),
+            "atlas-concurrent-query-schema"
+        );
+
+        let mut duplicate = receipt.clone();
+        duplicate.runs[1].request_id = duplicate.runs[0].request_id.clone();
+        assert_eq!(
+            gate_concurrent_query_receipt(&duplicate)
+                .unwrap_err()
+                .code(),
+            "atlas-concurrent-query-duplicate"
+        );
+
+        let mut missing_failures = receipt.clone();
+        missing_failures
+            .runs
+            .retain(|run| run.outcome == crate::atlas_query_service::QueryOutcome::Success);
+        assert_eq!(
+            gate_concurrent_query_receipt(&missing_failures)
+                .unwrap_err()
+                .code(),
+            "atlas-concurrent-query-matrix"
+        );
+
+        let mut success_without_digest = receipt.clone();
+        let success = success_without_digest
+            .runs
+            .iter_mut()
+            .find(|run| run.outcome == crate::atlas_query_service::QueryOutcome::Success)
+            .unwrap();
+        success.response_digest = None;
+        assert_eq!(
+            gate_concurrent_query_receipt(&success_without_digest)
+                .unwrap_err()
+                .code(),
+            "atlas-concurrent-query-run"
+        );
+
+        let mut failure_with_digest = receipt.clone();
+        let failure = failure_with_digest
+            .runs
+            .iter_mut()
+            .find(|run| run.outcome != crate::atlas_query_service::QueryOutcome::Success)
+            .unwrap();
+        failure.response_digest = Some("a".repeat(64));
+        assert_eq!(
+            gate_concurrent_query_receipt(&failure_with_digest)
+                .unwrap_err()
+                .code(),
+            "atlas-concurrent-query-run"
+        );
+
+        let mut mixed_snapshot = receipt.clone();
+        mixed_snapshot.runs[0].graph_fingerprint = None;
+        assert_eq!(
+            gate_concurrent_query_receipt(&mixed_snapshot)
+                .unwrap_err()
+                .code(),
+            "atlas-concurrent-query-snapshot"
+        );
+
+        let mut mislabeled_case = receipt.clone();
+        let queue_busy = mislabeled_case
+            .runs
+            .iter_mut()
+            .find(|run| run.case_id == "queue-busy")
+            .unwrap();
+        queue_busy.outcome = crate::atlas_query_service::QueryOutcome::Failed;
+        assert_eq!(
+            gate_concurrent_query_receipt(&mislabeled_case)
+                .unwrap_err()
+                .code(),
+            "atlas-concurrent-query-matrix"
+        );
+
+        let mut shared_worktree_graph = receipt.clone();
+        let left_graph = shared_worktree_graph
+            .runs
+            .iter()
+            .find(|run| run.case_id == "worktree-left")
+            .unwrap()
+            .graph_fingerprint
+            .clone();
+        shared_worktree_graph
+            .runs
+            .iter_mut()
+            .find(|run| run.case_id == "worktree-right")
+            .unwrap()
+            .graph_fingerprint = left_graph;
+        assert_eq!(
+            gate_concurrent_query_receipt(&shared_worktree_graph)
+                .unwrap_err()
+                .code(),
+            "atlas-concurrent-query-worktree"
+        );
+
+        let mut promoted_threshold = serde_json::to_value(&receipt).unwrap();
+        promoted_threshold["runs"][0]["measurements"]["latency_gate_ms"] = serde_json::json!(100);
+        assert!(
+            serde_json::from_value::<ConcurrentQueryReceipt>(promoted_threshold).is_err(),
+            "measurement thresholds must remain outside the strict receipt schema"
+        );
+
+        let mut slow_measurements = receipt;
+        for run in &mut slow_measurements.runs {
+            run.measurements.queue_wait_ms = u64::MAX;
+            run.measurements.service_ms = u64::MAX;
+            run.measurements.heartbeat_ms = u64::MAX;
+            run.measurements.cpu_ms = u64::MAX;
+            run.measurements.rss_bytes = u64::MAX;
+        }
+        gate_concurrent_query_receipt(&slow_measurements)
+            .expect("measurement magnitude is not a correctness gate");
+    }
+
+    #[test]
+    fn test_atlas_concurrent_query_checked_in_receipt_is_passing() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let fixture = root.join("fixtures/atlas/concurrent-query");
+        assert!(fixture.join("Cargo.toml").is_file());
+        assert!(fixture.join("src/lib.rs").is_file());
+
+        let receipt = load_concurrent_query_receipt(
+            &root.join("benchmarks/atlas/concurrent-query-receipt-v1.json"),
+        )
+        .expect("checked-in concurrent-query receipt loads");
+        gate_concurrent_query_receipt(&receipt).expect("checked-in correctness matrix passes");
+
+        assert_eq!(
+            receipt
+                .runs
+                .iter()
+                .map(|run| query_load_profile_name(run.profile))
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["light", "mixed", "source-heavy", "traversal",])
+        );
+        assert!(receipt.runs.iter().any(|run| run.expected_failure));
+        assert!(receipt.runs.iter().all(|run| run.reader_leases_after == 0));
     }
 
     #[test]
@@ -2863,6 +3575,18 @@ mod tests {
         let partial =
             LEGACY_RECEIPT_JSON.replace("\n    }", ",\n        \"response_bytes\": 12000\n    }");
         assert!(serde_json::from_str::<RunReceipt>(&partial).is_err());
+
+        let d4_partial = LEGACY_RECEIPT_JSON.replace(
+            "\n    }",
+            ",\n        \"atlas_serving_mode\": \"worker\"\n    }",
+        );
+        assert!(serde_json::from_str::<RunReceipt>(&d4_partial).is_err());
+        let d4_complete = LEGACY_RECEIPT_JSON.replace(
+            "\n    }",
+            ",\n        \"atlas_serving_mode\": \"worker\",\n        \"concurrent_query_receipt_path\": \"benchmarks/atlas/concurrent-query-receipt-v1.json\",\n        \"concurrent_query_receipt_hash\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n    }",
+        );
+        let d4: RunReceipt = serde_json::from_str(&d4_complete).unwrap();
+        assert_eq!(d4.atlas_serving_mode, Some(EvalServingMode::Worker));
     }
 
     #[test]
@@ -2913,6 +3637,48 @@ mod tests {
             "atlas-eval-agent-command: set ATLAS_EVAL_AGENT_COMMAND explicitly\n"
         );
         assert!(!child_receipt.exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_atlas_eval_opt_in_runner_requires_explicit_d4_mode() {
+        use std::os::unix::fs::PermissionsExt;
+
+        if !std::process::Command::new("jq")
+            .arg("--version")
+            .output()
+            .is_ok_and(|output| output.status.success())
+        {
+            return;
+        }
+        let dir = temp_dir("atlas-eval-runner-d4-mode");
+        let plan = dir.join("plan.json");
+        let receipts = dir.join("receipts.ndjson");
+        let agent = dir.join("fake-agent.sh");
+        write_json_atomic(&plan, &compile_plan(&valid_corpus(3)).unwrap()).unwrap();
+        std::fs::write(&agent, "#!/bin/sh\nexit 0\n").unwrap();
+        let mut permissions = std::fs::metadata(&agent).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&agent, permissions).unwrap();
+
+        let output = std::process::Command::new(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("scripts/atlas-eval/run-opt-in.sh"),
+        )
+        .arg(&plan)
+        .arg(&receipts)
+        .env("ATLAS_EVAL_AGENT_COMMAND", &agent)
+        .env_remove("ATLAS_EVAL_D4_MODE")
+        .output()
+        .unwrap();
+
+        assert_eq!(output.status.code(), Some(2));
+        assert_eq!(
+            String::from_utf8(output.stderr).unwrap(),
+            "atlas-eval-d4-mode: set ATLAS_EVAL_D4_MODE to direct or worker\n"
+        );
+        assert!(!receipts.exists());
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -3128,6 +3894,8 @@ mod tests {
         let captured_plan = dir.join("captured-plan.txt");
         let captured_arg = dir.join("captured-arg.txt");
         let injected_marker = dir.join("injected-marker");
+        let d4_receipt = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("benchmarks/atlas/concurrent-query-receipt-v1.json");
         write_json_atomic(&plan, &compile_plan(&valid_corpus(3)).unwrap()).unwrap();
         std::fs::write(
             &agent,
@@ -3135,7 +3903,7 @@ mod tests {
 set -euo pipefail
 printf '%s' "$1" >"$ATLAS_EVAL_PLAN_CAPTURE"
 printf '%s' "$2" >"$ATLAS_EVAL_ARG_CAPTURE"
-printf '%s\n' '{"case_id":"workspace-navigation","arm":"atlas","trial":1,"correctness":{"passed":true},"file_reads":1,"graph_calls":1,"tool_calls":2,"duration_ms":10,"context_bytes":100,"cost_usd":null,"response_bytes":100,"read_back_calls":0,"follow_up_queries":1,"truncated_queries":0}'
+printf '{"case_id":"workspace-navigation","arm":"atlas","trial":1,"correctness":{"passed":true},"file_reads":1,"graph_calls":1,"tool_calls":2,"duration_ms":10,"context_bytes":100,"cost_usd":null,"query_metrics_schema":"agent-spec/atlas-eval/query-metrics-v1","response_bytes":100,"read_back_calls":0,"follow_up_queries":1,"truncated_queries":0,"atlas_serving_mode":"%s","concurrent_query_receipt_path":"%s","concurrent_query_receipt_hash":"%s"}\n' "$ATLAS_EVAL_SERVING_MODE" "$ATLAS_EVAL_CONCURRENT_QUERY_RECEIPT_PATH" "$ATLAS_EVAL_CONCURRENT_QUERY_RECEIPT_HASH"
 "#,
         )
         .unwrap();
@@ -3155,6 +3923,8 @@ printf '%s\n' '{"case_id":"workspace-navigation","arm":"atlas","trial":1,"correc
         .env("ATLAS_EVAL_AGENT_COMMAND", &agent)
         .env("ATLAS_EVAL_PLAN_CAPTURE", &captured_plan)
         .env("ATLAS_EVAL_ARG_CAPTURE", &captured_arg)
+        .env("ATLAS_EVAL_D4_MODE", "worker")
+        .env("ATLAS_EVAL_D4_RECEIPT", &d4_receipt)
         .output()
         .unwrap();
 
@@ -3170,9 +3940,17 @@ printf '%s\n' '{"case_id":"workspace-navigation","arm":"atlas","trial":1,"correc
         );
         assert_eq!(std::fs::read_to_string(captured_arg).unwrap(), literal_arg);
         assert!(!injected_marker.exists());
+        let receipt = load_receipts(&receipts).unwrap().pop().unwrap();
+        assert_eq!(receipt.atlas_serving_mode, Some(EvalServingMode::Worker));
         assert_eq!(
-            std::fs::read(receipts).unwrap(),
-            b"{\"case_id\":\"workspace-navigation\",\"arm\":\"atlas\",\"trial\":1,\"correctness\":{\"passed\":true},\"file_reads\":1,\"graph_calls\":1,\"tool_calls\":2,\"duration_ms\":10,\"context_bytes\":100,\"cost_usd\":null,\"response_bytes\":100,\"read_back_calls\":0,\"follow_up_queries\":1,\"truncated_queries\":0}\n"
+            receipt.concurrent_query_receipt_path.as_deref(),
+            d4_receipt.to_str()
+        );
+        assert!(
+            receipt
+                .concurrent_query_receipt_hash
+                .as_deref()
+                .is_some_and(is_lower_hex)
         );
         std::fs::remove_dir_all(dir).unwrap();
     }

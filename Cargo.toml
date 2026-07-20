@@ -10,7 +10,11 @@ homepage = "https://github.com/ZhangHanDong/agent-spec"
 [workspace]
 members = [".", "crates/rust-atlas"]
 default-members = [".", "crates/rust-atlas"]
-exclude = ["fixtures/requirements-noteapp", "fixtures/atlas/basic"]
+exclude = [
+    "fixtures/requirements-noteapp",
+    "fixtures/atlas/basic",
+    "fixtures/atlas/concurrent-query",
+]
 
 [features]
 default = []

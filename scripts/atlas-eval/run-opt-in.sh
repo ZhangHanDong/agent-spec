@@ -67,6 +67,28 @@ if ! jq -e '
   exit 2
 fi
 
+d4_mode=${ATLAS_EVAL_D4_MODE:-}
+if [[ $d4_mode != direct && $d4_mode != worker ]]; then
+  printf '%s\n' 'atlas-eval-d4-mode: set ATLAS_EVAL_D4_MODE to direct or worker' >&2
+  exit 2
+fi
+d4_receipt=${ATLAS_EVAL_D4_RECEIPT:-}
+if [[ -z $d4_receipt || ! -f $d4_receipt ]]; then
+  printf '%s\n' 'atlas-eval-d4-receipt: set ATLAS_EVAL_D4_RECEIPT to a readable file' >&2
+  exit 2
+fi
+if command -v sha256sum >/dev/null 2>&1; then
+  d4_hash=$(sha256sum -- "$d4_receipt" | awk '{print $1}')
+elif command -v shasum >/dev/null 2>&1; then
+  d4_hash=$(shasum -a 256 -- "$d4_receipt" | awk '{print $1}')
+else
+  printf '%s\n' 'atlas-eval-d4-hash: sha256sum or shasum is required' >&2
+  exit 2
+fi
+export ATLAS_EVAL_SERVING_MODE=$d4_mode
+export ATLAS_EVAL_CONCURRENT_QUERY_RECEIPT_PATH=$d4_receipt
+export ATLAS_EVAL_CONCURRENT_QUERY_RECEIPT_HASH=$d4_hash
+
 receipt_dir=$(dirname -- "$receipts")
 receipt_name=$(basename -- "$receipts")
 receipt_tmp=$(mktemp "$receipt_dir/.${receipt_name}.tmp.XXXXXX")
