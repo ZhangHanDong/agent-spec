@@ -6,6 +6,7 @@ source_files:
   - Cargo.toml
   - build.rs
   - crates/rust-atlas/Cargo.toml
+  - crates/rust-atlas/src/context.rs
   - crates/rust-atlas/src/lib.rs
   - src/main.rs
 ---
@@ -22,3 +23,7 @@ recoverable.
 Reviewed for Atlas D3: persisted watermarks, typed runtime states, advisory
 leases, bounded retries, and strict loopback protocol parsing reuse those
 deterministic JSON and fail-closed patterns.
+
+Reviewed for Atlas B5: retrieval and projection are separate deterministic
+stages. Stable evidence ids and graph-pinned continuation argv explain
+retrieval, relevance, policy, and byte loss without hidden cursor state.

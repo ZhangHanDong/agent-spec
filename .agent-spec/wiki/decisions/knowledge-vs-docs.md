@@ -4,6 +4,9 @@ type: decision
 source_files:
   - skills/agent-spec-wiki/SKILL.md
   - AGENTS.md
+  - docs/atlas-query-context.md
+  - knowledge/requirements/req-atlas-query-context-compiler.md
+  - specs/task-atlas-query-context-compiler.spec.md
 tags:
   - knowledge
   - docs
@@ -28,6 +31,10 @@ The wiki may summarize runtime-boundary behavior for agent navigation, while
 the KLL requirement owns its normative limits and the dedicated docs page owns
 the user-facing command contract.
 
+The same routing applies to B5: `docs/atlas-query-context.md` explains usage,
+the accepted KLL requirement and Task Contract govern behavior, and emitted
+context JSON is disposable runtime evidence rather than documentation truth.
+
 ## Maintenance
 
 Update this page when any listed `source_files` change in a way that alters the project understanding an agent should reuse.
@@ -37,3 +44,7 @@ requirement remains in `knowledge/`, and generated graph data remains derived.
 
 Atlas D3 follows the same routing: `docs/atlas-live-runtime.md` is the reader
 guide, `REQ-ATLAS-LIVE-RUNTIME` is normative, and `.runtime/` state is derived.
+
+Atlas B5 was reviewed here; context receipts may be cited by the wiki but do not
+move normative content out of `knowledge/` or executable criteria out of
+`specs/`.

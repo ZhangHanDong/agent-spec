@@ -7,6 +7,7 @@ source_files:
   - crates/rust-atlas/src/status.rs
   - crates/rust-atlas/src/live.rs
   - crates/rust-atlas/src/generation.rs
+  - crates/rust-atlas/src/context.rs
   - crates/rust-atlas/src/flow.rs
   - crates/rust-atlas/src/runtime_boundary.rs
   - src/spec_mcp/tools.rs
@@ -52,6 +53,11 @@ specific promotion gate.
 The delivered impact graph therefore remains derived input until a later
 intent-aware consumer joins it to explicit bindings and Contract selectors.
 
+B5 context evidence and receipts are also derived. Stable evidence ids pin
+continuation to one graph fingerprint, while retrieval/projection counts expose
+loss; neither the projected body nor its receipt can promote a graph fact,
+create a code binding, or satisfy a requirement or scenario.
+
 ## Maintenance
 
 Revise this page when the graph authority boundary, rebuild diagnostics, or MCP
@@ -64,3 +70,6 @@ or changing default MCP exposure.
 Atlas D3 adds bounded refresh and fail-closed reclamation without changing that
 decision. Post-commit pending/status maintenance failures remain warning-only
 and retain conservative pending context.
+
+Atlas B5 adds a bounded representation layer without changing graph, KLL,
+lifecycle, trace, or default MCP authority.

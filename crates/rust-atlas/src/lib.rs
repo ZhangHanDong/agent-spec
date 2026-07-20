@@ -18,6 +18,7 @@ use quote::ToTokens;
 use serde::{Deserialize, Serialize};
 
 mod affected;
+mod context;
 mod dynamic_dispatch;
 mod explore;
 mod flow;
@@ -38,6 +39,14 @@ pub mod watch;
 
 pub use affected::{
     AffectedDiagnostic, AffectedOptions, AffectedResult, AffectedSeed, affected_paths,
+};
+pub use context::{
+    ContextDiagnostic, ContextLimits, ContextOptions, ContextProfile, ContextProjection,
+    ContextRelation, ContextResult, ContinuationQuery, EvidenceCandidate, EvidenceClass,
+    EvidencePriorityPlan, EvidenceSpan, OmissionEntry, OmissionReason, ProjectedEvidence,
+    ProjectionReceipt, QueryIntent, QueryLoadProfile, QueryReceipt, RetrievalCandidateSet,
+    RetrievalReceipt, SourceSlice, compile_context, evidence_priority_plan, parse_query_intent,
+    project_context, retrieve_context,
 };
 pub use explore::{
     BudgetUsage, ExploreBudget, ExploreDiagnostic, ExploreNode, ExploreOptions, ExploreProfile,
@@ -150,6 +159,29 @@ pub enum AtlasError {
         required: usize,
         max: usize,
     },
+    #[error("atlas-context-limit: {detail}")]
+    ContextLimit { detail: String },
+    #[error(
+        "atlas-context-graph-mismatch: continuation expects graph {expected}, current graph is {found}"
+    )]
+    ContextGraphMismatch { expected: String, found: String },
+    #[error("atlas-context-cursor: evidence id `{cursor}` is not in the selected candidate set")]
+    ContextCursor { cursor: String },
+    #[error(
+        "atlas-context-required-budget: required evidence needs {required_bytes} bytes, limit is {max_bytes}"
+    )]
+    ContextRequiredBudget {
+        required_bytes: usize,
+        max_bytes: usize,
+    },
+    #[error(
+        "atlas-context-required-candidate-cap: required evidence count {required} exceeds retrieval cap {max}"
+    )]
+    ContextRequiredCandidateCap { required: usize, max: usize },
+    #[error(
+        "atlas-context-required-source-cap: required source span count {required} exceeds profile cap {max}"
+    )]
+    ContextRequiredSourceCap { required: usize, max: usize },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

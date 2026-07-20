@@ -69,6 +69,11 @@ Atlas runtime-boundary candidates are also excluded from lifecycle authority:
 their query-hint classification can direct investigation but cannot prove a
 Contract symbol or scenario.
 
+An `atlas context` receipt similarly proves only bounded selection over a
+pinned graph. It can expose stale source and missing evidence for investigation,
+but cannot become a pass verdict, infer a selector, or satisfy a binding. The
+Contract and lifecycle verifier remain authoritative.
+
 ## Trace Implication
 
 Lifecycle results become useful only when they remain tied to:
@@ -90,3 +95,6 @@ does not treat generation publication as scenario evidence by itself.
 
 Atlas D3 was reviewed here; a reader lease protects that pinned generation,
 while watcher/daemon state remains diagnostic rather than scenario evidence.
+
+Atlas B5 was reviewed here; context compilation can prepare Agent working input
+but does not change lifecycle verdict semantics or trace provenance.

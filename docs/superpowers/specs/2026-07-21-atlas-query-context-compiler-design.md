@@ -54,6 +54,11 @@ includes exact user-named symbols, primary spine, unique implementation, runtime
 site spans and explicit failure evidence. Optional off-spine sibling bodies may become signature
 skeletons when one representative implementation remains.
 
+Test, generated and vendored source bodies use an additional admission policy: an explicit
+repository path or symbol, or membership in the primary flow, impact or runtime-boundary spine is required.
+An incidental match remains a provenance-bearing signature skeleton, and projection receipts
+account for these policy skeletons separately from retrieval and byte loss.
+
 Source content is a line slice around a graph node span or edge site. Before reading it, the compiler
 normalizes the repository-relative path and compares current bytes with the selected generation's
 recorded file hash. Mismatch yields a typed stale diagnostic; it never returns unverified source.
@@ -91,4 +96,3 @@ not add a worker pool or alter transport behavior.
 `atlas context` is additive. Existing `explore-v1`, primitive queries and MCP discovery remain
 unchanged. B5 results enter the E3 fixed corpus immediately. Making the context compiler a default
 MCP tool or changing default profiles requires the separate E1 A/B gate.
-

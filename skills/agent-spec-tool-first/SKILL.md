@@ -63,7 +63,7 @@ Humans define "what is correct" (Contract). Machines verify "is the code correct
 | `agent-spec wiki status` | Check stale code live wiki articles | Session start / before broad source reading |
 | `agent-spec wiki query <text>` | Search tracked live wiki articles | Before opening many source files |
 | `agent-spec wiki check` | Live wiki lint + worktree status gate | Pre-commit / CI for tracked wiki |
-| `agent-spec atlas build/tree/query/search/explore/flow/impact/affected/refs/impls/status/check/scip-gen` | Rust graph with bounded context, explainable paths, reverse impact, identity, and independent syn/SCIP/MIR freshness; `scip-gen` invokes rust-analyzer for the optional SCIP overlay | Build before querying; use `--frozen` for review, and never infer tests from affected filenames |
+| `agent-spec atlas build/tree/query/search/explore/context/flow/impact/affected/refs/impls/status/check/scip-gen` | Rust graph with scored retrieval, bounded context projection, explainable paths, reverse impact, identity, and independent syn/SCIP/MIR freshness; `scip-gen` invokes rust-analyzer for the optional SCIP overlay | Build before querying; use `--frozen` for review, and never infer tests from affected filenames |
 | `agent-spec atlas benchmark validate/plan/summarize/score` | Validate the E0 corpus, compile paired Atlas/baseline plans, summarize fully graded receipts, or score strict E3 query observations against golden symbols, paths, evidence, diagnostics, and forbidden results | Evaluate correctness before performance. `plan`, `summarize`, and `score` write atomically with `--out`; `score` writes a failed receipt before exiting non-zero. Default tests probe current fixture search/flow without network access; fresh pinned-repository observations and real Agent runs remain opt-in. See `docs/atlas-evaluation.md` |
 | `agent-spec verify <spec> --code .` | Raw verification only | When you want verify without lint gate |
 | `agent-spec checkpoint status` | VCS-aware status | Check uncommitted state |
@@ -74,6 +74,7 @@ Humans define "what is correct" (Contract). Machines verify "is the code correct
 agent-spec atlas build --code . --graph .agent-spec/graph
 agent-spec atlas search <query> --code . --graph .agent-spec/graph --limit 20
 agent-spec atlas explore <query> --profile compact --code . --graph .agent-spec/graph --frozen
+agent-spec atlas context <query> --profile symbol --code . --graph .agent-spec/graph --frozen
 agent-spec atlas flow --from <symbol> --to <symbol> --code . --graph .agent-spec/graph --frozen
 agent-spec atlas impact <symbol> --depth 3 --code . --graph .agent-spec/graph --frozen
 agent-spec atlas affected --worktree --code . --graph .agent-spec/graph --frozen
@@ -121,11 +122,20 @@ become graph, impact, binding, lifecycle, or archive evidence. See
 explicit, stdin, staged, worktree, or commit-range input and reports graph
 evidence, not inferred tests.
 
+Use `atlas context` when the Agent needs a bounded, receipt-bearing projection
+rather than the legacy compact/deep explore shape. Pick one explicit
+`symbol | flow | architecture | impact` profile. Inspect both
+`receipt.retrieval` and `receipt.projection`; an omission is not a retrieval
+miss. Follow `omissions[].continuation.argv` literally with its graph
+fingerprint. Never hide required-evidence overflow, stale source, or cursor
+errors. Context output is derived working data and is not a default MCP tool;
+see `docs/atlas-query-context.md`.
+
 MCP uses frozen, read-only Atlas reads. The default tool list omits
 `atlas_search`; start `agent-spec mcp` with `AGENT_SPEC_MCP_ATLAS_SEARCH=1` to
 list it. `atlas_explore` is unavailable unless
 `AGENT_SPEC_MCP_ATLAS_EXPLORE=1`; keep the default surface until a real Agent
-A/B gate passes.
+A/B gate passes. `atlas context` remains CLI/library-only until that gate.
 
 ## BDD-spine Commands (0.3.0)
 

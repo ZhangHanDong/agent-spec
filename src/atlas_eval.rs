@@ -114,6 +114,20 @@ pub struct QueryCase {
     pub rubric: Vec<String>,
     pub source_ref: String,
     pub paired_fixture: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_expectation: Option<QueryContextExpectation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QueryContextExpectation {
+    pub profile: String,
+    pub max_serialized_bytes: usize,
+    pub min_score: u16,
+    pub require_retrieval_loss: bool,
+    pub require_projection_loss: bool,
+    pub require_read_back: bool,
+    pub required_omission_classes: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -136,6 +150,31 @@ pub struct QueryObservation {
     pub duration_ms: u64,
     pub read_back_calls: u64,
     pub follow_up_queries: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_receipt: Option<QueryContextReceiptObservation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QueryContextReceiptObservation {
+    pub schema: String,
+    pub profile: String,
+    pub max_serialized_bytes: usize,
+    pub relevance_threshold: u16,
+    pub retrieval_total: usize,
+    pub retrieval_returned: usize,
+    pub retrieval_hard_cap_omitted: usize,
+    pub projection_above_relevance: usize,
+    pub projection_retained: usize,
+    pub projection_below_relevance_omitted: usize,
+    pub projection_byte_omitted: usize,
+    pub projection_policy_skeletonized: usize,
+    pub serialized_bytes: usize,
+    pub omission_classes: Vec<String>,
+    pub graph_fingerprint: String,
+    pub read_back_required: bool,
+    pub follow_up_queries: usize,
+    pub load_profile: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -524,6 +563,9 @@ pub fn validate_query_corpus(corpus: &QueryCorpus) -> Result<(), EvalError> {
         validate_nonempty_unique_strings(&case.id, "required_evidence", &case.required_evidence)?;
         validate_nonempty_unique_strings(&case.id, "rubric", &case.rubric)?;
         validate_unique_diagnostics(&case.id, &case.required_diagnostics)?;
+        if let Some(expectation) = &case.context_expectation {
+            validate_context_expectation(&case.id, expectation)?;
+        }
         if case.allowed_ambiguity > QUERY_MAX_AMBIGUITY {
             return Err(EvalError::new(
                 "atlas-query-corpus-ambiguity",
@@ -725,6 +767,9 @@ fn validate_query_results(corpus: &QueryCorpus, results: &QueryResults) -> Resul
                 ));
             }
         }
+        if let Some(receipt) = &observation.context_receipt {
+            validate_context_receipt(&observation.case_id, receipt)?;
+        }
     }
 
     let missing = corpus_ids
@@ -738,6 +783,201 @@ fn validate_query_results(corpus: &QueryCorpus, results: &QueryResults) -> Resul
         ));
     }
     Ok(())
+}
+
+fn validate_context_expectation(
+    case_id: &str,
+    expectation: &QueryContextExpectation,
+) -> Result<(), EvalError> {
+    if !matches!(
+        expectation.profile.as_str(),
+        "symbol" | "flow" | "architecture" | "impact"
+    ) {
+        return Err(EvalError::new(
+            "atlas-query-context-profile",
+            format!(
+                "case {case_id} has unsupported context profile {}",
+                expectation.profile
+            ),
+        ));
+    }
+    if !(1_024..=1_000_000).contains(&expectation.max_serialized_bytes) {
+        return Err(EvalError::new(
+            "atlas-query-context-limit",
+            format!(
+                "case {case_id} max_serialized_bytes {} is outside 1024..=1000000",
+                expectation.max_serialized_bytes
+            ),
+        ));
+    }
+    validate_context_classes(
+        case_id,
+        "required_omission_classes",
+        &expectation.required_omission_classes,
+    )
+}
+
+fn validate_context_receipt(
+    case_id: &str,
+    receipt: &QueryContextReceiptObservation,
+) -> Result<(), EvalError> {
+    if receipt.schema != "agent-spec/rust-atlas/context-v1" {
+        return Err(EvalError::new(
+            "atlas-query-context-receipt-schema",
+            format!(
+                "case {case_id} has context receipt schema {}",
+                receipt.schema
+            ),
+        ));
+    }
+    if !matches!(
+        receipt.profile.as_str(),
+        "symbol" | "flow" | "architecture" | "impact"
+    ) {
+        return Err(EvalError::new(
+            "atlas-query-context-profile",
+            format!(
+                "case {case_id} has context receipt profile {}",
+                receipt.profile
+            ),
+        ));
+    }
+    if receipt.retrieval_returned > receipt.retrieval_total
+        || receipt
+            .retrieval_returned
+            .saturating_add(receipt.retrieval_hard_cap_omitted)
+            > receipt.retrieval_total
+        || receipt.projection_above_relevance > receipt.retrieval_returned
+        || receipt.projection_retained > receipt.projection_above_relevance
+        || receipt.projection_policy_skeletonized > receipt.projection_retained
+    {
+        return Err(EvalError::new(
+            "atlas-query-context-receipt-invariant",
+            format!("case {case_id} has impossible retrieval or projection counts"),
+        ));
+    }
+    if !(1_024..=1_000_000).contains(&receipt.max_serialized_bytes)
+        || receipt.serialized_bytes == 0
+        || receipt.serialized_bytes > receipt.max_serialized_bytes
+    {
+        return Err(EvalError::new(
+            "atlas-query-context-receipt-bytes",
+            format!(
+                "case {case_id} serialized_bytes {} exceeds invalid or declared ceiling {}",
+                receipt.serialized_bytes, receipt.max_serialized_bytes
+            ),
+        ));
+    }
+    if receipt.graph_fingerprint.len() != 64
+        || !receipt
+            .graph_fingerprint
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(EvalError::new(
+            "atlas-query-context-receipt-fingerprint",
+            format!("case {case_id} has a non-canonical graph fingerprint"),
+        ));
+    }
+    if !matches!(
+        receipt.load_profile.as_str(),
+        "light" | "traversal" | "source-heavy" | "mixed"
+    ) {
+        return Err(EvalError::new(
+            "atlas-query-context-load-profile",
+            format!(
+                "case {case_id} has unsupported load profile {}",
+                receipt.load_profile
+            ),
+        ));
+    }
+    validate_context_classes(case_id, "omission_classes", &receipt.omission_classes)
+}
+
+fn validate_context_classes(
+    case_id: &str,
+    field: &str,
+    classes: &[String],
+) -> Result<(), EvalError> {
+    let mut seen = BTreeSet::new();
+    for class in classes {
+        if !matches!(
+            class.as_str(),
+            "named-symbol"
+                | "failure-evidence"
+                | "primary-spine"
+                | "boundary-site"
+                | "unique-implementation"
+                | "representative-implementation"
+                | "impact-path"
+                | "alternative-path"
+                | "relationship"
+                | "adjacent-structure"
+                | "off-spine-sibling"
+        ) || !seen.insert(class.as_str())
+        {
+            return Err(EvalError::new(
+                "atlas-query-context-evidence-class",
+                format!("case {case_id} has invalid or duplicate {field} value `{class}`"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn score_context_receipt(
+    case: &QueryCase,
+    observation: &QueryObservation,
+    failures: &mut Vec<String>,
+) {
+    let Some(expectation) = &case.context_expectation else {
+        return;
+    };
+    let Some(receipt) = &observation.context_receipt else {
+        failures.push("missing-context-receipt".into());
+        return;
+    };
+    if receipt.profile != expectation.profile {
+        failures.push("context-profile-mismatch".into());
+    }
+    if receipt.max_serialized_bytes != expectation.max_serialized_bytes
+        || receipt.relevance_threshold != expectation.min_score
+    {
+        failures.push("context-limit-receipt-mismatch".into());
+    }
+    if receipt.serialized_bytes > receipt.max_serialized_bytes
+        || receipt.serialized_bytes as u64 != observation.response_bytes
+    {
+        failures.push("context-byte-receipt-mismatch".into());
+    }
+    if receipt.follow_up_queries as u64 != observation.follow_up_queries {
+        failures.push("context-follow-up-receipt-mismatch".into());
+    }
+    let retrieval_loss = receipt.retrieval_hard_cap_omitted > 0;
+    if expectation.require_retrieval_loss && !retrieval_loss {
+        failures.push("missing-required-retrieval-loss".into());
+    }
+    let projection_loss = receipt.projection_below_relevance_omitted > 0
+        || receipt.projection_byte_omitted > 0
+        || receipt.projection_retained < receipt.retrieval_returned;
+    if expectation.require_projection_loss && !projection_loss {
+        failures.push("missing-required-projection-loss".into());
+    }
+    if expectation.require_read_back && !receipt.read_back_required {
+        failures.push("missing-required-context-read-back".into());
+    }
+    let observed_classes = receipt
+        .omission_classes
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    if expectation
+        .required_omission_classes
+        .iter()
+        .any(|class| !observed_classes.contains(class.as_str()))
+    {
+        failures.push("missing-required-omission-class".into());
+    }
 }
 
 fn score_query_case(case: &QueryCase, observation: &QueryObservation) -> QueryCaseScore {
@@ -843,6 +1083,7 @@ fn score_query_case(case: &QueryCase, observation: &QueryObservation) -> QueryCa
     if unexpected_items > case.allowed_ambiguity {
         failure_reasons.push("ambiguity-exceeded".to_string());
     }
+    score_context_receipt(case, observation, &mut failure_reasons);
 
     QueryCaseScore {
         case_id: case.id.clone(),
@@ -1548,6 +1789,7 @@ mod tests {
                     rubric: vec!["Returns the complete evidence-backed path.".to_string()],
                     source_ref: "test-fixture".to_string(),
                     paired_fixture: None,
+                    context_expectation: None,
                 },
                 QueryCase {
                     id: "pinned-flow".to_string(),
@@ -1575,6 +1817,7 @@ mod tests {
                     rubric: vec!["Uses the current scoring entry point.".to_string()],
                     source_ref: "test-pinned".to_string(),
                     paired_fixture: Some("fixture-flow".to_string()),
+                    context_expectation: None,
                 },
             ],
         }
@@ -1604,6 +1847,7 @@ mod tests {
                     duration_ms: 25,
                     read_back_calls: 1,
                     follow_up_queries: 2,
+                    context_receipt: None,
                 },
                 QueryObservation {
                     case_id: "pinned-flow".to_string(),
@@ -1624,6 +1868,7 @@ mod tests {
                     duration_ms: 75,
                     read_back_calls: 0,
                     follow_up_queries: 1,
+                    context_receipt: None,
                 },
             ],
         }
@@ -1675,6 +1920,210 @@ mod tests {
         assert_eq!(receipt.aggregate.passed, corpus.cases.len());
         assert_eq!(receipt.aggregate.failed, 0);
         assert_eq!(receipt.aggregate.forbidden_hit_rate, 0.0);
+    }
+
+    #[test]
+    fn test_atlas_context_compiler_checked_in_regression_receipt_is_passing() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let corpus = load_query_corpus(&root.join("benchmarks/atlas/query-corpus.json"))
+            .expect("checked-in query corpus loads");
+        let results = load_query_results(&root.join("benchmarks/atlas/query-results.json"))
+            .expect("checked-in query results load");
+        let receipt = score_query_results(&corpus, &results).expect("context observations score");
+        let context_cases = corpus
+            .cases
+            .iter()
+            .filter(|case| case.context_expectation.is_some())
+            .collect::<Vec<_>>();
+        assert_eq!(context_cases.len(), 6);
+        assert_eq!(
+            context_cases
+                .iter()
+                .filter_map(|case| case.context_expectation.as_ref())
+                .map(|expectation| expectation.profile.as_str())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["architecture", "flow", "impact", "symbol"])
+        );
+        for case in context_cases {
+            let score = receipt
+                .cases
+                .iter()
+                .find(|score| score.case_id == case.id)
+                .expect("context case has a score");
+            assert!(score.passed, "{}: {:?}", case.id, score.failure_reasons);
+            let observation = results
+                .observations
+                .iter()
+                .find(|observation| observation.case_id == case.id)
+                .expect("context case has an observation");
+            let context = observation
+                .context_receipt
+                .as_ref()
+                .expect("context case has a dual-loss receipt");
+            assert_eq!(context.serialized_bytes as u64, observation.response_bytes);
+            assert!(context.projection_retained <= context.projection_above_relevance);
+            assert!(context.retrieval_returned <= context.retrieval_total);
+        }
+    }
+
+    #[test]
+    fn test_atlas_context_regression_rejects_missing_or_impossible_receipts() {
+        let mut corpus = valid_query_corpus();
+        corpus.cases[0].context_expectation = Some(QueryContextExpectation {
+            profile: "symbol".into(),
+            max_serialized_bytes: 16_000,
+            min_score: 300,
+            require_retrieval_loss: false,
+            require_projection_loss: false,
+            require_read_back: false,
+            required_omission_classes: Vec::new(),
+        });
+        let mut results = matching_query_results();
+        let receipt = score_query_results(&corpus, &results).expect("missing receipt is scored");
+        assert!(
+            receipt.cases[0]
+                .failure_reasons
+                .contains(&"missing-context-receipt".to_string())
+        );
+
+        results.observations[0].context_receipt = Some(QueryContextReceiptObservation {
+            schema: "agent-spec/rust-atlas/context-v1".into(),
+            profile: "symbol".into(),
+            max_serialized_bytes: 16_000,
+            relevance_threshold: 300,
+            retrieval_total: 1,
+            retrieval_returned: 2,
+            retrieval_hard_cap_omitted: 0,
+            projection_above_relevance: 2,
+            projection_retained: 2,
+            projection_below_relevance_omitted: 0,
+            projection_byte_omitted: 0,
+            projection_policy_skeletonized: 0,
+            serialized_bytes: 1_200,
+            omission_classes: Vec::new(),
+            graph_fingerprint: "a".repeat(64),
+            read_back_required: false,
+            follow_up_queries: 2,
+            load_profile: "light".into(),
+        });
+        assert!(
+            score_query_results(&corpus, &results)
+                .unwrap_err()
+                .to_string()
+                .contains("atlas-query-context-receipt-invariant")
+        );
+    }
+
+    #[test]
+    fn test_atlas_context_live_fixture_matches_fixed_profiles() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let code = root.join("fixtures/atlas/basic");
+        let graph = temp_dir("atlas-context-live-profiles").join("graph");
+        rust_atlas::build(
+            &code,
+            &graph,
+            &rust_atlas::BuildOptions {
+                full: true,
+                scip_index: Some(root.join("fixtures/atlas/scip/index.scip")),
+                ..rust_atlas::BuildOptions::default()
+            },
+        )
+        .expect("fixture graph builds offline");
+        let cases = [
+            (
+                rust_atlas::ContextProfile::Symbol,
+                "atlas_basic::store::MemStore",
+                None,
+                None,
+                "atlas_basic::store::MemStore",
+                None,
+            ),
+            (
+                rust_atlas::ContextProfile::Flow,
+                "atlas_basic::open_default atlas_basic::store::MemStore calls",
+                None,
+                None,
+                "atlas_basic::store::MemStore",
+                Some(("atlas_basic::open_default", "atlas_basic::store::MemStore")),
+            ),
+            (
+                rust_atlas::ContextProfile::Architecture,
+                "atlas_basic::service::run",
+                None,
+                None,
+                "atlas_basic::service::run",
+                None,
+            ),
+            (
+                rust_atlas::ContextProfile::Impact,
+                "atlas_basic::store::Store::get",
+                None,
+                None,
+                "atlas_basic::service::run",
+                Some((
+                    "atlas_basic::store::Store::get",
+                    "atlas_basic::service::run",
+                )),
+            ),
+            (
+                rust_atlas::ContextProfile::Architecture,
+                "atlas_basic::service::run",
+                Some(8_000),
+                Some(0),
+                "atlas_basic::service::run",
+                None,
+            ),
+        ];
+        let mut fingerprints = BTreeSet::new();
+        for (profile, query, max_bytes, min_score, expected_symbol, expected_path) in cases {
+            let result = rust_atlas::compile_context(
+                &code,
+                &graph,
+                query,
+                &rust_atlas::ContextOptions {
+                    profile,
+                    frozen: true,
+                    max_serialized_bytes: max_bytes,
+                    min_score,
+                    ..rust_atlas::ContextOptions::default()
+                },
+            )
+            .expect("fixed context query compiles");
+            assert!(result.projection.evidence.iter().any(|evidence| {
+                evidence
+                    .node
+                    .as_ref()
+                    .is_some_and(|node| node.symbol == expected_symbol)
+            }));
+            if let Some((from, to)) = expected_path {
+                assert!(result.projection.evidence.iter().any(|evidence| {
+                    evidence.path.as_ref().is_some_and(|path| {
+                        path.nodes.first().is_some_and(|node| node.symbol == from)
+                            && path.nodes.last().is_some_and(|node| node.symbol == to)
+                    })
+                }));
+            }
+            assert_eq!(
+                result.receipt.serialized_bytes,
+                serde_json::to_vec(&result).unwrap().len()
+            );
+            assert!(result.receipt.serialized_bytes <= result.receipt.limits.max_serialized_bytes);
+            if max_bytes == Some(8_000) {
+                assert!(result.receipt.projection.byte_omitted > 0);
+                assert!(
+                    result
+                        .diagnostics
+                        .iter()
+                        .any(|diagnostic| diagnostic.code == "atlas-context-byte-ceiling")
+                );
+            }
+            fingerprints.insert(result.receipt.graph_fingerprint);
+        }
+        assert_eq!(
+            fingerprints.len(),
+            1,
+            "all profiles pin one graph generation"
+        );
     }
 
     #[test]

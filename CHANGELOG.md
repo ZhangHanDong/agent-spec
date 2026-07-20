@@ -8,6 +8,12 @@ All notable changes to `agent-spec` are documented here. Format follows
 
 ### Added
 
+- Atlas B5 query context compiler: additive `atlas context` profiles separate
+  scored retrieval from relevance and byte-bounded projection. Results carry
+  hash-verified source spans, required-evidence protection, omission manifests,
+  fingerprint-bound continuation argv, dual-loss receipts, and deterministic
+  D4 load profiles. E3 now validates context receipts and rebuilds all four
+  profiles plus projection pressure offline; default MCP remains unchanged.
 - Atlas D3 optional live runtime: a shared build/watch scope, bounded platform
   watcher, persisted pending watermark, separate writer/ordinary retry budgets,
   typed `warming`/`healthy`/`pending`/`degraded`/`unavailable` states, and a

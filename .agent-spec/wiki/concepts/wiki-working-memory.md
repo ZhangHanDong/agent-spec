@@ -28,6 +28,9 @@ confirm source trace freshness.
 The Atlas pages also distinguish runtime-boundary working context from durable
 KLL and graph authority, so an agent can use the hints without promoting them
 to facts.
+The B5 entries add the same distinction for context projections and receipts:
+they can focus source reading and explain omission, but they do not become wiki
+freshness, KLL truth, or lifecycle acceptance evidence.
 
 ## Maintenance
 
@@ -38,3 +41,6 @@ remain working memory rather than graph or KLL authority.
 
 Atlas D3 was reviewed here; watcher, watermark, daemon, and reader-lease facts
 remain derived runtime context and must not be promoted by the wiki.
+
+Atlas B5 was reviewed here; the regenerated index exposes the new context
+compiler sources while maintained article content remains the reusable memory.

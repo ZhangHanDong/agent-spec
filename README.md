@@ -542,6 +542,7 @@ data; `knowledge/` remains the KLL source of truth.
 agent-spec atlas build --code . --graph .agent-spec/graph
 agent-spec atlas search <query> --code . --graph .agent-spec/graph --limit 20
 agent-spec atlas explore <query> --profile compact --code . --graph .agent-spec/graph --frozen
+agent-spec atlas context <query> --profile symbol --code . --graph .agent-spec/graph --frozen
 agent-spec atlas flow --from <symbol> --to <symbol> --code . --graph .agent-spec/graph --frozen
 agent-spec atlas flow --through <symbol> --code . --graph .agent-spec/graph --frozen
 agent-spec atlas impact <symbol> --depth 3 --code . --graph .agent-spec/graph --frozen
@@ -626,6 +627,16 @@ evidence. See [Rust Atlas Runtime Boundary Hints](docs/atlas-runtime-boundaries.
 `--staged`, `--worktree`, or `--commit <range>` and reports code nodes and
 evidence paths; it never infers test selectors or coverage from filenames.
 
+`context` is the B5 two-stage context compiler. It parses explicit identifiers,
+paths, relations, and one `symbol | flow | architecture | impact` profile;
+retrieval returns scored candidates before projection applies relevance and
+byte limits. Results contain an omission manifest, stable fingerprint-bound
+continuation argv, separate retrieval/projection receipts, verified source
+spans, and a D4 load profile. Required evidence fails explicitly instead of
+being pruned. This additive CLI does not replace `explore` and is not exposed
+over default MCP. See
+[Rust Atlas Query Context Compiler](docs/atlas-query-context.md).
+
 Rebuild with `agent-spec atlas build` after an `atlas-schema-mismatch` or any
 `atlas-query-index-missing`, `atlas-query-index-schema`,
 `atlas-query-index-stale`, or `atlas-query-index-corrupt` diagnostic. A graph
@@ -637,7 +648,8 @@ The MCP server is read-only and uses frozen Atlas reads. It lists
 `atlas_search` only when started with `AGENT_SPEC_MCP_ATLAS_SEARCH=1`.
 `atlas_explore` is unavailable to discovery and dispatch unless the server is
 started with `AGENT_SPEC_MCP_ATLAS_EXPLORE=1`; its default profile is compact.
-The default MCP tool list remains unchanged while real Agent A/B is pending.
+`atlas context` is CLI/library-only. The default MCP tool list remains unchanged
+while real Agent A/B is pending.
 
 ## Code Live Wiki
 
@@ -685,7 +697,8 @@ cargo run -- atlas benchmark score --corpus benchmarks/atlas/query-corpus.json -
 ```
 
 The `score` command gates ranked symbols, paths, evidence, forbidden hits,
-query costs, and stale/capability diagnostics. Pinned-repository cases identify
+query costs, context retrieval/projection receipts, and stale/capability
+diagnostics. Pinned-repository cases identify
 immutable revisions but are not fetched or executed by scoring or default tests.
 Failed cases are written into the receipt before `score` exits non-zero.
 

@@ -7,6 +7,7 @@ source_files:
   - src/spec_knowledge/trace_ledger.rs
   - src/spec_knowledge/test_obligations.rs
   - src/spec_knowledge/worktrees.rs
+  - crates/rust-atlas/src/context.rs
   - src/main.rs
 tags:
   - requirements
@@ -49,6 +50,12 @@ intent compiler does not treat those heuristic candidates as code bindings or
 acceptance evidence. Only governed graph facts and explicit Contract selectors
 enter plans, lifecycle, and trace ledgers.
 
+The B5 query context compiler is an optional code-grounding aid for an Agent
+executing or reviewing a work unit. It does not lower PRD text, infer
+requirements, change requirement status, create `satisfies` links, or turn
+nearby tests into test obligations. Those remain deterministic intent-compiler
+and governance operations.
+
 ## Maintenance
 
 Update this page when any listed `source_files` change in a way that alters the project understanding an agent should reuse.
@@ -58,3 +65,6 @@ and explicit Contract selectors remain the intent compiler boundary.
 
 Atlas D3 was reviewed here; watcher and daemon state can trigger refresh but
 cannot transition a requirement or create execution evidence.
+
+Atlas B5 was reviewed here; bounded code context remains downstream working
+input and does not become intent-compiler truth or acceptance evidence.

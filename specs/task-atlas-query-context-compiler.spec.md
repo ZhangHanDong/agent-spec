@@ -28,6 +28,9 @@ impact 查询在明确预算内保留关键证据，并能解释遗漏来自 ret
 - receipt 分为 retrieval 与 projection 两段，并携带可供 D4 使用的 deterministic load profile。
 - source body 只能来自 graph hash 验证后的 symbol/edge-site line slice；stale source 只返回
   typed diagnostic，不回退到未验证全文。
+- test、generated 和 vendored source 仅在 query 点名 repository path/symbol 或位于 primary
+  flow、impact 或 runtime-boundary spine 时进入正文；其他情况仅保留带 provenance 的
+  signature skeleton。
 
 ## Boundaries
 
@@ -75,7 +78,7 @@ Scenario: intent parser 只接受确定性结构
     Level: unit
   Given identifier、repository path、known relation 和显式 profile 混合 token
   When parser 构造 QueryIntent
-  Then 字段按 canonical order 去重且未知 token 只作为未解释 token diagnostic
+  Then 字段按 first-seen order 去重且未知 token 只作为未解释 token diagnostic
 
 Scenario: retrieval 保留候选和评分理由
   Test:
@@ -116,6 +119,14 @@ Scenario: stale source 不回退未验证正文
   Given graph 后 source bytes 已变化
   When compiler 请求该 span
   Then source body 被拒绝、stale diagnostic 可机读且 graph node skeleton 仍标明 provenance
+
+Scenario: restricted source body 需要点名或 spine 准入
+  Test:
+    Filter: test_atlas_context_restricted_source_requires_name_or_spine
+    Level: integration
+  Given 生产 symbol 的相邻 test、generated 和 vendored source candidates
+  When 查询未点名这些 repository path 且 candidate 不在证据 spine
+  Then source body 不进入正文、signature skeleton 保留 provenance 且 receipt 记录 policy skeleton count
 
 Scenario: required evidence 不被 byte pruning 删除
   Test:

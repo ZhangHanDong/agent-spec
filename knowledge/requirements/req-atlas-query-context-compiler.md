@@ -29,6 +29,8 @@ given to an Agent.
 
 [REQ-ATLAS-CONTEXT-SOURCE] Source projection MUST use graph-hash-verified line slices around symbol spans or edge sites and MUST NOT fill the budget with whole files.
 
+[REQ-ATLAS-CONTEXT-RESTRICTED-SOURCE] Test, generated and vendored source bodies MUST enter the projection only when the query explicitly names their repository path or symbol, or the evidence lies on the primary flow, impact or runtime-boundary spine; otherwise the compiler MUST retain only a provenance-bearing signature skeleton and account for it in the projection receipt.
+
 [REQ-ATLAS-CONTEXT-RELEVANCE] A profile's relevance threshold MUST run before its byte cap; the byte budget is a ceiling and MUST NOT retain low-relevance evidence merely to fill output.
 
 [REQ-ATLAS-CONTEXT-PRESERVE] User-named symbols, unique implementations, primary spine, runtime boundary sites, failure evidence and source spans MUST NOT be silently compressed or removed; if required evidence cannot fit, the compiler MUST return a typed budget error.
@@ -82,6 +84,11 @@ Scenario: Required overflow fails explicitly
   When projection cannot preserve it
   Then a typed required-evidence budget error is returned instead of a partial success
 
+Scenario: Restricted source stays out of incidental context
+  Given adjacent test, generated and vendored source plus a production-code query
+  When the context compiler projects optional evidence
+  Then restricted bodies remain signature skeletons unless explicitly named or placed on an evidence spine
+
 ## Source Trace
 
 - canonical roadmap: docs/atlas-roadmap.md, Track B5
@@ -89,4 +96,3 @@ Scenario: Required overflow fails explicitly
 - predecessor query contract: knowledge/requirements/req-atlas-explore-flow-impact.md
 - human approval: latest reviewed roadmap implementation goal, 2026-07-21
 - contract: specs/task-atlas-query-context-compiler.spec.md
-

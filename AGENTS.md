@@ -38,7 +38,7 @@ agent-spec:   Write Contract (60%) → Agent codes (0%) → Read explain (30%) �
 | `agent-spec wiki status` | Check stale code live wiki articles | Before broad source reading |
 | `agent-spec wiki query <text>` | Search tracked live wiki articles | Before opening many source files |
 | `agent-spec wiki check` | Live wiki lint + worktree status gate | Pre-commit / CI for tracked wiki |
-| `agent-spec atlas build/tree/query/search/explore/flow/impact/affected/refs/impls/status/check` | Rust project graph: bounded context, explainable paths, reverse impact, identity, and freshness | Build before querying; use frozen reads for review and `check` for syn staleness |
+| `agent-spec atlas build/tree/query/search/explore/context/flow/impact/affected/refs/impls/status/check` | Rust project graph: scored retrieval, bounded context projection, explainable paths, reverse impact, identity, and freshness | Build before querying; use frozen reads for review and `check` for syn staleness |
 | `agent-spec atlas benchmark validate/plan/summarize/score` | Validate an offline A/B corpus, compile paired run plans, summarize graded receipts, or score versioned query observations | Use the correctness-first E0/E3 gates; pinned repositories and real Agent runs remain opt-in. See `docs/atlas-evaluation.md` |
 
 ### Rust Atlas Workflow
@@ -47,6 +47,7 @@ agent-spec:   Write Contract (60%) → Agent codes (0%) → Read explain (30%) �
 agent-spec atlas build --code . --graph .agent-spec/graph
 agent-spec atlas search <query> --code . --graph .agent-spec/graph --limit 20
 agent-spec atlas explore <query> --profile compact --code . --graph .agent-spec/graph --frozen
+agent-spec atlas context <query> --profile symbol --code . --graph .agent-spec/graph --frozen
 agent-spec atlas flow --from <symbol> --to <symbol> --code . --graph .agent-spec/graph --frozen
 agent-spec atlas impact <symbol> --depth 3 --code . --graph .agent-spec/graph --frozen
 agent-spec atlas affected --worktree --code . --graph .agent-spec/graph --frozen
@@ -107,11 +108,20 @@ see `docs/atlas-runtime-boundaries.md`. `affected`
 accepts exactly one explicit, stdin, staged, worktree, or commit-range input and
 never infers tests or coverage from filenames.
 
+`atlas context` separates retrieval from projection. Select exactly one
+`symbol`, `flow`, `architecture`, or `impact` profile. Treat candidate scores,
+omission manifests, source slices, continuations, and receipts as derived graph
+views, never KLL truth. Execute continuation argv literally and retain
+`--expect-graph`; do not invent a hidden cursor. Required evidence overflow,
+stale source, graph mismatch, and unknown cursor are typed failures. See
+`docs/atlas-query-context.md` for budgets and receipt fields.
+
 MCP Atlas reads are frozen and read-only. `atlas_search` is omitted from the
 default MCP tool list; set `AGENT_SPEC_MCP_ATLAS_SEARCH=1` when starting
 `agent-spec mcp` to list it. `atlas_explore` is unavailable unless
 `AGENT_SPEC_MCP_ATLAS_EXPLORE=1`; the default MCP surface stays unchanged while
-real Agent A/B remains pending. The graph, index, and bindings remain derived
+real Agent A/B remains pending. `atlas context` is not an MCP tool. The graph,
+index, and bindings remain derived
 working data, while KLL truth remains in `knowledge/`.
 
 ### KLL Requirements Intake

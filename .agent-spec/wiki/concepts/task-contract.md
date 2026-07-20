@@ -32,6 +32,11 @@ Likewise, `flow.runtime_boundaries` may guide source inspection but cannot
 satisfy a Contract symbol, scenario, or test selector because it carries
 query-hint authority rather than graph provenance.
 
+`atlas context` can gather a bounded, hash-checked evidence view before code
+changes, but its receipt is a selection receipt rather than a scenario verdict.
+Only an explicit Contract selector executed by lifecycle, or another governed
+verifier named by the Contract, can satisfy completion criteria.
+
 ## Maintenance
 
 Update this page when any listed `source_files` change in a way that alters the project understanding an agent should reuse.
@@ -41,3 +46,6 @@ mechanics governed by explicit Task Contract scenarios.
 
 Atlas D3 was reviewed here; pending or degraded runtime state does not satisfy
 a scenario, and no-daemon lifecycle verification remains supported.
+
+Atlas B5 was reviewed here; context evidence helps inspect code but never
+substitutes for Contract acceptance or lifecycle output.

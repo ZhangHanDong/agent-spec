@@ -6,6 +6,7 @@ source_files:
   - Cargo.toml
   - build.rs
   - crates/rust-atlas/Cargo.toml
+  - crates/rust-atlas/src/context.rs
   - crates/rust-atlas/src/lib.rs
   - src/main.rs
 ---
@@ -27,3 +28,6 @@ workspace package or dependency topology summarized above.
 
 Reviewed for Atlas D3: the optional local daemon adds runtime modules but no
 workspace package or external service dependency.
+
+Reviewed for Atlas B5: the context compiler is an additive `rust-atlas` module
+and CLI surface. It adds no workspace package, transport, or default MCP tool.

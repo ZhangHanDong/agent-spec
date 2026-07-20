@@ -14,6 +14,10 @@ inputs are `benchmarks/atlas/query-corpus.json` and
 `benchmarks/atlas/query-results.json`. They detect retrieval regressions; they
 are not fresh observations from the pinned repository.
 
+B5 context cases additionally preserve an expected profile and a strict
+retrieval/projection receipt. They distinguish graph retrieval loss from
+context projection loss instead of reducing both to a generic truncation bit.
+
 ## Live Runtime Conditions
 
 D3's optional watcher and daemon do not change query correctness. Evaluation
@@ -196,6 +200,7 @@ Every case records:
 | `rubric` | Human answer-quality criteria retained for later Agent A/B review. |
 | `source_ref` | Requirement, issue, or roadmap evidence that introduced the case. |
 | `paired_fixture` | Required fixture case id for a pinned-repository case. |
+| `context_expectation` | Optional B5 profile, limits, required loss/read-back behavior, and omission classes. |
 
 Unknown fields, duplicate ids or golden entries, empty required lists,
 expected/forbidden conflicts, mutable pinned revisions, pinned cases that point
@@ -209,7 +214,10 @@ compatible.
 target `corpus_version` and provide exactly one observation for every corpus
 case. An observation preserves ranked symbols, complete paths, evidence,
 typed diagnostics, response bytes, duration, source read-back calls, and
-follow-up queries. Missing, duplicate, unknown, wrong-version, or malformed
+follow-up queries. B5 observations also carry a strict `context_receipt` with
+retrieval totals/hard-cap loss, projection relevance/retention loss, serialized
+bytes, omission classes, graph fingerprint, read-back, follow-ups, and load
+profile. Missing, duplicate, unknown, wrong-version, or malformed
 observations fail before a receipt is emitted.
 
 The output schema is `agent-spec/atlas-eval/query-regression-v1`. Per-case
@@ -227,6 +235,9 @@ correctness and aggregate metrics use these deterministic rules:
 - capability and stale diagnostic counts remain visible in the aggregate;
 - runtime-boundary diagnostics are matched exactly per case and remain query
   hints rather than graph facts.
+- context receipt counts must be internally possible, response bytes and
+  follow-up counts must agree with the observation, and required profile,
+  omission, loss, and read-back behavior must match the case.
 
 The receipt also records a BLAKE3 `corpus_fingerprint` and preserves each
 case's observed typed diagnostic codes. A structurally valid observation set

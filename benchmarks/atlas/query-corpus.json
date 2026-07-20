@@ -1,6 +1,6 @@
 {
   "schema": "agent-spec/atlas-eval/query-corpus-v1",
-  "version": "2026-07-20.2",
+  "version": "2026-07-21.1",
   "cases": [
     {
       "id": "fixture-symbol-mem-store",
@@ -164,6 +164,257 @@
       ],
       "source_ref": "REQ-ATLAS-RUNTIME-BOUNDARY-HINTS",
       "paired_fixture": null
+    },
+    {
+      "id": "fixture-context-symbol",
+      "tier": "deterministic-fixture",
+      "task_class": "symbol",
+      "repository": "fixtures/atlas/basic",
+      "revision": "fixture-v1",
+      "query": "atlas_basic::store::MemStore",
+      "expected_symbols": [
+        "atlas_basic::store::MemStore"
+      ],
+      "expected_paths": [
+        [
+          "atlas_basic::store::MemStore"
+        ]
+      ],
+      "forbidden_symbols": [],
+      "forbidden_paths": [],
+      "required_evidence": [
+        "fixtures/atlas/basic/src/store.rs"
+      ],
+      "required_diagnostics": [],
+      "allowed_ambiguity": 0,
+      "rubric": [
+        "Retains the exact declaration and its hash-verified source span.",
+        "Separates retrieval coverage from projection retention."
+      ],
+      "source_ref": "REQ-ATLAS-QUERY-CONTEXT-COMPILER",
+      "paired_fixture": null,
+      "context_expectation": {
+        "profile": "symbol",
+        "max_serialized_bytes": 16000,
+        "min_score": 300,
+        "require_retrieval_loss": false,
+        "require_projection_loss": false,
+        "require_read_back": false,
+        "required_omission_classes": []
+      }
+    },
+    {
+      "id": "fixture-context-flow",
+      "tier": "deterministic-fixture",
+      "task_class": "flow",
+      "repository": "fixtures/atlas/basic",
+      "revision": "fixture-v1",
+      "query": "atlas_basic::open_default atlas_basic::store::MemStore calls",
+      "expected_symbols": [
+        "atlas_basic::open_default",
+        "atlas_basic::store::MemStore"
+      ],
+      "expected_paths": [
+        [
+          "atlas_basic::open_default",
+          "atlas_basic::store::MemStore"
+        ]
+      ],
+      "forbidden_symbols": [],
+      "forbidden_paths": [],
+      "required_evidence": [
+        "fixtures/atlas/basic/src/lib.rs",
+        "fixtures/atlas/basic/src/store.rs"
+      ],
+      "required_diagnostics": [],
+      "allowed_ambiguity": 0,
+      "rubric": [
+        "Retains the complete primary spine and source sites.",
+        "Does not promote alternative candidates over the primary path."
+      ],
+      "source_ref": "REQ-ATLAS-QUERY-CONTEXT-COMPILER",
+      "paired_fixture": null,
+      "context_expectation": {
+        "profile": "flow",
+        "max_serialized_bytes": 32000,
+        "min_score": 250,
+        "require_retrieval_loss": false,
+        "require_projection_loss": false,
+        "require_read_back": false,
+        "required_omission_classes": []
+      }
+    },
+    {
+      "id": "fixture-context-architecture",
+      "tier": "deterministic-fixture",
+      "task_class": "symbol",
+      "repository": "fixtures/atlas/basic",
+      "revision": "fixture-v1",
+      "query": "atlas_basic::service::run",
+      "expected_symbols": [
+        "atlas_basic::service::run"
+      ],
+      "expected_paths": [
+        [
+          "atlas_basic::service::run"
+        ]
+      ],
+      "forbidden_symbols": [],
+      "forbidden_paths": [],
+      "required_evidence": [
+        "fixtures/atlas/basic/src/service.rs"
+      ],
+      "required_diagnostics": [],
+      "allowed_ambiguity": 0,
+      "rubric": [
+        "Retains the named implementation with module relationship context.",
+        "Reports the architecture profile and its exact budget."
+      ],
+      "source_ref": "REQ-ATLAS-QUERY-CONTEXT-COMPILER",
+      "paired_fixture": null,
+      "context_expectation": {
+        "profile": "architecture",
+        "max_serialized_bytes": 24000,
+        "min_score": 200,
+        "require_retrieval_loss": false,
+        "require_projection_loss": false,
+        "require_read_back": false,
+        "required_omission_classes": []
+      }
+    },
+    {
+      "id": "fixture-context-impact",
+      "tier": "deterministic-fixture",
+      "task_class": "impact",
+      "repository": "fixtures/atlas/basic",
+      "revision": "fixture-v1",
+      "query": "atlas_basic::store::Store::get",
+      "expected_symbols": [
+        "atlas_basic::store::Store::get",
+        "atlas_basic::service::run"
+      ],
+      "expected_paths": [
+        [
+          "atlas_basic::store::Store::get",
+          "atlas_basic::service::run"
+        ]
+      ],
+      "forbidden_symbols": [],
+      "forbidden_paths": [],
+      "required_evidence": [
+        "fixtures/atlas/basic/src/store.rs",
+        "fixtures/atlas/basic/src/service.rs"
+      ],
+      "required_diagnostics": [],
+      "allowed_ambiguity": 0,
+      "rubric": [
+        "Retains the reverse impact path and distance-backed dependent.",
+        "Keeps impact projection loss separate from retrieval coverage."
+      ],
+      "source_ref": "REQ-ATLAS-QUERY-CONTEXT-COMPILER",
+      "paired_fixture": null,
+      "context_expectation": {
+        "profile": "impact",
+        "max_serialized_bytes": 24000,
+        "min_score": 250,
+        "require_retrieval_loss": false,
+        "require_projection_loss": false,
+        "require_read_back": false,
+        "required_omission_classes": []
+      }
+    },
+    {
+      "id": "fixture-context-projection-pressure",
+      "tier": "deterministic-fixture",
+      "task_class": "symbol",
+      "repository": "fixtures/atlas/basic",
+      "revision": "fixture-v1",
+      "query": "atlas_basic::service::run",
+      "expected_symbols": [
+        "atlas_basic::service::run"
+      ],
+      "expected_paths": [
+        [
+          "atlas_basic::service::run"
+        ]
+      ],
+      "forbidden_symbols": [],
+      "forbidden_paths": [],
+      "required_evidence": [
+        "fixtures/atlas/basic/src/service.rs"
+      ],
+      "required_diagnostics": [
+        {
+          "kind": "truncated",
+          "code": "atlas-context-byte-ceiling"
+        }
+      ],
+      "allowed_ambiguity": 0,
+      "rubric": [
+        "Retains the named symbol while omitting only optional relationship context.",
+        "Emits executable follow-up queries for every omitted class."
+      ],
+      "source_ref": "REQ-ATLAS-QUERY-CONTEXT-COMPILER",
+      "paired_fixture": null,
+      "context_expectation": {
+        "profile": "architecture",
+        "max_serialized_bytes": 8000,
+        "min_score": 0,
+        "require_retrieval_loss": false,
+        "require_projection_loss": true,
+        "require_read_back": false,
+        "required_omission_classes": [
+          "relationship",
+          "adjacent-structure"
+        ]
+      }
+    },
+    {
+      "id": "fixture-context-stale-source",
+      "tier": "deterministic-fixture",
+      "task_class": "stale",
+      "repository": "fixtures/atlas/basic",
+      "revision": "fixture-v1-stale-service",
+      "query": "atlas_basic::service::run",
+      "expected_symbols": [
+        "atlas_basic::service::run"
+      ],
+      "expected_paths": [
+        [
+          "atlas_basic::service::run"
+        ]
+      ],
+      "forbidden_symbols": [],
+      "forbidden_paths": [],
+      "required_evidence": [
+        "fixtures/atlas/basic/src/service.rs"
+      ],
+      "required_diagnostics": [
+        {
+          "kind": "stale",
+          "code": "atlas-context-stale-source"
+        }
+      ],
+      "allowed_ambiguity": 0,
+      "rubric": [
+        "Retains graph skeletons but never returns source bytes that fail the generation hash.",
+        "Marks read-back as required and exposes stale diagnostics."
+      ],
+      "source_ref": "REQ-ATLAS-QUERY-CONTEXT-COMPILER",
+      "paired_fixture": null,
+      "context_expectation": {
+        "profile": "symbol",
+        "max_serialized_bytes": 16000,
+        "min_score": 300,
+        "require_retrieval_loss": false,
+        "require_projection_loss": false,
+        "require_read_back": true,
+        "required_omission_classes": [
+          "named-symbol",
+          "relationship",
+          "adjacent-structure"
+        ]
+      }
     },
     {
       "id": "pinned-agent-spec-evaluator-flow",

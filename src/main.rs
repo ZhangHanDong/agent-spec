@@ -520,6 +520,37 @@ enum AtlasCommands {
         #[arg(long)]
         frozen: bool,
     },
+    /// Compile a deterministic, bounded evidence context for an agent query
+    Context {
+        query: String,
+        #[arg(
+            long,
+            default_value = "symbol",
+            value_parser = ["symbol", "flow", "architecture", "impact"]
+        )]
+        profile: String,
+        /// Resume after a stable evidence id (`START` denotes the beginning)
+        #[arg(long)]
+        after: Option<String>,
+        /// Reject continuation when the selected graph fingerprint changed
+        #[arg(long)]
+        expect_graph: Option<String>,
+        /// Override the profile byte ceiling (1024..=1000000)
+        #[arg(long)]
+        max_bytes: Option<usize>,
+        /// Override the profile relevance threshold
+        #[arg(long)]
+        min_score: Option<u16>,
+        /// Explicit failure evidence that projection must retain
+        #[arg(long = "failure-evidence")]
+        failure_evidence: Vec<String>,
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+        #[arg(long)]
+        frozen: bool,
+    },
     /// Explain a path between symbols or through one symbol
     #[command(group(
         clap::ArgGroup::new("flow-input")
@@ -3749,6 +3780,21 @@ fn parse_explore_profile(
     }
 }
 
+fn parse_context_profile(
+    profile: &str,
+) -> Result<rust_atlas::ContextProfile, Box<dyn std::error::Error>> {
+    match profile {
+        "symbol" => Ok(rust_atlas::ContextProfile::Symbol),
+        "flow" => Ok(rust_atlas::ContextProfile::Flow),
+        "architecture" => Ok(rust_atlas::ContextProfile::Architecture),
+        "impact" => Ok(rust_atlas::ContextProfile::Impact),
+        _ => Err(std::io::Error::other(format!(
+            "atlas-context-profile: unsupported profile `{profile}`"
+        ))
+        .into()),
+    }
+}
+
 fn resolve_flow_query(
     from: Option<String>,
     to: Option<String>,
@@ -3772,6 +3818,20 @@ fn cmd_atlas_explore_with_writer(
     stdout: &mut dyn Write,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let result = rust_atlas::explore(code, graph, query, options)?;
+    let bytes = serde_json::to_vec(&result)?;
+    stdout.write_all(&bytes)?;
+    stdout.write_all(b"\n")?;
+    Ok(())
+}
+
+fn cmd_atlas_context_with_writer(
+    code: &Path,
+    graph: &Path,
+    query: &str,
+    options: &rust_atlas::ContextOptions,
+    stdout: &mut dyn Write,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let result = rust_atlas::compile_context(code, graph, query, options)?;
     let bytes = serde_json::to_vec(&result)?;
     stdout.write_all(&bytes)?;
     stdout.write_all(b"\n")?;
@@ -3903,6 +3963,35 @@ fn cmd_atlas(action: AtlasCommands) -> Result<(), Box<dyn std::error::Error>> {
                 &rust_atlas::ExploreOptions {
                     profile: parse_explore_profile(&profile)?,
                     frozen,
+                },
+                &mut stdout.lock(),
+            )
+        }
+        AtlasCommands::Context {
+            query,
+            profile,
+            after,
+            expect_graph,
+            max_bytes,
+            min_score,
+            failure_evidence,
+            code,
+            graph,
+            frozen,
+        } => {
+            let stdout = std::io::stdout();
+            cmd_atlas_context_with_writer(
+                &code,
+                &graph,
+                &query,
+                &rust_atlas::ContextOptions {
+                    profile: parse_context_profile(&profile)?,
+                    frozen,
+                    max_serialized_bytes: max_bytes,
+                    min_score,
+                    after,
+                    expected_graph_fingerprint: expect_graph,
+                    failure_evidence,
                 },
                 &mut stdout.lock(),
             )
@@ -12984,6 +13073,92 @@ Scenario: pass
         assert_eq!(stdout, expected_bytes);
         assert_eq!(expected.usage.serialized_bytes + 1, stdout.len());
         fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_context_cli_emits_finalized_json_and_continuation_contract() {
+        let parsed = super::Cli::try_parse_from([
+            "agent-spec",
+            "atlas",
+            "context",
+            "MemStore calls",
+            "--profile",
+            "flow",
+            "--min-score",
+            "700",
+            "--max-bytes",
+            "20000",
+            "--failure-evidence",
+            "test failed",
+            "--frozen",
+        ])
+        .unwrap();
+        assert!(matches!(
+            parsed.command,
+            super::Commands::Atlas {
+                action: super::AtlasCommands::Context {
+                    query,
+                    profile,
+                    min_score: Some(700),
+                    max_bytes: Some(20_000),
+                    failure_evidence,
+                    frozen: true,
+                    ..
+                }
+            } if query == "MemStore calls" && profile == "flow" && failure_evidence == ["test failed"]
+        ));
+
+        let (code, graph) = atlas_fixture_copy("atlas-context-cli-bytes");
+        rust_atlas::build(&code, &graph, &rust_atlas::BuildOptions::default()).unwrap();
+        let options = rust_atlas::ContextOptions {
+            profile: rust_atlas::ContextProfile::Symbol,
+            frozen: true,
+            min_score: Some(700),
+            ..rust_atlas::ContextOptions::default()
+        };
+        let expected = rust_atlas::compile_context(&code, &graph, "MemStore", &options).unwrap();
+        let mut stdout = Vec::new();
+        super::cmd_atlas_context_with_writer(&code, &graph, "MemStore", &options, &mut stdout)
+            .unwrap();
+        let mut expected_bytes = serde_json::to_vec(&expected).unwrap();
+        expected_bytes.push(b'\n');
+        assert_eq!(stdout, expected_bytes);
+        assert_eq!(expected.receipt.serialized_bytes + 1, stdout.len());
+        let continuation = expected
+            .omissions
+            .first()
+            .expect("high threshold creates an omission")
+            .continuation
+            .argv
+            .clone();
+        super::Cli::try_parse_from(continuation)
+            .expect("continuation argv parses in a new process");
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_context_is_additive_to_explore_and_mcp_discovery() {
+        crate::spec_mcp::with_atlas_explore_tool(false, || {
+            let tools = crate::spec_mcp::tool_specs();
+            let names = tools
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|tool| tool["name"].as_str())
+                .collect::<Vec<_>>();
+            assert!(!names.contains(&"atlas_context"));
+            assert!(!names.contains(&"atlas_explore"));
+        });
+        assert_eq!(
+            serde_json::to_string(&rust_atlas::ExploreProfile::Compact).unwrap(),
+            "\"compact\""
+        );
+        assert_eq!(
+            rust_atlas::ExploreProfile::Compact
+                .budget()
+                .max_serialized_bytes,
+            16_000
+        );
     }
 
     #[test]

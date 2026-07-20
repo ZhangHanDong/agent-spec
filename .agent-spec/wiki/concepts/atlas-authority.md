@@ -9,6 +9,7 @@ source_files:
   - crates/rust-atlas/src/sync.rs
   - crates/rust-atlas/src/incremental.rs
   - crates/rust-atlas/src/explore.rs
+  - crates/rust-atlas/src/context.rs
   - crates/rust-atlas/src/flow.rs
   - crates/rust-atlas/src/runtime_boundary.rs
   - crates/rust-atlas/src/impact.rs
@@ -73,7 +74,17 @@ Connecting affected code paths to requirements, scenarios, and quality gates is
 the next intent-aware consumer step; code impact alone does not establish that
 trace.
 
+`atlas context` compiles a bounded view over one pinned graph generation. Its
+evidence ids, source slices, omission continuations, and receipts are derived
+query artifacts: they explain what was selected or dropped but cannot create a
+binding, requirement state, scenario verdict, or lifecycle evidence. Restricted
+test/generated/vendor bodies require an explicit name or evidence-spine role;
+stale bytes remain graph skeletons with typed read-back diagnostics.
+
 ## Maintenance
 
 Keep this working-memory page aligned with the status and authority-gate source;
 KLL requirements and lifecycle records remain the governing evidence.
+
+Atlas B5 was reviewed here; context compilation improves code reading without
+crossing the graph, KLL, Contract, or lifecycle authority boundaries.

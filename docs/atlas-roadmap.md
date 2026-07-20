@@ -361,7 +361,7 @@ git diff --name-only | atlas affected --stdin
 
 #### B5. Query context compiler
 
-状态：未来工作；依赖 E3 的查询质量回归闭环，默认 MCP 变化还依赖 E1。
+状态：已交付加性 CLI/library 与 E3 回归；默认 MCP 变化仍依赖 E1。
 
 把“图检索”和“给 Agent 的上下文编排”分成两个确定性阶段。检索阶段返回完整候选与评分
 理由；context compiler 再按显式 profile 生成 bounded output：
@@ -400,6 +400,13 @@ QueryIntent
 profile、预算和排序 tie-break 必须显式且确定，不能根据隐藏运行时状态改变语义。项目规模
 可以给出 profile 建议，但正式 receipt 必须记录实际 profile、limit、serialized bytes、
 read-back 和 follow-up query。
+
+已交付实现位于 `crates/rust-atlas/src/context.rs`，入口为
+`atlas context <query> --profile symbol|flow|architecture|impact`。continuation 在 retrieval hard
+cap 之前按 stable evidence id 分页，并用 graph fingerprint 拒绝跨 generation 恢复。E3
+`2026-07-21.1` 固定四 profile、8 KiB projection pressure 与 stale-source receipt；默认测试还会
+现场重建 fixture graph。交付观测中普通 profile retrieval 数为 13/23/12/6，pressure case
+保留 3/12、裁剪 9 项并输出 7267 bytes。该结果不构成真实 Agent A/B 或默认 MCP 晋升证据。
 
 ### Track C：Intent-Aware Impact and Execution
 
@@ -773,7 +780,7 @@ adapter。它们投影到同一 Code Graph IR，并通过 provider conformance t
 | 10 | A4.1 runtime-boundary hints（已交付） | A4 trait v1、B3、E3 | fresh-source AST query hint 已解释静态图终点，未把候选写成边 |
 | 11 | D2 incremental hardening（已交付） | B1、D1 | generation transaction、dependent frontier、orphan recovery 与 zero-change fast path 已交付 |
 | 12 | D3 watch 与 daemon（已交付） | D2 | 已用 pending watermark、bounded retry、reader lease 和 typed degraded 增加可选实时性能，保留 no-daemon parity |
-| 13 | B5 query context compiler | B2/B3/B4、E3 | 分离 retrieval 与 projection，交付 evidence priority、omission manifest 和双层 receipt |
+| 13 | B5 query context compiler（已交付） | B2/B3/B4、E3 | 已分离 retrieval 与 projection，交付 evidence priority、omission manifest 和双层 receipt |
 | 14 | D4 concurrent query serving | D3、B5 load profile | 在 reader lease 上增加 bounded backpressure；没有并发收益证据时保持 direct mode |
 | 15 | E1 real Agent A/B | E3、B5/D4 候选面 | 用 A/B/C 与 surface ablation 决定默认入口、预算和并发策略 |
 | 16 | F1 provider adapter kit | Rust C1、D1/D2 语义已验证 | 固化 provider、enricher 与 framework-pack conformance contract |

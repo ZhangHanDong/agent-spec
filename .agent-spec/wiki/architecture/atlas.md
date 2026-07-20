@@ -19,14 +19,17 @@ source_files:
   - crates/rust-atlas/src/impact.rs
   - crates/rust-atlas/src/affected.rs
   - crates/rust-atlas/src/explore.rs
+  - crates/rust-atlas/src/context.rs
   - src/main.rs
   - src/atlas_daemon.rs
   - src/spec_mcp/tools.rs
   - docs/atlas-live-runtime.md
+  - docs/atlas-query-context.md
   - specs/task-atlas-explore-flow-impact.spec.md
   - specs/task-atlas-runtime-boundary-hints.spec.md
   - specs/task-atlas-incremental-hardening.spec.md
   - specs/task-atlas-live-runtime.spec.md
+  - specs/task-atlas-query-context-compiler.spec.md
 tags:
   - atlas
   - code-graph
@@ -43,6 +46,9 @@ query index for deterministic lookup. Schema v6 records edge occurrence and
 evidence fields alongside graph nodes and edges. The CLI builds, searches,
 reports status, checks syn staleness, composes bounded explore context, explains
 flow paths, and calculates reverse impact from symbols or changed files.
+`context.rs` adds a two-stage compiler: retrieval emits stable scored evidence
+before profile relevance and byte projection produce verified source slices,
+omission continuations, dual-loss receipts, and a deterministic load profile.
 `traversal.rs` owns the shared path, hop, state, limits, and ordering contract;
 surface modules compose it instead of redefining evidence or freshness.
 Query-index diagnostics require a rebuild instead of a shard-scan fallback.
@@ -109,6 +115,13 @@ Live runtime state is also derived: watcher health, watermark, daemon identity,
 reader lease, and `degraded` status never replace graph freshness, KLL, or
 lifecycle authority. Stopping the daemon preserves no-daemon access to the last
 committed generation.
+
+Context projections are derived too. Their stable evidence ids and receipts
+explain selection and loss but do not become graph facts, code bindings, or KLL
+truth. Required evidence fails explicitly; continuation must retain the graph
+fingerprint. Test, generated, and vendored bodies require an explicit path or
+symbol, or a primary evidence-spine role; incidental candidates remain
+provenance-bearing skeletons. The command remains outside default MCP until E1.
 
 ## Maintenance
 
