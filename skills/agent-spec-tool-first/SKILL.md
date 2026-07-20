@@ -67,6 +67,7 @@ Humans define "what is correct" (Contract). Machines verify "is the code correct
 | `agent-spec atlas benchmark validate/plan/summarize/score` | Validate the E0 corpus, compile paired Atlas/baseline plans, summarize fully graded receipts, or score strict E3 query observations | Evaluate correctness before performance. Default tests probe current fixtures without network access. See `docs/atlas-evaluation.md` |
 | `agent-spec atlas benchmark agent-plan/agent-gate` | Compile matched Read/Grep, Atlas primitive, and B5 context arms; gate strict complete receipts | Keep all failures and query metrics. B/A and C/B are independent. Real execution is opt-in and external. See `docs/atlas-agent-ab-gate.md` |
 | `agent-spec atlas benchmark serving-plan/serving-gate` | Compile and gate four-profile direct/worker burst trials | Require a pinned non-fixture repository. The disabled template and D4 fixture matrix are not promotion evidence. See `docs/atlas-agent-ab-gate.md` |
+| `agent-spec atlas provider validate/conformance` | Validate an external Code Graph manifest/registration or run the F1 conformance matrix | Keep providers project-configured and opt-in. Conformance proves adapter behavior, not language quality. See `docs/code-graph-provider-kit.md` |
 | `agent-spec verify <spec> --code .` | Raw verification only | When you want verify without lint gate |
 | `agent-spec checkpoint status` | VCS-aware status | Check uncommitted state |
 
@@ -153,6 +154,13 @@ list it. `atlas_explore` is unavailable unless
 A/B gate passes. `atlas_context` requires `AGENT_SPEC_MCP_ATLAS_CONTEXT=1`;
 its concurrent route additionally requires
 `AGENT_SPEC_MCP_ATLAS_QUERY_MODE=worker`. Keep both opt-in until that gate.
+
+For external Code Graph providers, run `atlas provider validate` before any
+execution and `atlas provider conformance` before integration. Keep extractor
+and semantic-enricher artifacts separate. Reject stale/partial promotion,
+wrong-worktree responses, unsafe paths, unscoped ids, missing evidence,
+unknown schemas, output overflow, timeout, and cancellation. A fixture pass is
+not F2 language support or permission to auto-enable the provider.
 
 ## BDD-spine Commands (0.3.0)
 

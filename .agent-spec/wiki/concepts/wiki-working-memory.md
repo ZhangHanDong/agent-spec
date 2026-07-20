@@ -53,3 +53,7 @@ serving without promoting runtime counters or measurements to durable truth.
 Atlas E1 adds an evaluation/adoption article. The wiki records schema and
 authority boundaries, while raw sessions and gate outputs remain ignored
 runtime evidence under `.agent-spec/evaluation/`.
+
+Atlas F1 adds the external provider concept to the generated index. The wiki
+summarizes roles and conformance, while KLL and the Task Contract remain
+normative and concrete language providers remain F2.

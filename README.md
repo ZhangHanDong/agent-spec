@@ -22,7 +22,9 @@ against the contract, the machine verifies whether the code satisfies the contra
 
 ## Architecture: the Intent Compiler
 
-> Current pipeline below; the staged **target architecture** (Requirement Governance Gate, Code Graph IR, Intent-Code Linker, Quality Planning, Execution Bundles) lives in [`docs/intent-compiler/architecture.md`](docs/intent-compiler/architecture.md).
+> Current pipeline below; the detailed contracts for Requirement Governance,
+> Code Graph IR, Intent-Code Linker, Quality Planning, and Execution Bundles
+> live in [`docs/intent-compiler/architecture.md`](docs/intent-compiler/architecture.md).
 
 ```mermaid
 flowchart TD
@@ -33,7 +35,7 @@ flowchart TD
     subgraph FE["前端 · Intake"]
         B["agent-spec-intent-compiler skill<br/>AI drafts Candidate Requirement Blocks,<br/>a human reviews and accepts"]
         C["agent-spec requirements import<br/>deterministic — marked blocks or YAML dialect"]
-        CG{"Requirement Governance Gate (planned strict gate)<br/>proposed → accepted / rejected"}
+        CG{"Requirement Governance Gate<br/>proposed → accepted / rejected"}
     end
 
     subgraph IR["中间表示 · Requirement IR"]
@@ -42,27 +44,27 @@ flowchart TD
         F["requirements graph --gate<br/>dependency DAG validation"]
     end
 
-    subgraph PIR["程序中间表示 · Code Graph IR (planned)"]
-        P["Language code-intelligence providers<br/>Rust Atlas · future providers"]
+    subgraph PIR["程序中间表示 · Code Graph IR"]
+        P["Language code-intelligence providers<br/>Rust Atlas · F1 adapter kit · future F2 providers"]
         PG["derived project graph<br/>symbols · impls · references · calls"]
         P --> PG
     end
 
     subgraph ME["中端 · Lowering & Planning"]
         G["requirements work-units<br/>executable or blocked units"]
-        X["Code Grounding / Intent-Code Linker (planned)<br/>REQ × work-unit × code bindings"]
-        K["Task Contracts (specs/*.spec.md)<br/>satisfies: REQ-* · Boundaries · planned Symbols"]
-        H["requirements plan --gate<br/>REQ × work-unit × spec DAG<br/>code bindings planned"]
+        X["Code Grounding / Intent-Code Linker<br/>REQ × work-unit × code bindings"]
+        K["Task Contracts (specs/*.spec.md)<br/>satisfies: REQ-* · Boundaries · Symbols"]
+        H["requirements plan --gate<br/>REQ × work-unit × spec DAG<br/>typed code bindings"]
         I["requirements test-obligations<br/>spec-derived, code-independent"]
         J["requirements worktrees<br/>parallel scheduling manifest"]
-        QP["Quality Planning (planned)<br/>toolchain + required skills"]
-        EB["Execution Bundle (planned)<br/>Contract + bindings + tools + skills"]
+        QP["Quality Planning<br/>toolchain + required skills"]
+        EB["Execution Bundle<br/>Contract + bindings + tools + skills"]
     end
 
     subgraph BE["后端 · Verifiable Target"]
         L["agent implements within Boundaries"]
         M["lifecycle: lint → structural →<br/>boundaries → bound tests"]
-        QT["Quality providers (planned)<br/>clippy · rustfmt · deny · miri · third-party"]
+        QT["Quality providers<br/>clippy · rustfmt · deny · miri · third-party"]
     end
 
     subgraph LK["链接 · Liveness"]
@@ -662,6 +664,24 @@ started with `AGENT_SPEC_MCP_ATLAS_EXPLORE=1`; its default profile is compact.
 non-zero query workers; initialize, discovery, and ping remain on the transport
 lane. The default MCP tool list remains unchanged while real Agent A/B is
 pending.
+
+### External Code Graph Providers
+
+F1 provides a standalone Rust adapter SDK and conformance gate for future
+language or semantic providers. It does not add a non-Rust parser and does not
+change the Rust Atlas path. Providers remain disabled until a project supplies
+an explicit registration.
+
+```bash
+agent-spec atlas provider validate --manifest path/to/manifest.json --registration path/to/registration.json
+agent-spec atlas provider conformance --manifest fixtures/code-graph-provider/basic/manifest.json --registration fixtures/code-graph-provider/basic/registration.json --fixture fixtures/code-graph-provider/basic/conformance.json --code . --scratch .agent-spec/provider-conformance --out .agent-spec/provider-conformance/receipt.json
+```
+
+The kit separates extractor nodes/basic references from additive semantic
+enrichment, validates worktree and freshness evidence, enforces timeout and
+stdout/stderr limits, supports cancellation, and publishes only validated
+artifacts atomically. See
+[External Code Graph Provider Kit](docs/code-graph-provider-kit.md).
 
 ## Code Live Wiki
 

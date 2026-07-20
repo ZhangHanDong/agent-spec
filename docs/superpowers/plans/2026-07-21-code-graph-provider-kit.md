@@ -55,9 +55,9 @@ harness, CLI surface, and documented provider-author contract without implementi
 
 ## Task 7: Publish F1 And Dogfood
 
-- [ ] Document schemas, projection, freshness, diagnostics, execution, and F2 author workflow.
-- [ ] Update roadmap, README, AGENTS, skill, changelog, and Code Live Wiki without promoting wiki
+- [x] Document schemas, projection, freshness, diagnostics, execution, and F2 author workflow.
+- [x] Update roadmap, README, AGENTS, skill, changelog, and Code Live Wiki without promoting wiki
   content to KLL truth.
-- [ ] Run fmt, clippy, full workspace tests, docs lint, wiki check, KLL graph/plan gates, and task
+- [x] Run fmt, clippy, full workspace tests, docs lint, wiki check, KLL graph/plan gates, and task
   lifecycle with no skip or uncertain verdict.
 - [ ] Commit publication, rerun post-commit lifecycle, requirement replay, and trace graph.

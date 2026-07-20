@@ -8,6 +8,13 @@ All notable changes to `agent-spec` are documented here. Format follows
 
 ### Added
 
+- Atlas F1 external Code Graph provider kit: a standalone Rust SDK defines
+  strict provider manifests, opt-in project registrations, separate extraction
+  and semantic-enrichment schemas, canonical projection, worktree/freshness
+  validation, host-derived fingerprints, literal-argv bounded process execution,
+  cancellation, and atomic publication. `atlas provider validate|conformance`
+  exposes an eight-check local matrix without adding a non-Rust provider or
+  changing Rust Atlas defaults.
 - Atlas E1 adoption harness: strict versioned experiment, Agent A/B/C plan,
   receipt, and gate schemas separate Atlas primitive value from B5 context
   value; an independent four-profile direct/worker burst gate covers D4.

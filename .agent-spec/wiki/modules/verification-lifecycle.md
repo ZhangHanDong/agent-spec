@@ -74,6 +74,11 @@ pinned graph. It can expose stale source and missing evidence for investigation,
 but cannot become a pass verdict, infer a selector, or satisfy a binding. The
 Contract and lifecycle verifier remain authoritative.
 
+The F1 provider lifecycle selectors invoke only the checked-in, explicitly
+enabled local fixture. A passing conformance receipt verifies transport,
+projection, freshness, cancellation, and publication behavior; it cannot prove
+production language accuracy or auto-enable a provider.
+
 D4 worker receipts preserve typed execution state and can support selectors
 that explicitly test concurrency behavior. They do not become pass verdicts by
 themselves. The D4 contract binds 19 scenarios to computational tests,

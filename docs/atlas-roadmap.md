@@ -113,6 +113,7 @@ Atlas 后续语义增强统一分为三档：
 | B5 query context compiler | 已交付 | `REQ-ATLAS-QUERY-CONTEXT-COMPILER`、四种 profile、双层 loss receipt、`docs/atlas-query-context.md` |
 | E1 Agent adoption gate | harness 已交付，真实结论 pending | `REQ-ATLAS-AGENT-AB-GATE`、72-run 三臂 plan、独立 serving schema、`docs/atlas-agent-ab-gate.md` |
 | provider-neutral Code Graph IR 与 binding | 已交付 | `REQ-CODE-GRAPH-IR`、`specs/task-code-graph-ir-bindings.spec.md` |
+| F1 external provider adapter kit | 已交付 | `REQ-CODE-GRAPH-PROVIDER-KIT`、独立 Rust SDK、八项 conformance receipt、`docs/code-graph-provider-kit.md` |
 | Contract 符号与 typed trace 集成 | 已交付 | `REQ-INTENT-CODE-LINKER`、`specs/task-atlas-kll-integration.spec.md` |
 | Quality Planning 与 Execution Bundle | 已交付 | `REQ-QUALITY-PLANNING`、`specs/task-quality-planning-bundles.spec.md` |
 | Intent-aware affected 与 execution bundle | 已交付 | `REQ-INTENT-AWARE-AFFECTED`、`REQ-AFFECTED-EXECUTION-BUNDLE` |
@@ -143,7 +144,7 @@ Atlas 后续语义增强统一分为三档：
 
 | 缺口 | 后果 |
 |---|---|
-| 非 Rust provider 仍只有消费合约 | 多语言项目需要另行实现 provider-neutral impact adapter |
+| 尚无生产级非 Rust provider | F1 已交付 manifest、投影、受限执行与 conformance kit；多语言项目仍需按 F2 实现并验证具体 adapter |
 | 官方 MIR producer 与 trait 之外的 dynamic-dispatch mechanism 尚未交付 | 已可消费外部 compiler overlay 并推理 trait candidates；仓库尚不能自行提取 MIR，其他运行时分派仍报告缺失能力 |
 | Rust framework 语义尚无独立 pack | route、registration、task/channel 等路径仍可能止于 runtime-boundary hint |
 | 尚无真实 Agent A/B 执行结果 | E1 三臂/并发 harness 已交付，但 checked-in manifest/plan 不是运行证据，不能证明 Atlas 带来性能改善 |
@@ -691,7 +692,7 @@ Atlas/provider version、query、expected/forbidden evidence 和采集命令。c
 
 #### F1. External provider adapter kit
 
-状态：Rust 路径通过 C1 验证之后。
+状态：已通过 `REQ-CODE-GRAPH-PROVIDER-KIT` 交付。
 
 - 定义 `ProviderManifest`：provider id/version、language、schema range、capability、启动方式、
   freshness inputs、resource limit 与 deterministic/no-daemon 支持。
@@ -790,7 +791,7 @@ adapter。它们投影到同一 Code Graph IR，并通过 provider conformance t
 | 13 | B5 query context compiler（已交付） | B2/B3/B4、E3 | 已分离 retrieval 与 projection，交付 evidence priority、omission manifest 和双层 receipt |
 | 14 | D4 concurrent query serving（已交付 opt-in prototype） | D3、B5 load profile | 已增加 bounded worker/queue、transport/control isolation、typed outcomes 与 20-run receipt；没有 E1 并发收益证据时保持 direct mode |
 | 15 | E1 real Agent A/B（harness 已交付，真实结论 pending） | E3、B5/D4 候选面 | 已固化 A/B/C、失败保留、MAD gate 与独立 serving burst；等待真实 receipt 和人工接受后才决定默认入口、预算和并发策略 |
-| 16 | F1 provider adapter kit | Rust C1、D1/D2 语义已验证 | 固化 provider、enricher 与 framework-pack conformance contract |
+| 16 | F1 provider adapter kit（已交付） | Rust C1、D1/D2 语义已验证 | 已固化 provider/enricher schema、bounded process、atomic publish 与八项 conformance contract |
 | 17 | A5 Rust framework semantic packs | A4、E3、F1、真实 framework gap | 每次只交付一个 corpus 驱动、可禁用的 framework pack |
 | 18 | F2 non-Rust providers | F1、明确项目需求 | 按需求接 generic SCIP、tree-sitter 或本地 Code Graph adapter |
 
@@ -921,6 +922,18 @@ correctness/freshness-first 判定、由 matched baseline median/MAD 派生的 b
 Agent、模型或网络。checked-in Agent plan 只有 72 个待执行 run，serving manifest 默认禁用；
 仓库没有真实 receipt、人工接受或性能通过结论，因此默认 MCP、B5 profile 与 D4 direct mode
 保持不变。
+
+第十一轮实施使用一个 external provider 合约：
+
+1. `REQ-CODE-GRAPH-PROVIDER-KIT` → `task-code-graph-provider-kit`
+
+该 requirement 为 `accepted`。本轮交付独立的 `agent-spec-code-graph-provider` Rust SDK、
+strict manifest/project registration、互斥的 extraction/enrichment payload、host-derived
+fingerprint、worktree/freshness/path/provenance 校验、literal argv bounded process、timeout/
+cancellation、same-directory atomic publish，以及 stable-id、determinism、partial、stale/
+worktree、schema、output limit、cancellation 和 atomic publish 八项 conformance receipt。
+`atlas provider validate|conformance` 只消费显式本地配置；checked-in shell fixture 只证明
+协议，不代表 F2 非 Rust 语言支持，也不进入默认 build、bind 或 requirements 流程。
 
 ## 7. 旧 Phase 映射
 

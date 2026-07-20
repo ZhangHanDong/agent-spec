@@ -86,6 +86,10 @@ Connecting affected code paths to requirements, scenarios, and quality gates is
 the next intent-aware consumer step; code impact alone does not establish that
 trace.
 
+F1 external provider artifacts enter this boundary only after strict role,
+worktree, freshness, path, evidence, and conformance validation. A protocol
+receipt does not make an external provider authoritative or implement F2.
+
 `atlas context` compiles a bounded view over one pinned graph generation. Its
 evidence ids, source slices, omission continuations, and receipts are derived
 query artifacts: they explain what was selected or dropped but cannot create a

@@ -57,3 +57,7 @@ selectors; they do not create implicit acceptance criteria.
 Atlas E1 is dogfooded by `task-atlas-agent-ab-gate.spec.md`. Its deterministic
 selectors verify the harness; they do not claim that a real Agent experiment
 has run or that a default has been accepted.
+
+Atlas F1 is dogfooded by `task-code-graph-provider-kit.spec.md`. Its selectors
+prove the adapter SDK and fixture conformance contract, not a production F2
+language provider.

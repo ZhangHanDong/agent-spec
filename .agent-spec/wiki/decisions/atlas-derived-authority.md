@@ -68,6 +68,10 @@ measurement receipts remain derived runtime evidence. Transport isolation does
 not make stale graph data current. Only success carries a complete context;
 non-success typed outcomes cannot be interpreted as empty proof.
 
+F1 keeps external extraction and enrichment artifacts in the same derived-data
+class. Host-derived fingerprints and atomic publication improve integrity but
+do not promote provider output to KLL, Contract, lifecycle, or trace authority.
+
 ## Maintenance
 
 Revise this page when the graph authority boundary, rebuild diagnostics, or MCP

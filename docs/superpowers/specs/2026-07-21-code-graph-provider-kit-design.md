@@ -69,4 +69,3 @@ pre-seeds an artifact and proves failed cases cannot replace it.
 
 The fixture proves the adapter contract, not language support or production accuracy. F2 providers
 must run the same harness and add their own real repository quality corpus before adoption.
-

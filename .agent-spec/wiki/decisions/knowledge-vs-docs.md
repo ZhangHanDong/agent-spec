@@ -63,3 +63,7 @@ not become requirements merely because the wiki or docs summarize them.
 Atlas E1 follows the same routing: the accepted requirement and Task Contract
 are normative, `docs/atlas-agent-ab-gate.md` is reader guidance, and real
 session/gate files remain ignored runtime evidence.
+
+Atlas F1 follows the same routing: `REQ-CODE-GRAPH-PROVIDER-KIT` is normative,
+the provider Task Contract is executable, `docs/code-graph-provider-kit.md` is
+reader guidance, and conformance artifacts remain derived evidence.

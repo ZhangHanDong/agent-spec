@@ -42,6 +42,7 @@ agent-spec:   Write Contract (60%) → Agent codes (0%) → Read explain (30%) �
 | `agent-spec atlas benchmark validate/plan/summarize/score` | Validate an offline A/B corpus, compile paired run plans, summarize graded receipts, or score versioned query observations | Use the correctness-first E0/E3 gates; pinned repositories remain opt-in. See `docs/atlas-evaluation.md` |
 | `agent-spec atlas benchmark agent-plan/agent-gate` | Compile symmetric A/B/C Agent runs and gate complete strict receipts | Real execution is external and opt-in; B/A and C/B are separate promotion candidates. See `docs/atlas-agent-ab-gate.md` |
 | `agent-spec atlas benchmark serving-plan/serving-gate` | Compile and gate real-repository direct/worker burst trials | The checked template is disabled; fixture D4 receipts cannot approve worker defaults. See `docs/atlas-agent-ab-gate.md` |
+| `agent-spec atlas provider validate/conformance` | Validate optional external Code Graph manifests and run the F1 producer contract matrix | Use explicit project registration only. A passing fixture receipt proves protocol conformance, not F2 language support. See `docs/code-graph-provider-kit.md` |
 
 ### Rust Atlas Workflow
 
@@ -140,6 +141,14 @@ real Agent A/B remains pending. `atlas_context` requires
 `AGENT_SPEC_MCP_ATLAS_CONTEXT=1`; its concurrent daemon route additionally
 requires `AGENT_SPEC_MCP_ATLAS_QUERY_MODE=worker`. The graph, index, and bindings remain derived
 working data, while KLL truth remains in `knowledge/`.
+
+External Code Graph providers are also opt-in. Validate their strict manifest
+and project registration before conformance. Extraction providers may publish
+provider-scoped nodes, containment, and basic references; semantic enrichers
+may only add evidence-bearing edges or query hints against an explicit base
+graph fingerprint. Never treat stale, partial, wrong-worktree, timed-out,
+cancelled, or oversized output as an empty fresh graph. The checked-in F1
+fixture proves the adapter protocol only and does not implement F2.
 
 ### KLL Requirements Intake
 

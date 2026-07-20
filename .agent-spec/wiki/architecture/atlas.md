@@ -25,12 +25,14 @@ source_files:
   - src/atlas_query_service.rs
   - src/atlas_eval.rs
   - src/atlas_agent_eval.rs
+  - crates/code-graph-provider/src/lib.rs
   - src/spec_mcp/mod.rs
   - src/spec_mcp/tools.rs
   - docs/atlas-live-runtime.md
   - docs/atlas-query-context.md
   - docs/atlas-concurrent-query-serving.md
   - docs/atlas-agent-ab-gate.md
+  - docs/code-graph-provider-kit.md
   - specs/task-atlas-explore-flow-impact.spec.md
   - specs/task-atlas-runtime-boundary-hints.spec.md
   - specs/task-atlas-incremental-hardening.spec.md
@@ -150,6 +152,12 @@ E1 adds a separate adoption layer in `src/atlas_agent_eval.rs`. Its strict
 Agent A/B/C and serving plans, receipts, and gates consume Atlas behavior but
 do not become graph or KLL authority. Checked-in plans prove only deterministic
 scheduling; real receipt evidence and human acceptance are still required.
+
+F1 adds a sibling producer contract in `crates/code-graph-provider`, not a
+module inside Rust Atlas. External extractors and semantic enrichers project to
+strict, separate payloads and pass a bounded process/conformance gate before
+their artifacts can be published. The fixture proves protocol behavior only;
+Rust Atlas remains the only production language provider in this repository.
 
 ## Maintenance
 
