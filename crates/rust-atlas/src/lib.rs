@@ -131,6 +131,8 @@ pub enum AtlasError {
     WriterBusy { graph_root: String },
     #[error("atlas-watcher: {detail}")]
     Watcher { detail: String },
+    #[error("atlas-daemon-busy: daemon is already active for {graph_root}")]
+    DaemonBusy { graph_root: String },
     #[error("atlas-affected-path: `{path}`: {detail}")]
     AffectedPath { path: String, detail: String },
     #[error(

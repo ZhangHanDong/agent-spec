@@ -101,20 +101,21 @@ pub fn sync_once(request: SyncRequest<'_>) -> Result<SyncReceipt, AtlasError> {
         .iter()
         .map(|event| event.path.clone())
         .collect();
-    runtime.state = if runtime.pending_paths.is_empty() {
+    runtime.state = if runtime.watch_healthy == Some(false) {
+        LiveRuntimeState::Degraded
+    } else if runtime.pending_paths.is_empty() {
         LiveRuntimeState::Healthy
     } else {
         LiveRuntimeState::Pending
     };
     runtime.generation = Some(build.generation.clone());
-    runtime.diagnostics = if unparsed.is_empty() {
-        Vec::new()
-    } else {
-        vec![format!(
+    runtime.diagnostics = runtime.watch_diagnostic.iter().cloned().collect();
+    if !unparsed.is_empty() {
+        runtime.diagnostics.push(format!(
             "{} unparsed source path(s) remain pending",
             unparsed.len()
-        )]
-    };
+        ));
+    }
     if let Err(error) = runtime.store(request.graph_root) {
         runtime.diagnostics.push(format!(
             "generation committed but live status persistence failed: {error}"
@@ -187,13 +188,19 @@ fn record_sync_failure(
     error: &AtlasError,
     pending: usize,
 ) {
+    let prior_state = runtime.state;
     let outcome = runtime
         .retry
         .record_failure(class, error.to_string(), &RetryPolicy::default());
-    runtime.state = match outcome {
-        Ok(outcome) if outcome.degraded => LiveRuntimeState::Degraded,
-        _ if pending > 0 => LiveRuntimeState::Pending,
-        _ => LiveRuntimeState::Unavailable,
+    runtime.state = if runtime.watch_healthy == Some(false) {
+        LiveRuntimeState::Degraded
+    } else {
+        match outcome {
+            Ok(outcome) if outcome.degraded => LiveRuntimeState::Degraded,
+            _ if prior_state == LiveRuntimeState::Warming => LiveRuntimeState::Warming,
+            _ if pending > 0 => LiveRuntimeState::Pending,
+            _ => prior_state,
+        }
     };
     runtime.diagnostics = vec![error.to_string()];
     let _ = runtime.store(graph_root);
@@ -310,6 +317,35 @@ mod tests {
         let status = LiveRuntimeStatus::load(&graph).unwrap();
         assert_eq!(status.retry.ordinary_attempts, 1);
         assert_eq!(status.pending_paths, vec!["Cargo.toml", "src/lib.rs"]);
+        fs::remove_dir_all(graph.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_sync_preserves_watch_degradation_after_success() {
+        let (code, graph) = fixture("sync-watch-degraded");
+        fs::write(code.join("src/lib.rs"), "pub fn value() -> u32 { 2 }\n").unwrap();
+        let journal = PendingJournal::open(&graph).unwrap();
+        journal.record("src/lib.rs", 100).unwrap();
+        let mut status = LiveRuntimeStatus::new(LiveRuntimeState::Degraded);
+        status.watch_healthy = Some(false);
+        status.watch_diagnostic = Some("partial watch coverage".to_string());
+        status.diagnostics = vec!["partial watch coverage".to_string()];
+        status.store(&graph).unwrap();
+
+        let receipt = sync_once(SyncRequest {
+            code_root: &code,
+            graph_root: &graph,
+            build_options: &BuildOptions::default(),
+        })
+        .unwrap();
+
+        assert_eq!(receipt.pending_after, 0);
+        assert_eq!(receipt.runtime.state, LiveRuntimeState::Degraded);
+        assert_eq!(receipt.runtime.watch_healthy, Some(false));
+        assert_eq!(
+            receipt.runtime.watch_diagnostic.as_deref(),
+            Some("partial watch coverage")
+        );
         fs::remove_dir_all(graph.parent().unwrap()).ok();
     }
 }

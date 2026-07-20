@@ -362,6 +362,11 @@ git commit -m "feat(atlas): watch bounded project inputs"
 ### Task 7: Implement Daemon Identity, Control And Supervision
 
 **Files:**
+- Modify: `Cargo.toml`
+- Modify: `Cargo.lock`
+- Modify: `crates/rust-atlas/src/live.rs`
+- Modify: `crates/rust-atlas/src/locking.rs`
+- Modify: `crates/rust-atlas/src/sync.rs`
 - Create: `src/atlas_daemon.rs`
 - Modify: `src/main.rs`
 
@@ -419,7 +424,9 @@ disconnect only closes one connection. Stale registry is replaced only while sin
 cargo test test_atlas_daemon_
 cargo run -- atlas daemon --help
 cargo run -- atlas daemon status --help
-git add src/atlas_daemon.rs src/main.rs
+git add Cargo.toml Cargo.lock crates/rust-atlas/src/live.rs \
+  crates/rust-atlas/src/locking.rs crates/rust-atlas/src/sync.rs \
+  src/atlas_daemon.rs src/main.rs
 git commit -m "feat(atlas): supervise optional local daemon"
 ```
 

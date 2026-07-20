@@ -296,6 +296,20 @@ impl RetryPolicy {
         }
         Ok(())
     }
+
+    pub fn delay_for_attempt(&self, attempt: u32) -> Result<Option<u64>, AtlasError> {
+        self.validate()?;
+        if attempt == 0 || attempt > self.max_attempts {
+            return Ok(None);
+        }
+        let exponent = attempt.saturating_sub(1).min(63);
+        let factor = 1_u64.checked_shl(exponent).unwrap_or(u64::MAX);
+        Ok(Some(
+            self.base_delay_ms
+                .saturating_mul(factor)
+                .min(self.max_delay_ms),
+        ))
+    }
 }
 
 impl RetryClass {
@@ -324,6 +338,10 @@ pub struct LiveRuntimeStatus {
     pub state: LiveRuntimeState,
     pub pending_paths: Vec<String>,
     pub retry: RetryState,
+    #[serde(default)]
+    pub watch_healthy: Option<bool>,
+    #[serde(default)]
+    pub watch_diagnostic: Option<String>,
     pub generation: Option<String>,
     pub diagnostics: Vec<String>,
 }
@@ -335,6 +353,8 @@ impl LiveRuntimeStatus {
             state,
             pending_paths: Vec::new(),
             retry: RetryState::default(),
+            watch_healthy: None,
+            watch_diagnostic: None,
             generation: None,
             diagnostics: Vec::new(),
         }
@@ -351,7 +371,7 @@ impl LiveRuntimeStatus {
         };
         status.validate()?;
         status.pending_paths = pending.events.into_iter().map(|event| event.path).collect();
-        if status.retry.is_degraded() {
+        if status.retry.is_degraded() || status.watch_healthy == Some(false) {
             status.state = LiveRuntimeState::Degraded;
         } else if !status.pending_paths.is_empty()
             && !matches!(
@@ -398,6 +418,9 @@ impl LiveRuntimeStatus {
         }
         if let Some(reason) = &self.retry.degraded_reason {
             validate_text(reason, "degraded reason")?;
+        }
+        if let Some(diagnostic) = &self.watch_diagnostic {
+            validate_text(diagnostic, "watch diagnostic")?;
         }
         Ok(())
     }

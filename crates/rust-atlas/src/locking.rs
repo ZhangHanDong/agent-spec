@@ -10,39 +10,16 @@ pub struct WriterLease {
     graph_root: PathBuf,
 }
 
+pub struct DaemonLease {
+    file: File,
+}
+
 impl WriterLease {
     pub fn try_acquire(graph_root: &Path) -> Result<Self, AtlasError> {
-        fs::create_dir_all(graph_root).map_err(lock_io)?;
-        let graph_root = fs::canonicalize(graph_root).map_err(lock_io)?;
-        let runtime = graph_root.join(".runtime");
-        reject_symlink(&runtime)?;
-        fs::create_dir_all(&runtime).map_err(lock_io)?;
-        let lock_path = runtime.join("build.lock");
-        reject_symlink(&lock_path)?;
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&lock_path)
-            .map_err(lock_io)?;
-        if fs::canonicalize(&runtime).map_err(lock_io)? != runtime
-            || fs::canonicalize(&lock_path).map_err(lock_io)? != lock_path
-        {
-            return Err(AtlasError::LiveState {
-                detail: format!(
-                    "lock path escaped the graph runtime: {}",
-                    lock_path.display()
-                ),
-            });
-        }
-        match FileExt::try_lock_exclusive(&file) {
-            Ok(()) => Ok(Self { file, graph_root }),
-            Err(error) if is_contention(&error) => Err(AtlasError::WriterBusy {
-                graph_root: graph_root.to_string_lossy().into_owned(),
-            }),
-            Err(error) => Err(lock_io(error)),
-        }
+        let (file, graph_root) = try_acquire_lock(graph_root, "build.lock", |graph_root| {
+            AtlasError::WriterBusy { graph_root }
+        })?;
+        Ok(Self { file, graph_root })
     }
 
     pub(crate) fn assert_graph(&self, graph_root: &Path) -> Result<(), AtlasError> {
@@ -59,9 +36,60 @@ impl WriterLease {
     }
 }
 
+impl DaemonLease {
+    pub fn try_acquire(graph_root: &Path) -> Result<Self, AtlasError> {
+        let (file, _) = try_acquire_lock(graph_root, "daemon.lock", |graph_root| {
+            AtlasError::DaemonBusy { graph_root }
+        })?;
+        Ok(Self { file })
+    }
+}
+
 impl Drop for WriterLease {
     fn drop(&mut self) {
         let _ = FileExt::unlock(&self.file);
+    }
+}
+
+impl Drop for DaemonLease {
+    fn drop(&mut self) {
+        let _ = FileExt::unlock(&self.file);
+    }
+}
+
+fn try_acquire_lock(
+    graph_root: &Path,
+    name: &str,
+    busy: impl FnOnce(String) -> AtlasError,
+) -> Result<(File, PathBuf), AtlasError> {
+    fs::create_dir_all(graph_root).map_err(lock_io)?;
+    let graph_root = fs::canonicalize(graph_root).map_err(lock_io)?;
+    let runtime = graph_root.join(".runtime");
+    reject_symlink(&runtime)?;
+    fs::create_dir_all(&runtime).map_err(lock_io)?;
+    let lock_path = runtime.join(name);
+    reject_symlink(&lock_path)?;
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(lock_io)?;
+    if fs::canonicalize(&runtime).map_err(lock_io)? != runtime
+        || fs::canonicalize(&lock_path).map_err(lock_io)? != lock_path
+    {
+        return Err(AtlasError::LiveState {
+            detail: format!(
+                "lock path escaped the graph runtime: {}",
+                lock_path.display()
+            ),
+        });
+    }
+    match FileExt::try_lock_exclusive(&file) {
+        Ok(()) => Ok((file, graph_root)),
+        Err(error) if is_contention(&error) => Err(busy(graph_root.to_string_lossy().into_owned())),
+        Err(error) => Err(lock_io(error)),
     }
 }
 

@@ -2,6 +2,7 @@
 #![deny(unsafe_code)]
 #![allow(dead_code)]
 
+mod atlas_daemon;
 mod atlas_eval;
 mod spec_archive;
 mod spec_core;
@@ -416,6 +417,11 @@ enum AtlasCommands {
         #[command(subcommand)]
         action: AtlasBenchmarkCommands,
     },
+    /// Optional local watcher and synchronization daemon
+    Daemon {
+        #[command(subcommand)]
+        action: AtlasDaemonCommands,
+    },
     /// Build or incrementally refresh the graph
     Build {
         #[arg(long, default_value = ".")]
@@ -618,6 +624,45 @@ enum AtlasCommands {
     },
     /// Freshness check; exits non-zero when any shard is stale
     Check {
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum AtlasDaemonCommands {
+    /// Start a detached daemon or attach to the verified existing owner
+    Start {
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+    },
+    /// Run the daemon in the foreground for process supervision
+    Serve {
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+    },
+    /// Read verified daemon runtime status without querying graph facts
+    Status {
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+    },
+    /// Request one immediate synchronization through the live daemon
+    Sync {
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+    },
+    /// Stop the verified daemon owner
+    Stop {
         #[arg(long, default_value = ".")]
         code: PathBuf,
         #[arg(long, default_value = ".agent-spec/graph")]
@@ -3748,6 +3793,7 @@ fn cmd_atlas(action: AtlasCommands) -> Result<(), Box<dyn std::error::Error>> {
     let frozen_opts = |frozen: bool| rust_atlas::QueryOptions { frozen };
     match action {
         AtlasCommands::Benchmark { action } => cmd_atlas_benchmark(action),
+        AtlasCommands::Daemon { action } => cmd_atlas_daemon(action),
         AtlasCommands::Build {
             code,
             graph,
@@ -3986,6 +4032,31 @@ fn cmd_atlas(action: AtlasCommands) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+}
+
+fn cmd_atlas_daemon(action: AtlasDaemonCommands) -> Result<(), Box<dyn std::error::Error>> {
+    match action {
+        AtlasDaemonCommands::Start { code, graph } => {
+            let status = crate::atlas_daemon::start(&code, &graph)?;
+            println!("{}", serde_json::to_string_pretty(&status)?);
+        }
+        AtlasDaemonCommands::Serve { code, graph } => {
+            crate::atlas_daemon::serve(&code, &graph)?;
+        }
+        AtlasDaemonCommands::Status { code, graph } => {
+            let status = crate::atlas_daemon::daemon_status(&code, &graph)?;
+            println!("{}", serde_json::to_string_pretty(&status)?);
+        }
+        AtlasDaemonCommands::Sync { code, graph } => {
+            let response = crate::atlas_daemon::sync(&code, &graph)?;
+            println!("{}", serde_json::to_string_pretty(&response)?);
+        }
+        AtlasDaemonCommands::Stop { code, graph } => {
+            let response = crate::atlas_daemon::stop(&code, &graph)?;
+            println!("{}", serde_json::to_string_pretty(&response)?);
+        }
+    }
+    Ok(())
 }
 
 fn cmd_atlas_status_with_writer(
@@ -11991,6 +12062,38 @@ Scenario: pass
                 assert_eq!(out, Some(PathBuf::from("plan.json")));
             }
             _ => panic!("expected atlas benchmark plan"),
+        }
+    }
+
+    #[test]
+    fn test_atlas_daemon_cli_parses_nested_actions() {
+        for action in ["start", "serve", "status", "sync", "stop"] {
+            let cli = super::Cli::try_parse_from([
+                "agent-spec",
+                "atlas",
+                "daemon",
+                action,
+                "--code",
+                "worktree",
+                "--graph",
+                "graph",
+            ])
+            .unwrap();
+            let super::Commands::Atlas {
+                action: super::AtlasCommands::Daemon { action: parsed },
+            } = cli.command
+            else {
+                panic!("expected atlas daemon {action}");
+            };
+            let (code, graph) = match parsed {
+                super::AtlasDaemonCommands::Start { code, graph }
+                | super::AtlasDaemonCommands::Serve { code, graph }
+                | super::AtlasDaemonCommands::Status { code, graph }
+                | super::AtlasDaemonCommands::Sync { code, graph }
+                | super::AtlasDaemonCommands::Stop { code, graph } => (code, graph),
+            };
+            assert_eq!(code, PathBuf::from("worktree"));
+            assert_eq!(graph, PathBuf::from("graph"));
         }
     }
 
