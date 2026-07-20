@@ -26,6 +26,7 @@ mod impact;
 mod incremental;
 mod index;
 mod input_plan;
+pub mod live;
 mod mir;
 mod runtime_boundary;
 pub mod scope;
@@ -121,6 +122,8 @@ pub enum AtlasError {
     },
     #[error("atlas-orphan-queue: {detail}")]
     OrphanQueue { detail: String },
+    #[error("atlas-live-state: {detail}")]
+    LiveState { detail: String },
     #[error("atlas-affected-path: `{path}`: {detail}")]
     AffectedPath { path: String, detail: String },
     #[error(
