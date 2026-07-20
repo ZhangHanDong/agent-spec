@@ -118,9 +118,9 @@ Scenario: memory reservation 不能超预算
   Test:
     Filter: test_atlas_query_service_rejects_memory_reservation_over_budget
     Level: unit
-  Given pinned index、request 与 response ceiling 的估算 reservation 超过 268435456 bytes
-  When admission 检查 aggregate reservation
-  Then 返回 typed busy、释放 reader lease 且 counters 不出现 started
+  Given 两个单独合法的 pinned request 合计 reservation 超过配置 memory budget
+  When 第一个 running request 尚未完成 response serialization 时提交第二个
+  Then 第二个返回 typed busy、只有第一个进入 runner 且 reservation 在 reply drop 后才释放
 
 Scenario: queue timeout 不启动 runner
   Test:
@@ -130,13 +130,29 @@ Scenario: queue timeout 不启动 runner
   When worker 取出 queued job
   Then outcome 是 timeout、attempts 为 0 且 QueryRunner 没有调用记录
 
+Scenario: queued cancellation 不启动 runner
+  Test:
+    Filter: test_atlas_query_service_cancels_queued_job_before_execution
+    Level: unit
+  Given worker 被 running request 阻塞且第二个 request 已排队
+  When 相同 request id 在 worker 取出前被取消
+  Then queued outcome 是 cancelled、attempts 为 0 且 runner 调用数不增加
+
+Scenario: executing deadline 在 checkpoint 生效
+  Test:
+    Filter: test_atlas_query_service_times_out_executing_runner_at_checkpoint
+    Level: unit
+  Given running worker 持续经过 cooperative checkpoints 且 deadline_ms 是 100
+  When execution deadline 到达
+  Then outcome 是 timeout、attempts 为 1、context 缺失且 runner 没有继续重试
+
 Scenario: executing cancellation 在 checkpoint 生效
   Test:
     Filter: test_atlas_query_service_cancels_running_projection_and_releases_lease
     Level: integration
   Given runner 已完成 retrieval 并阻塞在 projection checkpoint
   When cancel command 使用相同 request id
-  Then outcome 是 cancelled、context 缺失且 completion 后 reader lease 被删除
+  Then outcome 是 cancelled、context 缺失且 response serialization 或 reply drop 后 reader lease 被删除
 
 Scenario: 慢 query 不阻塞 control heartbeat
   Test:

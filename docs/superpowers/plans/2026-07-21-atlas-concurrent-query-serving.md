@@ -34,7 +34,7 @@
 
 **Interfaces:**
 - Consumes: accepted roadmap D4, `REQ-ATLAS-LIVE-RUNTIME`, `REQ-ATLAS-QUERY-CONTEXT-COMPILER`, `REQ-ATLAS-QUERY-QUALITY-REGRESSION`.
-- Produces: one accepted requirement, one active Task Contract with 17 selectors, one approved design and this execution plan.
+- Produces: one accepted requirement, one active Task Contract with 19 selectors, one approved design and this execution plan.
 
 - [x] **Step 1: Parse and lint the Task Contract**
 
@@ -45,7 +45,7 @@ target/debug/agent-spec parse specs/task-atlas-concurrent-query-serving.spec.md
 target/debug/agent-spec lint specs/task-atlas-concurrent-query-serving.spec.md --min-score 0.7
 ```
 
-Expected: 17 scenarios, all explicit test selectors, quality at least 0.7, no error diagnostic.
+Expected: 19 scenarios, all explicit test selectors, quality at least 0.7, no error diagnostic.
 
 - [x] **Step 2: Gate KLL and planning coverage**
 
@@ -179,7 +179,7 @@ Expected: existing B5 tests remain byte-identical; new session/cancellation test
 - Produces: validated config, fixed pool, query request/reply/receipt/status, cancellation and completion polling.
 - Task 4 owns all TCP mapping; this module has no socket or MCP dependency.
 
-- [ ] **Step 1: Add failing config, queue, memory, timeout and cancellation tests**
+- [x] **Step 1: Add failing config, queue, memory, timeout and cancellation tests**
 
 Add the exact selectors:
 
@@ -188,12 +188,14 @@ test_atlas_query_service_defaults_direct_and_validates_bounds
 test_atlas_query_service_rejects_full_queue_with_typed_busy
 test_atlas_query_service_rejects_memory_reservation_over_budget
 test_atlas_query_service_expires_queued_job_before_execution
+test_atlas_query_service_cancels_queued_job_before_execution
+test_atlas_query_service_times_out_executing_runner_at_checkpoint
 test_atlas_query_service_cancels_running_projection_and_releases_lease
 ```
 
 Use an injected `Clock` and `QueryRunner`; barriers and atomic counters replace wall-clock sleeps.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```bash
 cargo test test_atlas_query_service_ -- --nocapture
@@ -201,7 +203,7 @@ cargo test test_atlas_query_service_ -- --nocapture
 
 Expected: module/types absent.
 
-- [ ] **Step 3: Implement exact service types**
+- [x] **Step 3: Implement exact service types**
 
 ```rust
 pub(crate) struct QueryServiceConfig {
@@ -246,7 +248,7 @@ workers and bounded job/completion channels. Validate all exact ranges from the 
 request ids as 1..=64 ASCII alphanumeric plus `-`/`_`. Reservation is checked with overflow-safe
 arithmetic over index bytes times four, request bytes and B5 max output bytes.
 
-- [ ] **Step 4: Add panic retry and strict outcome tests**
+- [x] **Step 4: Add panic retry and strict outcome tests**
 
 Write RED tests:
 
@@ -259,7 +261,7 @@ Wrap only `QueryRunner::run` in `catch_unwind(AssertUnwindSafe(...))`. Retry onc
 request object. Two consecutive panics open a process-local circuit until service drop. A successful
 result never resets an already open circuit.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 ```bash
 cargo test atlas_query_service::tests -- --nocapture
@@ -559,7 +561,7 @@ target/debug/agent-spec requirements replay REQ-ATLAS-CONCURRENT-QUERY-SERVING -
 target/debug/agent-spec requirements trace-graph REQ-ATLAS-CONCURRENT-QUERY-SERVING --format mermaid
 ```
 
-Expected: 17/17 scenarios pass with zero skip/uncertain; trace reaches one current canonical symbol and the final Git commit.
+Expected: 19/19 scenarios pass with zero skip/uncertain; trace reaches one current canonical symbol and the final Git commit.
 
 - [ ] **Step 5: Commit final docs and evidence**
 

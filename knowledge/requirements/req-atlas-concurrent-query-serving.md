@@ -48,7 +48,7 @@ machine-readable.
 
 [REQ-ATLAS-QUERY-PROMOTION] Worker mode MUST remain opt-in until E1 records versioned direct-versus-worker burst trials with no correctness regression, no stale-as-fresh result, all failed runs retained and an accepted baseline-derived benefit.
 
-[REQ-ATLAS-QUERY-NEGATIVE] Satisfying specs MUST cover full queue, memory rejection, queue expiry, executing cancellation, repeated worker panic, circuit-open rejection, writer publish during a query, daemon stop, unavailable daemon, explicit fallback, response oversize and concurrent worktree isolation.
+[REQ-ATLAS-QUERY-NEGATIVE] Satisfying specs MUST cover full queue, aggregate memory rejection, queue expiry, queued cancellation, executing cancellation, executing deadline, repeated worker panic, circuit-open rejection, writer publish during a query, daemon stop, unavailable daemon, explicit fallback, response oversize and concurrent worktree isolation.
 
 ## Dependencies
 

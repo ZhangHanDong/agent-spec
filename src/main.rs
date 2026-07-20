@@ -4,6 +4,7 @@
 
 mod atlas_daemon;
 mod atlas_eval;
+mod atlas_query_service;
 mod spec_archive;
 mod spec_core;
 mod spec_gateway;
