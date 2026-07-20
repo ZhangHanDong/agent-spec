@@ -594,7 +594,7 @@ git commit -m "docs(atlas): publish live runtime workflow"
 **Files:**
 - Modify only files required by findings.
 
-- [ ] **Step 1: Run workspace gates**
+- [x] **Step 1: Run workspace gates**
 
 ```bash
 cargo fmt --all -- --check
@@ -603,7 +603,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 git diff --check
 ```
 
-- [ ] **Step 2: Run lifecycle and governance evidence**
+- [x] **Step 2: Run lifecycle and governance evidence**
 
 ```bash
 target/debug/agent-spec lifecycle specs/task-atlas-live-runtime.spec.md \
@@ -621,14 +621,14 @@ target/debug/agent-spec requirements trace-graph REQ-ATLAS-LIVE-RUNTIME --format
 
 Expected: 21/21 pass and accepted/verified/honored with continuous trace.
 
-- [ ] **Step 3: Review high-risk invariants**
+- [x] **Step 3: Review high-risk invariants**
 
 Lead findings by severity. Cover acknowledgement and `unparsed`, writer acquisition order,
 mid-sync races, runtime limits, handshake identity, loopback binding, detached argv, disconnect,
 local stale scope, active reader retention, ambiguity fail-closed, warning-only maintenance, static
 discovery and no-daemon parity. Fix every blocking/important finding and rerun affected gates.
 
-- [ ] **Step 4: Commit review fixes**
+- [x] **Step 4: Commit review fixes**
 
 ```bash
 git add -u

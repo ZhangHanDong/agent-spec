@@ -62,4 +62,5 @@ strengthens publication consistency without promoting graph facts to KLL truth
 or changing default MCP exposure.
 
 Atlas D3 adds bounded refresh and fail-closed reclamation without changing that
-decision.
+decision. Post-commit pending/status maintenance failures remain warning-only
+and retain conservative pending context.

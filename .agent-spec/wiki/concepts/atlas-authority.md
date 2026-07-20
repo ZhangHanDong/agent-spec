@@ -47,6 +47,8 @@ state, and daemon availability. A reader lease pins each query generation while
 safe reclamation fails closed on ambiguous leases. `pending` or `degraded`
 means refresh work is outstanding; it does not make stale graph facts current.
 Static MCP discovery and no-daemon reads remain independent of daemon liveness.
+After pointer commit, acknowledgement and status persistence failures remain
+warning-only and retain conservative pending context.
 
 ## Consumers
 

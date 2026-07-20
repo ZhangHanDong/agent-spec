@@ -54,7 +54,10 @@ Events are coalesced for 100 ms and persisted in
 a monotonic sequence watermark. A sync snapshots a watermark, publishes a D2
 generation, and acknowledges only events at or below that snapshot. An event
 arriving mid-sync remains pending. Failed sync and writer contention never
-clear pending input.
+clear pending input. If a generation commits but pending acknowledgement cannot
+be persisted or reread, the sync still returns success with a
+`live-maintenance-failed` warning and conservatively retains its original
+snapshot in the receipt.
 
 Writer-lock and ordinary extractor/I/O retry counters are independent. Each
 allows five delayed retries using exponential backoff from 100 ms up to

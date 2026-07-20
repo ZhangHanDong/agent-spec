@@ -82,6 +82,9 @@ watcher and local daemon over the same `AtlasScope`. A persisted pending
 watermark survives failed sync; separate retry budgets expose `degraded`
 instead of retrying forever. Query results scope pending paths to represented
 files while global status retains the complete journal.
+Post-commit acknowledgement failure remains a maintenance warning and falls
+back to the pre-build snapshot rather than converting the committed build into
+failure.
 
 Every query owns a reader lease for its pinned generation. Under the
 single-writer lock, reclamation removes an old generation only after an

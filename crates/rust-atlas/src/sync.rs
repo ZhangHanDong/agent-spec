@@ -27,6 +27,16 @@ pub struct SyncReceipt {
 }
 
 pub fn sync_once(request: SyncRequest<'_>) -> Result<SyncReceipt, AtlasError> {
+    sync_once_inner(request, |_| {})
+}
+
+fn sync_once_inner<F>(
+    request: SyncRequest<'_>,
+    before_acknowledge: F,
+) -> Result<SyncReceipt, AtlasError>
+where
+    F: FnOnce(&PendingJournal),
+{
     let journal = PendingJournal::open(request.graph_root)?;
     let snapshot = journal.snapshot()?;
     let pending_before = snapshot.events.len();
@@ -81,6 +91,7 @@ pub fn sync_once(request: SyncRequest<'_>) -> Result<SyncReceipt, AtlasError> {
         }
     };
 
+    before_acknowledge(&journal);
     let unparsed = build.unparsed.iter().cloned().collect::<BTreeSet<_>>();
     let remaining = match journal.acknowledge(&snapshot, &unparsed) {
         Ok(remaining) => remaining,
@@ -92,7 +103,7 @@ pub fn sync_once(request: SyncRequest<'_>) -> Result<SyncReceipt, AtlasError> {
                     "generation committed but pending acknowledgement failed: {error}"
                 ),
             });
-            journal.snapshot()?
+            journal.snapshot().unwrap_or_else(|_| snapshot.clone())
         }
     };
     runtime.retry.reset_after_success();
@@ -346,6 +357,32 @@ mod tests {
             receipt.runtime.watch_diagnostic.as_deref(),
             Some("partial watch coverage")
         );
+        fs::remove_dir_all(graph.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_failed_sync_preserves_pending_events_after_postcommit_ack_failure() {
+        let (code, graph) = fixture("sync-postcommit-ack-failure");
+        fs::write(code.join("src/lib.rs"), "pub fn value() -> u32 { 2 }\n").unwrap();
+        let journal = PendingJournal::open(&graph).unwrap();
+        journal.record("src/lib.rs", 100).unwrap();
+
+        let receipt = sync_once_inner(
+            SyncRequest {
+                code_root: &code,
+                graph_root: &graph,
+                build_options: &BuildOptions::default(),
+            },
+            |journal| fs::write(journal.path(), b"{invalid").unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(receipt.pending_before, 1);
+        assert_eq!(receipt.pending_after, 1);
+        assert!(graph.join("CURRENT.json").is_file());
+        assert!(receipt.build.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "live-maintenance-failed" && diagnostic.severity == "warning"
+        }));
         fs::remove_dir_all(graph.parent().unwrap()).ok();
     }
 }
