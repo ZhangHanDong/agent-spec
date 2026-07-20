@@ -27,3 +27,7 @@ deterministic JSON and fail-closed patterns.
 Reviewed for Atlas B5: retrieval and projection are separate deterministic
 stages. Stable evidence ids and graph-pinned continuation argv explain
 retrieval, relevance, policy, and byte loss without hidden cursor state.
+
+Reviewed for Atlas E1: experiment, plan, receipt, and gate are separate strict
+schemas. Structural completeness precedes correctness, and correctness
+precedes baseline-MAD efficiency comparison.

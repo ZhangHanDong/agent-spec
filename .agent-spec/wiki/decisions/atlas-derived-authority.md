@@ -86,3 +86,7 @@ lifecycle, trace, or default MCP authority.
 
 Atlas D4 adds bounded serving and hidden MCP context opt-ins without changing
 that authority or promoting worker defaults before E1.
+
+Atlas E1 adds adoption evidence without promoting it to graph authority. A
+passing gate is a human-review candidate, not an automatic MCP, B5, or worker
+configuration change.

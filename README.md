@@ -701,6 +701,11 @@ network unless an external runner is explicitly configured. See
 [Atlas Evaluation And Query Regression](docs/atlas-evaluation.md) for the
 corpus, run-plan, score receipt, summary, and opt-in runner contracts.
 
+E1 adds strict real-Agent A/B/C and direct/worker adoption gates. The harness is
+delivered, but no real receipt or passing conclusion is checked in; default MCP,
+B5, and worker behavior remain unchanged. See
+[Atlas Real Agent A/B Gate](docs/atlas-agent-ab-gate.md).
+
 D4 adds `benchmarks/atlas/concurrent-query-receipt-v1.json`: a strict 20-run
 direct/worker matrix covering four load profiles, seven typed outcomes,
 snapshot/lease invariants, and worktree isolation. Its latency, heartbeat,
@@ -712,6 +717,10 @@ cargo run -- atlas benchmark validate --corpus benchmarks/atlas/corpus.json
 cargo run -- atlas benchmark plan --corpus benchmarks/atlas/corpus.json --out plan.json
 cargo run -- atlas benchmark summarize --receipts receipts.ndjson --out summary.json
 cargo run -- atlas benchmark score --corpus benchmarks/atlas/query-corpus.json --results benchmarks/atlas/query-results.json --out query-regression.json
+cargo run -- atlas benchmark agent-plan --corpus benchmarks/atlas/corpus.json --experiment benchmarks/atlas/agent-ab-experiment-v1.json --out benchmarks/atlas/agent-ab-plan-v1.json
+cargo run -- atlas benchmark agent-gate --plan benchmarks/atlas/agent-ab-plan-v1.json --receipts .agent-spec/evaluation/agent-receipts.json --out .agent-spec/evaluation/agent-gate.json
+cargo run -- atlas benchmark serving-plan --experiment path/to/real-serving-experiment.json --out .agent-spec/evaluation/serving-plan.json
+cargo run -- atlas benchmark serving-gate --plan .agent-spec/evaluation/serving-plan.json --receipts .agent-spec/evaluation/serving-receipts.json --out .agent-spec/evaluation/serving-gate.json
 ```
 
 The `score` command gates ranked symbols, paths, evidence, forbidden hits,

@@ -107,3 +107,7 @@ but does not change lifecycle verdict semantics or trace provenance.
 
 Atlas D4 was reviewed here; concurrent scheduling changes execution mechanics,
 not lifecycle verdict semantics or evidence provenance.
+
+Atlas E1's own Contract lifecycle verifies the harness selectors. Real Agent
+and serving gate receipts remain separate adoption evidence and cannot replace
+scenario test evidence.

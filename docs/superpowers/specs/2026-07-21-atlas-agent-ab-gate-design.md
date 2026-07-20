@@ -119,4 +119,3 @@ does not change, B5 keeps its current default profile, and D4 remains direct by 
 - Uploading raw sessions
 - Treating deterministic fixture receipts as real Agent evidence
 - Automatically rewriting MCP, context, or worker defaults
-

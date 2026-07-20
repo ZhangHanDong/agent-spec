@@ -118,3 +118,7 @@ not infer freshness from daemon health or pending watermarks.
 
 Atlas B5 was reviewed here; bounded context can accelerate source inspection
 but neither replaces article maintenance nor changes wiki authority.
+
+Atlas E1 was reviewed here; evaluation plans and results do not mark wiki
+articles current. Git source changes and maintained `source_files` remain the
+freshness mechanism.

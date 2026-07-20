@@ -24,17 +24,20 @@ source_files:
   - src/atlas_daemon.rs
   - src/atlas_query_service.rs
   - src/atlas_eval.rs
+  - src/atlas_agent_eval.rs
   - src/spec_mcp/mod.rs
   - src/spec_mcp/tools.rs
   - docs/atlas-live-runtime.md
   - docs/atlas-query-context.md
   - docs/atlas-concurrent-query-serving.md
+  - docs/atlas-agent-ab-gate.md
   - specs/task-atlas-explore-flow-impact.spec.md
   - specs/task-atlas-runtime-boundary-hints.spec.md
   - specs/task-atlas-incremental-hardening.spec.md
   - specs/task-atlas-live-runtime.spec.md
   - specs/task-atlas-query-context-compiler.spec.md
   - specs/task-atlas-concurrent-query-serving.spec.md
+  - specs/task-atlas-agent-ab-gate.spec.md
 tags:
   - atlas
   - code-graph
@@ -142,6 +145,11 @@ daemon routing additionally requires `AGENT_SPEC_MCP_ATLAS_QUERY_MODE=worker`.
 The strict D4 fixture receipt gates semantic parity, snapshot identity, typed
 outcomes, worktree isolation, and cleanup. Timing and resource observations do
 not become correctness thresholds or graph authority.
+
+E1 adds a separate adoption layer in `src/atlas_agent_eval.rs`. Its strict
+Agent A/B/C and serving plans, receipts, and gates consume Atlas behavior but
+do not become graph or KLL authority. Checked-in plans prove only deterministic
+scheduling; real receipt evidence and human acceptance are still required.
 
 ## Maintenance
 

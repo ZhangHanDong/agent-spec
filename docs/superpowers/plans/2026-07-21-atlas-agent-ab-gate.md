@@ -354,19 +354,19 @@ git commit -m "feat(atlas): add opt-in external evaluation runners"
 **Interfaces:**
 - Produces: exact command/schema guidance and an honest E1 status.
 
-- [ ] **Step 1: Document manifests, runners, gates, and authority**
+- [x] **Step 1: Document manifests, runners, gates, and authority**
 
 Document A/B/C symmetry, strict receipt fields, baseline MAD rules, failure retention, scoped
 promotion, real-repository serving constraint, and human acceptance. State explicitly that no real
 receipt is checked in and defaults remain unchanged.
 
-- [ ] **Step 2: Update roadmap and working guidance**
+- [x] **Step 2: Update roadmap and working guidance**
 
 Mark the E1 harness delivered but the real Agent conclusion pending. Add the four CLI commands and
 two runners to README, AGENTS, the tool-first skill, changelog, and relevant wiki pages without
 turning wiki text into KLL authority.
 
-- [ ] **Step 3: Run full verification**
+- [x] **Step 3: Run full verification**
 
 ```bash
 cargo fmt --all -- --check

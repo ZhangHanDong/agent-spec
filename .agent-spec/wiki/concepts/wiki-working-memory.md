@@ -49,3 +49,7 @@ compiler sources while maintained article content remains the reusable memory.
 
 Atlas D4 was reviewed here; the regenerated index exposes concurrent query
 serving without promoting runtime counters or measurements to durable truth.
+
+Atlas E1 adds an evaluation/adoption article. The wiki records schema and
+authority boundaries, while raw sessions and gate outputs remain ignored
+runtime evidence under `.agent-spec/evaluation/`.

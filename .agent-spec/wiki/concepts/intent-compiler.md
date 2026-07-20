@@ -68,3 +68,7 @@ cannot transition a requirement or create execution evidence.
 
 Atlas B5 was reviewed here; bounded code context remains downstream working
 input and does not become intent-compiler truth or acceptance evidence.
+
+Atlas E1 was reviewed here; its plans consume governed corpus inputs and its
+receipts measure Agent behavior. Neither artifact compiles or transitions a
+requirement.

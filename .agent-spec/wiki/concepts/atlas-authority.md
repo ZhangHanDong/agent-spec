@@ -107,3 +107,7 @@ KLL requirements and lifecycle records remain the governing evidence.
 Atlas B5 and D4 were reviewed here; context compilation and bounded serving
 improve code reading without crossing graph, KLL, Contract, or lifecycle
 authority boundaries.
+
+Atlas E1 receipts evaluate adoption but do not create code-graph facts,
+freshness, KLL state, or scenario verdicts. Machine pass remains subject to
+human acceptance before any default changes.

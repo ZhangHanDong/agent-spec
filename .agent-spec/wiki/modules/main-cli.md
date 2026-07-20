@@ -4,6 +4,7 @@ type: module
 source_files:
   - src/main.rs
   - src/atlas_daemon.rs
+  - src/atlas_agent_eval.rs
   - crates/rust-atlas/src/context.rs
 tags:
   - cli
@@ -39,3 +40,8 @@ replaces graph freshness, KLL, or lifecycle authority.
 
 Atlas B5 was reviewed here; command dispatch exposes context compilation only
 through CLI/library until E1 evaluates any default-surface promotion.
+
+Atlas E1 adds `agent-plan`, `agent-gate`, `serving-plan`, and `serving-gate`
+under `atlas benchmark`. Blocked but structurally valid gates write their
+receipt before returning non-zero. The CLI never launches a real Agent; the
+separate opt-in runners own that explicit boundary.

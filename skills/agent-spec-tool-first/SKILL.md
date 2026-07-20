@@ -64,7 +64,9 @@ Humans define "what is correct" (Contract). Machines verify "is the code correct
 | `agent-spec wiki query <text>` | Search tracked live wiki articles | Before opening many source files |
 | `agent-spec wiki check` | Live wiki lint + worktree status gate | Pre-commit / CI for tracked wiki |
 | `agent-spec atlas build/tree/query/search/explore/context/flow/impact/affected/refs/impls/status/check/scip-gen` | Rust graph with scored retrieval, bounded context projection, explainable paths, reverse impact, identity, and independent syn/SCIP/MIR freshness; `scip-gen` invokes rust-analyzer for the optional SCIP overlay | Build before querying; use `--frozen` for review, and never infer tests from affected filenames |
-| `agent-spec atlas benchmark validate/plan/summarize/score` | Validate the E0 corpus, compile paired Atlas/baseline plans, summarize fully graded receipts, or score strict E3 query observations against golden symbols, paths, evidence, diagnostics, and forbidden results | Evaluate correctness before performance. `plan`, `summarize`, and `score` write atomically with `--out`; `score` writes a failed receipt before exiting non-zero. Default tests probe current fixture search/flow without network access; fresh pinned-repository observations and real Agent runs remain opt-in. See `docs/atlas-evaluation.md` |
+| `agent-spec atlas benchmark validate/plan/summarize/score` | Validate the E0 corpus, compile paired Atlas/baseline plans, summarize fully graded receipts, or score strict E3 query observations | Evaluate correctness before performance. Default tests probe current fixtures without network access. See `docs/atlas-evaluation.md` |
+| `agent-spec atlas benchmark agent-plan/agent-gate` | Compile matched Read/Grep, Atlas primitive, and B5 context arms; gate strict complete receipts | Keep all failures and query metrics. B/A and C/B are independent. Real execution is opt-in and external. See `docs/atlas-agent-ab-gate.md` |
+| `agent-spec atlas benchmark serving-plan/serving-gate` | Compile and gate four-profile direct/worker burst trials | Require a pinned non-fixture repository. The disabled template and D4 fixture matrix are not promotion evidence. See `docs/atlas-agent-ab-gate.md` |
 | `agent-spec verify <spec> --code .` | Raw verification only | When you want verify without lint gate |
 | `agent-spec checkpoint status` | VCS-aware status | Check uncommitted state |
 
@@ -86,6 +88,11 @@ agent-spec atlas daemon service-status --code . --graph .agent-spec/graph
 agent-spec atlas daemon sync --code . --graph .agent-spec/graph
 agent-spec atlas daemon stop --code . --graph .agent-spec/graph
 ```
+
+For E1, never infer a passing result from a checked-in plan. Run the explicit
+external driver, retain every run and raw-session hash, then gate the complete
+receipt. Treat machine `passed` as a candidate for human acceptance, not as an
+instruction to change MCP discovery, B5 profiles, or worker defaults.
 
 `atlas build` publishes one complete committed generation; all read surfaces
 pin and report that generation. Content-addressed Cargo input plans accept

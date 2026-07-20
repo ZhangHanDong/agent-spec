@@ -111,6 +111,7 @@ Atlas 后续语义增强统一分为三档：
 | D3 可选 watcher/daemon live runtime | 已交付 | `REQ-ATLAS-LIVE-RUNTIME`、`specs/task-atlas-live-runtime.spec.md`、`docs/atlas-live-runtime.md` |
 | D4 并发 query serving | 已交付 opt-in prototype | `REQ-ATLAS-CONCURRENT-QUERY-SERVING`、20-run fixture receipt、`docs/atlas-concurrent-query-serving.md` |
 | B5 query context compiler | 已交付 | `REQ-ATLAS-QUERY-CONTEXT-COMPILER`、四种 profile、双层 loss receipt、`docs/atlas-query-context.md` |
+| E1 Agent adoption gate | harness 已交付，真实结论 pending | `REQ-ATLAS-AGENT-AB-GATE`、72-run 三臂 plan、独立 serving schema、`docs/atlas-agent-ab-gate.md` |
 | provider-neutral Code Graph IR 与 binding | 已交付 | `REQ-CODE-GRAPH-IR`、`specs/task-code-graph-ir-bindings.spec.md` |
 | Contract 符号与 typed trace 集成 | 已交付 | `REQ-INTENT-CODE-LINKER`、`specs/task-atlas-kll-integration.spec.md` |
 | Quality Planning 与 Execution Bundle | 已交付 | `REQ-QUALITY-PLANNING`、`specs/task-quality-planning-bundles.spec.md` |
@@ -145,7 +146,7 @@ Atlas 后续语义增强统一分为三档：
 | 非 Rust provider 仍只有消费合约 | 多语言项目需要另行实现 provider-neutral impact adapter |
 | 官方 MIR producer 与 trait 之外的 dynamic-dispatch mechanism 尚未交付 | 已可消费外部 compiler overlay 并推理 trait candidates；仓库尚不能自行提取 MIR，其他运行时分派仍报告缺失能力 |
 | Rust framework 语义尚无独立 pack | route、registration、task/channel 等路径仍可能止于 runtime-boundary hint |
-| 尚无真实 Agent A/B 执行结果 | 离线 corpus、run plan 和 receipt summarization 不能证明 Atlas 带来性能改善 |
+| 尚无真实 Agent A/B 执行结果 | E1 三臂/并发 harness 已交付，但 checked-in manifest/plan 不是运行证据，不能证明 Atlas 带来性能改善 |
 | D4 worker 与 MCP context 仍为 opt-in | correctness、backpressure 与 transport isolation 已交付；没有 E1 真实并发收益证据，不能默认启用 |
 | pinned-repository observation 尚未自动刷新 | E3 已固定真实仓库 revision、golden symbol/path 和失败归因，但 fresh capture 仍是显式外部步骤，默认测试不能证明当前 pinned checkout 的实时输出 |
 
@@ -614,7 +615,7 @@ latency、heartbeat、CPU、RSS 只记录 measurement。
 
 #### E1. Agent A/B gate
 
-状态：Wave 2 扩展离线 receipt 指标；真实 Agent A/B 仍为 opt-in，尚无通过结论。
+状态：严格三臂 Agent 与 direct/worker harness 已交付；真实执行仍为 opt-in，尚无 receipt、人工接受或通过结论。
 
 - 使用相同 model、prompt、repository revision、permission、tool instructions 和 cold/warm
   condition；环境中已有的 prompt hook、MCP 配置与用户级 skill 必须在各 arm 对称或显式禁用。
@@ -788,7 +789,7 @@ adapter。它们投影到同一 Code Graph IR，并通过 provider conformance t
 | 12 | D3 watch 与 daemon（已交付） | D2 | 已用 pending watermark、bounded retry、reader lease 和 typed degraded 增加可选实时性能，保留 no-daemon parity |
 | 13 | B5 query context compiler（已交付） | B2/B3/B4、E3 | 已分离 retrieval 与 projection，交付 evidence priority、omission manifest 和双层 receipt |
 | 14 | D4 concurrent query serving（已交付 opt-in prototype） | D3、B5 load profile | 已增加 bounded worker/queue、transport/control isolation、typed outcomes 与 20-run receipt；没有 E1 并发收益证据时保持 direct mode |
-| 15 | E1 real Agent A/B | E3、B5/D4 候选面 | 用 A/B/C 与 surface ablation 决定默认入口、预算和并发策略 |
+| 15 | E1 real Agent A/B（harness 已交付，真实结论 pending） | E3、B5/D4 候选面 | 已固化 A/B/C、失败保留、MAD gate 与独立 serving burst；等待真实 receipt 和人工接受后才决定默认入口、预算和并发策略 |
 | 16 | F1 provider adapter kit | Rust C1、D1/D2 语义已验证 | 固化 provider、enricher 与 framework-pack conformance contract |
 | 17 | A5 Rust framework semantic packs | A4、E3、F1、真实 framework gap | 每次只交付一个 corpus 驱动、可禁用的 framework pack |
 | 18 | F2 non-Rust providers | F1、明确项目需求 | 按需求接 generic SCIP、tree-sitter 或本地 Code Graph adapter |
@@ -909,6 +910,17 @@ handshake 与 supervision、single writer、跨进程 reader lease、fail-closed
 reclamation，以及静态 MCP discovery 和 no-daemon query parity。验收矩阵位于
 `fixtures/atlas/live-runtime/matrix.json`，完整操作与权威边界见
 `docs/atlas-live-runtime.md`。
+
+第十轮实施使用一个 Agent adoption 合约：
+
+1. `REQ-ATLAS-AGENT-AB-GATE` → `task-atlas-agent-ab-gate`
+
+该 requirement 为 `accepted`。本轮交付严格三臂 experiment/plan/receipt/gate、失败 run 保留、
+correctness/freshness-first 判定、由 matched baseline median/MAD 派生的 benefit/tie，以及独立的
+四 profile direct/worker burst gate。两个 runner 只接受显式外部 executable，默认测试不启动
+Agent、模型或网络。checked-in Agent plan 只有 72 个待执行 run，serving manifest 默认禁用；
+仓库没有真实 receipt、人工接受或性能通过结论，因此默认 MCP、B5 profile 与 D4 direct mode
+保持不变。
 
 ## 7. 旧 Phase 映射
 

@@ -39,7 +39,9 @@ agent-spec:   Write Contract (60%) → Agent codes (0%) → Read explain (30%) �
 | `agent-spec wiki query <text>` | Search tracked live wiki articles | Before opening many source files |
 | `agent-spec wiki check` | Live wiki lint + worktree status gate | Pre-commit / CI for tracked wiki |
 | `agent-spec atlas build/tree/query/search/explore/context/flow/impact/affected/refs/impls/status/check` | Rust project graph: scored retrieval, bounded context projection, explainable paths, reverse impact, identity, and freshness | Build before querying; use frozen reads for review and `check` for syn staleness |
-| `agent-spec atlas benchmark validate/plan/summarize/score` | Validate an offline A/B corpus, compile paired run plans, summarize graded receipts, or score versioned query observations | Use the correctness-first E0/E3 gates; pinned repositories and real Agent runs remain opt-in. See `docs/atlas-evaluation.md` |
+| `agent-spec atlas benchmark validate/plan/summarize/score` | Validate an offline A/B corpus, compile paired run plans, summarize graded receipts, or score versioned query observations | Use the correctness-first E0/E3 gates; pinned repositories remain opt-in. See `docs/atlas-evaluation.md` |
+| `agent-spec atlas benchmark agent-plan/agent-gate` | Compile symmetric A/B/C Agent runs and gate complete strict receipts | Real execution is external and opt-in; B/A and C/B are separate promotion candidates. See `docs/atlas-agent-ab-gate.md` |
+| `agent-spec atlas benchmark serving-plan/serving-gate` | Compile and gate real-repository direct/worker burst trials | The checked template is disabled; fixture D4 receipts cannot approve worker defaults. See `docs/atlas-agent-ab-gate.md` |
 
 ### Rust Atlas Workflow
 
@@ -59,6 +61,12 @@ agent-spec atlas daemon service-status --code . --graph .agent-spec/graph
 agent-spec atlas daemon sync --code . --graph .agent-spec/graph
 agent-spec atlas daemon stop --code . --graph .agent-spec/graph
 ```
+
+E1 plan and gate commands are deterministic, but the external drivers are not
+run by tests or CI. Agent receipts must include every planned run, including
+failures, plus judge/session/trace hashes and complete query metrics. Serving
+receipts use a separate non-fixture direct/worker plan. A machine pass still
+requires human acceptance before any MCP, B5, or worker default changes.
 
 Atlas builds publish one committed generation. Query and status results pin and
 report that generation; build reports expose input-plan hit/miss, touched

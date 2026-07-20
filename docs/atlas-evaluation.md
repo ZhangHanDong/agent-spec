@@ -9,6 +9,11 @@ The checked-in corpus is `benchmarks/atlas/corpus.json`. It is an offline
 fixture, not evidence that a real model evaluation has run or that Atlas yields
 a performance improvement.
 
+Track E1 now has a separate strict A/B/C and direct/worker harness. It consumes
+this corpus but does not reinterpret an E0 summary as a real Agent result. See
+[Atlas Real Agent A/B Gate](atlas-agent-ab-gate.md). No real E1 receipt is
+checked in, so all default-surface conclusions remain pending.
+
 Query-quality regression is a second, deterministic layer. Its checked-in
 inputs are `benchmarks/atlas/query-corpus.json` and
 `benchmarks/atlas/query-results.json`. They detect retrieval regressions; they

@@ -59,3 +59,7 @@ move normative content out of `knowledge/` or executable criteria out of
 
 Atlas D4 was reviewed here; measured latency, CPU, RSS, and heartbeat values do
 not become requirements merely because the wiki or docs summarize them.
+
+Atlas E1 follows the same routing: the accepted requirement and Task Contract
+are normative, `docs/atlas-agent-ab-gate.md` is reader guidance, and real
+session/gate files remain ignored runtime evidence.

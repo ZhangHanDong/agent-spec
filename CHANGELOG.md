@@ -8,6 +8,14 @@ All notable changes to `agent-spec` are documented here. Format follows
 
 ### Added
 
+- Atlas E1 adoption harness: strict versioned experiment, Agent A/B/C plan,
+  receipt, and gate schemas separate Atlas primitive value from B5 context
+  value; an independent four-profile direct/worker burst gate covers D4.
+  Environment symmetry, at least three trials, failed-run retention,
+  correctness/freshness-first decisions, raw-session hashes, complete query
+  metrics, and baseline median/MAD comparisons are enforced. External runners
+  require explicit executables and remain outside default tests. No real E1
+  receipt is checked in and no MCP, B5, or worker default is promoted.
 - Atlas D4 concurrent query serving: an opt-in fixed worker pool, bounded queue
   and memory admission, pinned generation leases, cooperative timeout/cancel,
   one panic retry plus circuit state, isolated maintenance/control lanes,

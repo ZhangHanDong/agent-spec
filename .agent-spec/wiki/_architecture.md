@@ -31,3 +31,7 @@ workspace package or external service dependency.
 
 Reviewed for Atlas B5: the context compiler is an additive `rust-atlas` module
 and CLI surface. It adds no workspace package, transport, or default MCP tool.
+
+Reviewed for Atlas E1: `src/atlas_agent_eval.rs` is an additive binary-local
+evaluation module. It adds no provider/runtime dependency and changes no
+default query or MCP topology.
