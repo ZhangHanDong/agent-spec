@@ -82,6 +82,34 @@ pub fn tool_specs() -> Value {
             }
         }));
     }
+    if atlas_context_enabled()
+        && let Some(specs) = specs.as_array_mut()
+    {
+        specs.push(json!({
+            "name": "atlas_context",
+            "description": "Deterministic bounded evidence context from a frozen Rust Atlas graph.",
+            "inputSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "query": { "type": "string", "minLength": 1 },
+                    "profile": {
+                        "type": "string",
+                        "enum": ["symbol", "flow", "architecture", "impact"],
+                        "default": "symbol"
+                    },
+                    "after": { "type": "string", "minLength": 1 },
+                    "expect_graph": { "type": "string", "minLength": 1 },
+                    "max_bytes": {
+                        "type": "integer",
+                        "minimum": 1024,
+                        "maximum": 1000000
+                    }
+                },
+                "required": ["query"]
+            }
+        }));
+    }
     specs
 }
 
@@ -101,10 +129,19 @@ fn atlas_explore_enabled() -> bool {
     std::env::var("AGENT_SPEC_MCP_ATLAS_EXPLORE").is_ok_and(|value| value == "1")
 }
 
+pub(crate) fn atlas_context_enabled() -> bool {
+    #[cfg(test)]
+    if let Some(enabled) = ATLAS_CONTEXT_TOOL_ENABLED.with(std::cell::Cell::get) {
+        return enabled;
+    }
+    std::env::var("AGENT_SPEC_MCP_ATLAS_CONTEXT").is_ok_and(|value| value == "1")
+}
+
 #[cfg(test)]
 std::thread_local! {
     static ATLAS_SEARCH_TOOL_ENABLED: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
     static ATLAS_EXPLORE_TOOL_ENABLED: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+    static ATLAS_CONTEXT_TOOL_ENABLED: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
 }
 
 #[cfg(test)]
@@ -122,6 +159,21 @@ pub(crate) fn with_atlas_explore_tool<T>(enabled: bool, f: impl FnOnce() -> T) -
     f()
 }
 
+#[cfg(test)]
+pub(crate) fn with_atlas_context_tool<T>(enabled: bool, f: impl FnOnce() -> T) -> T {
+    struct Reset(Option<bool>);
+
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            ATLAS_CONTEXT_TOOL_ENABLED.with(|value| value.set(self.0));
+        }
+    }
+
+    let previous = ATLAS_CONTEXT_TOOL_ENABLED.with(|value| value.replace(Some(enabled)));
+    let _reset = Reset(previous);
+    f()
+}
+
 /// Dispatch a tool call. Returns the tool's structured JSON payload.
 pub fn dispatch(name: &str, args: &Value, ctx: &McpContext) -> Result<Value, String> {
     match name {
@@ -129,6 +181,7 @@ pub fn dispatch(name: &str, args: &Value, ctx: &McpContext) -> Result<Value, Str
         "atlas_tree" | "atlas_query" | "atlas_search" | "atlas_refs" | "atlas_impls"
         | "atlas_status" => atlas_tool(name, args, ctx),
         "atlas_explore" if atlas_explore_enabled() => atlas_tool(name, args, ctx),
+        "atlas_context" if atlas_context_enabled() => atlas_tool(name, args, ctx),
         "knowledge.governing" => knowledge_governing(args, ctx),
         "liveness.status" => liveness_status(args, ctx),
         "spec.contract" => spec_contract(args, ctx),
@@ -415,6 +468,12 @@ fn atlas_tool(name: &str, args: &Value, ctx: &McpContext) -> Result<Value, Strin
             .map_err(|error| error.to_string())?;
             to_value(serde_json::to_value(&result))
         }
+        "atlas_context" => {
+            let (query, options) = atlas_context_request(args)?;
+            let result = rust_atlas::compile_context(&ctx.code, &graph_dir, &query, &options)
+                .map_err(|error| error.to_string())?;
+            to_value(serde_json::to_value(&result))
+        }
         "atlas_refs" => {
             let symbol = args
                 .get("symbol")
@@ -435,6 +494,73 @@ fn atlas_tool(name: &str, args: &Value, ctx: &McpContext) -> Result<Value, Strin
         }
         other => Err(format!("unknown atlas tool {other}")),
     }
+}
+
+pub(crate) fn atlas_context_request(
+    args: &Value,
+) -> Result<(String, rust_atlas::ContextOptions), String> {
+    let object = args
+        .as_object()
+        .ok_or("atlas-context-arguments: expected an object")?;
+    for key in object.keys() {
+        if !matches!(
+            key.as_str(),
+            "query" | "profile" | "after" | "expect_graph" | "max_bytes"
+        ) {
+            return Err(format!("atlas-context-arguments: unknown field `{key}`"));
+        }
+    }
+    let query = arg(args, "query")
+        .ok_or("atlas_context requires non-empty `query`")?
+        .to_string();
+    let profile = match object.get("profile") {
+        None => rust_atlas::ContextProfile::Symbol,
+        Some(Value::String(profile)) if profile == "symbol" => rust_atlas::ContextProfile::Symbol,
+        Some(Value::String(profile)) if profile == "flow" => rust_atlas::ContextProfile::Flow,
+        Some(Value::String(profile)) if profile == "architecture" => {
+            rust_atlas::ContextProfile::Architecture
+        }
+        Some(Value::String(profile)) if profile == "impact" => rust_atlas::ContextProfile::Impact,
+        Some(_) => {
+            return Err(
+                "atlas-context-profile: `profile` must be symbol, flow, architecture or impact"
+                    .to_string(),
+            );
+        }
+    };
+    let string_option = |key: &str| -> Result<Option<String>, String> {
+        match object.get(key) {
+            None => Ok(None),
+            Some(Value::String(value)) if !value.is_empty() => Ok(Some(value.clone())),
+            Some(_) => Err(format!(
+                "atlas-context-arguments: `{key}` must be a non-empty string"
+            )),
+        }
+    };
+    let max_serialized_bytes = match object.get("max_bytes") {
+        None => None,
+        Some(value) => {
+            let value = value
+                .as_u64()
+                .and_then(|value| usize::try_from(value).ok())
+                .filter(|value| (1_024..=1_000_000).contains(value))
+                .ok_or(
+                    "atlas-context-max-bytes: `max_bytes` must be an integer in 1024..=1000000",
+                )?;
+            Some(value)
+        }
+    };
+    Ok((
+        query,
+        rust_atlas::ContextOptions {
+            profile,
+            frozen: true,
+            max_serialized_bytes,
+            after: string_option("after")?,
+            expected_graph_fingerprint: string_option("expect_graph")?,
+            ..rust_atlas::ContextOptions::default()
+        },
+    ))
 }
 
 #[cfg(test)]
@@ -511,6 +637,69 @@ mod tests {
             .unwrap_err();
             assert!(error.contains("atlas-search-limit"), "{limit}: {error}");
         }
+    }
+
+    #[test]
+    fn test_mcp_atlas_context_is_strict_and_matches_frozen_compiler() {
+        let (root, ctx) = fixture("atlas-context");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname='mcp-context-fixture'\nversion='0.1.0'\nedition='2024'\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("src/lib.rs"),
+            "pub struct MemStore;\npub fn load(_: &MemStore) {}\n",
+        )
+        .unwrap();
+        let graph = root.join(".agent-spec/graph");
+        rust_atlas::build(&root, &graph, &rust_atlas::BuildOptions::default()).unwrap();
+
+        with_atlas_context_tool(false, || {
+            assert_eq!(
+                dispatch("atlas_context", &json!({ "query": "MemStore" }), &ctx).unwrap_err(),
+                "unknown tool 'atlas_context'"
+            );
+        });
+        with_atlas_context_tool(true, || {
+            let args = json!({
+                "query": "MemStore",
+                "profile": "impact",
+                "max_bytes": 20000,
+                "after": "START"
+            });
+            let actual = dispatch("atlas_context", &args, &ctx).unwrap();
+            let expected = rust_atlas::compile_context(
+                &root,
+                &graph,
+                "MemStore",
+                &rust_atlas::ContextOptions {
+                    profile: rust_atlas::ContextProfile::Impact,
+                    frozen: true,
+                    max_serialized_bytes: Some(20_000),
+                    after: Some("START".to_string()),
+                    ..rust_atlas::ContextOptions::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(actual, serde_json::to_value(expected).unwrap());
+
+            for invalid in [
+                json!({ "query": "MemStore", "unknown": true }),
+                json!({ "query": "MemStore", "profile": "wide" }),
+                json!({ "query": "MemStore", "max_bytes": 1023 }),
+                json!({ "query": "MemStore", "max_bytes": 1.5 }),
+                json!({ "query": "", "profile": "symbol" }),
+                json!({ "query": "MemStore", "after": 1 }),
+            ] {
+                assert!(
+                    dispatch("atlas_context", &invalid, &ctx).is_err(),
+                    "{invalid}"
+                );
+            }
+        });
+        std::fs::remove_dir_all(root).ok();
     }
 
     #[test]

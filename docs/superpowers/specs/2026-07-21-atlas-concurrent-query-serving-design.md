@@ -154,6 +154,9 @@ The default tool list and serial direct server remain byte-compatible. In worker
 reader handles initialize, ping, notifications and discovery immediately while a fixed client
 lane waits for daemon query responses; one stdout writer serializes responses by JSON-RPC id and
 may return them out of request order as the protocol permits.
+The checked-in MCP worker route uses two lifetime client threads, a four-request context queue and
+a 64-event reader/completion queue. Client-lane overflow returns a strict typed `busy` wrapper with
+`retry_after_ms` instead of blocking stdin or creating a request thread.
 
 ## Evaluation
 

@@ -400,7 +400,7 @@ git commit -m "feat(atlas): expose opt-in worker context queries"
 **Files:**
 - Modify: `src/spec_mcp/mod.rs`
 - Modify: `src/spec_mcp/tools.rs`
-- Modify: `src/main.rs`
+- Modify: `src/atlas_query_service.rs`
 - Test: `src/spec_mcp/mod.rs`
 - Test: `src/spec_mcp/tools.rs`
 
@@ -408,25 +408,25 @@ git commit -m "feat(atlas): expose opt-in worker context queries"
 - Produces: hidden `atlas_context` tool and opt-in concurrent stdio dispatcher.
 - Preserves: default 11-tool discovery and serial direct handling.
 
-- [ ] **Step 1: Write failing discovery and ping-liveness test**
+- [x] **Step 1: Write failing discovery and ping-liveness test**
 
 Add `test_atlas_mcp_context_worker_mode_preserves_discovery_and_ping_liveness`. In one in-memory
 stdio transcript, hold a context worker at a barrier, send ping, observe ping output first, release
 the worker, then observe the context response. Assert default discovery remains exactly unchanged.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```bash
 cargo test test_atlas_mcp_context_worker_mode_preserves_discovery_and_ping_liveness -- --nocapture
 ```
 
-- [ ] **Step 3: Add the hidden tool and strict arguments**
+- [x] **Step 3: Add the hidden tool and strict arguments**
 
 Expose `atlas_context` only when `AGENT_SPEC_MCP_ATLAS_CONTEXT=1`. Accept `query`, profile enum,
 `after`, `expect_graph` and bounded `max_bytes`; force frozen mode. Without worker routing, dispatch
 uses the direct pinned API and keeps the existing pure `handle_request` tests.
 
-- [ ] **Step 4: Add opt-in concurrent serving**
+- [x] **Step 4: Add opt-in concurrent serving**
 
 When `AGENT_SPEC_MCP_ATLAS_QUERY_MODE=worker`, route only `atlas_context` calls through a fixed,
 bounded client lane that waits for daemon protocol v2. The stdin reader continues handling
@@ -434,13 +434,13 @@ initialize/ping/tools-list/notifications. One writer owns stdout and may emit re
 order by JSON-RPC id. Queue rejection is an MCP `isError: true` response containing the typed Atlas
 outcome. Default env uses the old serial loop.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 ```bash
 cargo test spec_mcp::tests -- --nocapture
 cargo test spec_mcp::tools::tests -- --nocapture
 cargo clippy --bin agent-spec -- -D warnings
-git add src/spec_mcp/mod.rs src/spec_mcp/tools.rs src/main.rs
+git add src/spec_mcp/mod.rs src/spec_mcp/tools.rs src/atlas_query_service.rs
 git commit -m "feat(atlas): add opt-in concurrent MCP context"
 ```
 

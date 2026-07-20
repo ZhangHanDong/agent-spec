@@ -238,7 +238,28 @@ impl QueryServiceWireReply {
     }
 
     pub(crate) fn unavailable_attempt(request_id: String, diagnostic: String) -> Self {
-        let outcome = QueryOutcome::Unavailable;
+        Self::client_rejection(request_id, QueryOutcome::Unavailable, diagnostic, None)
+    }
+
+    pub(crate) fn busy_attempt(
+        request_id: String,
+        diagnostic: String,
+        retry_after_ms: u64,
+    ) -> Self {
+        Self::client_rejection(
+            request_id,
+            QueryOutcome::Busy,
+            diagnostic,
+            Some(retry_after_ms),
+        )
+    }
+
+    fn client_rejection(
+        request_id: String,
+        outcome: QueryOutcome,
+        diagnostic: String,
+        retry_after_ms: Option<u64>,
+    ) -> Self {
         Self {
             schema: RESPONSE_SCHEMA.to_string(),
             outcome,
@@ -267,7 +288,7 @@ impl QueryServiceWireReply {
                 fallback_graph_fingerprint: None,
             },
             diagnostic: Some(diagnostic),
-            retry_after_ms: None,
+            retry_after_ms,
         }
     }
 
@@ -341,7 +362,7 @@ impl QueryServiceWireReply {
             || self.receipt.fallback_generation.is_some()
             || self.receipt.fallback_graph_fingerprint.is_some()
             || (self.receipt.limits.is_none()
-                && !(self.outcome == QueryOutcome::Unavailable
+                && !(matches!(self.outcome, QueryOutcome::Busy | QueryOutcome::Unavailable)
                     && self.receipt.attempts == 0
                     && self.receipt.generation.is_none()))
         {
