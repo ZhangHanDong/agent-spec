@@ -25,11 +25,11 @@ harness, CLI surface, and documented provider-author contract without implementi
 
 ## Task 3: Project Extraction And Enrichment
 
-- [ ] Write RED projection tests for stable ids, canonical order, unsafe paths, freshness, worktree,
+- [x] Write RED projection tests for stable ids, canonical order, unsafe paths, freshness, worktree,
   and additive enricher evidence.
-- [ ] Implement separate extraction and enrichment payload validators.
-- [ ] Derive canonical BLAKE3 graph/enrichment fingerprints and published artifacts.
-- [ ] Run focused tests and commit.
+- [x] Implement separate extraction and enrichment payload validators.
+- [x] Derive canonical BLAKE3 graph/enrichment fingerprints and published artifacts.
+- [x] Run focused tests and commit.
 
 ## Task 4: Bound Process Execution And Publication
 
