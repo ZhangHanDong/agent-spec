@@ -14,12 +14,17 @@ source_files:
   - crates/rust-atlas/src/runtime_boundary.rs
   - crates/rust-atlas/src/impact.rs
   - crates/rust-atlas/src/affected.rs
+  - src/atlas_query_service.rs
+  - src/atlas_daemon.rs
+  - src/spec_mcp/mod.rs
+  - src/atlas_eval.rs
   - src/spec_knowledge/code_graph.rs
   - src/spec_verify/atlas_symbols.rs
   - docs/atlas-roadmap.md
   - docs/atlas-runtime-boundaries.md
   - docs/atlas-incremental-builds.md
   - docs/atlas-live-runtime.md
+  - docs/atlas-concurrent-query-serving.md
 tags:
   - atlas
   - freshness
@@ -51,6 +56,13 @@ Static MCP discovery and no-daemon reads remain independent of daemon liveness.
 After pointer commit, acknowledgement and status persistence failures remain
 warning-only and retain conservative pending context.
 
+D4 worker admission pins the same immutable snapshot before queueing and keeps
+its reader lease through response serialization. Worker, maintenance, control,
+and MCP client lanes isolate scheduling but do not add authority. Typed busy,
+timeout, cancel, degraded, failed, or unavailable responses mean no context was
+proven. Explicit fallback records a separate complete direct generation rather
+than combining evidence across attempts.
+
 ## Consumers
 
 Provider fingerprints, code bindings, and lifecycle contract-symbol validation
@@ -81,10 +93,17 @@ binding, requirement state, scenario verdict, or lifecycle evidence. Restricted
 test/generated/vendor bodies require an explicit name or evidence-spine role;
 stale bytes remain graph skeletons with typed read-back diagnostics.
 
+The checked-in D4 receipt gates direct/worker semantic parity, snapshot and
+worktree identity, typed outcomes, and lease cleanup. Its latency, heartbeat,
+CPU, RSS, and response-size values remain measurements and cannot establish
+freshness, correctness, or requirement satisfaction. The hidden MCP context
+surface remains opt-in pending E1.
+
 ## Maintenance
 
 Keep this working-memory page aligned with the status and authority-gate source;
 KLL requirements and lifecycle records remain the governing evidence.
 
-Atlas B5 was reviewed here; context compilation improves code reading without
-crossing the graph, KLL, Contract, or lifecycle authority boundaries.
+Atlas B5 and D4 were reviewed here; context compilation and bounded serving
+improve code reading without crossing graph, KLL, Contract, or lifecycle
+authority boundaries.

@@ -49,3 +49,7 @@ a scenario, and no-daemon lifecycle verification remains supported.
 
 Atlas B5 was reviewed here; context evidence helps inspect code but never
 substitutes for Contract acceptance or lifecycle output.
+
+Atlas D4 was dogfooded through its own accepted requirement and 19-scenario
+Task Contract. Worker receipts and fixture measurements support those explicit
+selectors; they do not create implicit acceptance criteria.

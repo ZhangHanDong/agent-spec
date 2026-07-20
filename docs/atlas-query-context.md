@@ -25,6 +25,22 @@ paths, and the relation words `calls`, `callers`, `callees`, `references`,
 `uses-type`, `implements`, and `contains`. The profile is always explicit. The
 parser does not call a model or write inferred intent into the graph.
 
+Direct execution is the default. D4 adds an explicit worker path after a daemon
+has been started with non-zero query workers:
+
+```bash
+agent-spec atlas context "entry dispatch calls" \
+  --profile flow --execution worker \
+  --code . --graph .agent-spec/graph --frozen
+```
+
+`--fallback-direct` is valid only with worker execution and records the failed
+worker attempt separately from the complete direct result. The hidden
+`atlas_context` MCP tool requires `AGENT_SPEC_MCP_ATLAS_CONTEXT=1`; its
+concurrent route additionally requires
+`AGENT_SPEC_MCP_ATLAS_QUERY_MODE=worker`. See
+[Rust Atlas Concurrent Query Serving](atlas-concurrent-query-serving.md).
+
 ## Profiles
 
 | Profile | Candidate focus | Candidates | Paths | Source slices | Lines | Bytes | Relevance |
@@ -103,8 +119,8 @@ The outer receipt records the exact profile and limits, serialized bytes,
 truncated evidence classes, graph fingerprint, read-back requirement,
 follow-up count, and `light | traversal | source-heavy | mixed` load profile.
 
-The load profile is deterministic queue metadata for roadmap D4. B5 does not
-add workers, transport routing, or backpressure.
+The load profile is deterministic queue metadata consumed by D4. B5 itself
+does not own workers, transport routing, or backpressure.
 
 ## Offline Regression Evidence
 
@@ -117,6 +133,6 @@ serialized to 7267 bytes. The stale case returned
 `atlas-context-stale-source`, three follow-up classes, and
 `read_back_required: true`.
 
-These are regression observations, not proof of Agent productivity. The
-default MCP surface and profile promotion still require the E1 real-Agent A/B
-gate.
+These are regression observations, not proof of Agent productivity. D4's
+worker and MCP context paths remain opt-in prototypes; default MCP surface,
+profile, and worker promotion still require the E1 real-Agent A/B gate.

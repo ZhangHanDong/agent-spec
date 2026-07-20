@@ -22,14 +22,19 @@ source_files:
   - crates/rust-atlas/src/context.rs
   - src/main.rs
   - src/atlas_daemon.rs
+  - src/atlas_query_service.rs
+  - src/atlas_eval.rs
+  - src/spec_mcp/mod.rs
   - src/spec_mcp/tools.rs
   - docs/atlas-live-runtime.md
   - docs/atlas-query-context.md
+  - docs/atlas-concurrent-query-serving.md
   - specs/task-atlas-explore-flow-impact.spec.md
   - specs/task-atlas-runtime-boundary-hints.spec.md
   - specs/task-atlas-incremental-hardening.spec.md
   - specs/task-atlas-live-runtime.spec.md
   - specs/task-atlas-query-context-compiler.spec.md
+  - specs/task-atlas-concurrent-query-serving.spec.md
 tags:
   - atlas
   - code-graph
@@ -99,6 +104,15 @@ fails closed. The daemon registry is accepted only after a loopback identity
 handshake. Static MCP discovery and no-daemon reads do not require daemon
 liveness.
 
+D4 adds a fixed, bounded query service over those leases. Admission reserves
+query index, request, and response memory before enqueueing. Queue timeout,
+execution deadline, cancellation, one panic retry, circuit state, and daemon
+unavailability remain distinct outcomes. Explicit sync runs in one maintenance
+lane while listener capacity is reserved for control traffic. CLI direct mode
+remains the default; worker and fallback modes are explicit. The hidden MCP
+`atlas_context` route uses a fixed client lane and one stdout writer so ping and
+discovery remain responsive during slow context work.
+
 ## Boundaries
 
 The graph and index are derived working data, not KLL truth. MCP Atlas reads
@@ -122,6 +136,12 @@ truth. Required evidence fails explicitly; continuation must retain the graph
 fingerprint. Test, generated, and vendored bodies require an explicit path or
 symbol, or a primary evidence-spine role; incidental candidates remain
 provenance-bearing skeletons. The command remains outside default MCP until E1.
+
+`atlas_context` is listed only with `AGENT_SPEC_MCP_ATLAS_CONTEXT=1`; concurrent
+daemon routing additionally requires `AGENT_SPEC_MCP_ATLAS_QUERY_MODE=worker`.
+The strict D4 fixture receipt gates semantic parity, snapshot identity, typed
+outcomes, worktree isolation, and cleanup. Timing and resource observations do
+not become correctness thresholds or graph authority.
 
 ## Maintenance
 

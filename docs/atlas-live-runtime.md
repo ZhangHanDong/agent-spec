@@ -12,6 +12,7 @@ Build a graph before starting the optional runtime:
 agent-spec atlas build --code . --graph .agent-spec/graph
 agent-spec atlas daemon start --code . --graph .agent-spec/graph
 agent-spec atlas daemon status --code . --graph .agent-spec/graph
+agent-spec atlas daemon service-status --code . --graph .agent-spec/graph
 agent-spec atlas daemon sync --code . --graph .agent-spec/graph
 agent-spec atlas daemon stop --code . --graph .agent-spec/graph
 ```
@@ -28,10 +29,12 @@ After a transient transport reset or response EOF, the client retries the
 idempotent `status` and `stop` commands once after 10 ms against the same
 verified daemon identity. It never retries `sync`, so an ambiguous response
 cannot duplicate build work.
-The D3 server handles one control request at a time, so status can time out
-while an explicit or startup sync owns that loop. D4 is responsible for
-control-plane isolation and concurrent query backpressure; callers can retry
-status after the sync window without losing pending work.
+D4 moves explicit/startup sync into one fixed maintenance lane and reserves
+listener capacity for control traffic. Status and stop therefore remain
+responsive while a writer publishes or bounded query workers run. Worker
+queries are disabled by default; start with `--query-workers 2` and inspect
+`service-status` only when testing the opt-in D4 prototype. See
+[Rust Atlas Concurrent Query Serving](atlas-concurrent-query-serving.md).
 
 The no-daemon path remains supported:
 
@@ -43,6 +46,11 @@ agent-spec atlas query rust_atlas::build --code . \
 MCP discovery is static and does not connect to or wait for the daemon. Frozen
 query facts and the pinned generation are the same with and without a daemon;
 the additive `live` status can differ.
+
+The hidden `atlas_context` MCP tool is enabled only by
+`AGENT_SPEC_MCP_ATLAS_CONTEXT=1`. Its concurrent daemon route additionally
+requires `AGENT_SPEC_MCP_ATLAS_QUERY_MODE=worker`; neither setting changes the
+default tool list or direct CLI behavior.
 
 ## Event And Sync Model
 
@@ -99,6 +107,12 @@ locked malformed lease, unreadable registry, or ambiguous reader directory
 fails closed and retains all generations. Abandoned staging cleanup is
 idempotent. Maintenance cleanup failures are diagnostics and do not turn an
 already committed build into failure.
+
+D4 worker admission retains the same reader lease from listener admission
+through queue wait, execution, retry, and response serialization. Queue,
+deadline, memory, cancellation, and panic behavior is bounded and visible in
+`service-status` and per-query receipts. Different worktrees cannot share a
+daemon identity, graph root, snapshot, request-id registry, or counters.
 
 ## Authority Boundary
 

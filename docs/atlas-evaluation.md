@@ -139,7 +139,10 @@ are rejected. A receipt has this shape:
   "response_bytes": 24000,
   "read_back_calls": 1,
   "follow_up_queries": 2,
-  "truncated_queries": 0
+  "truncated_queries": 0,
+  "atlas_serving_mode": "worker",
+  "concurrent_query_receipt_path": "benchmarks/atlas/concurrent-query-receipt-v1.json",
+  "concurrent_query_receipt_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 }
 ```
 
@@ -163,6 +166,12 @@ deserialize omitted query measurements as zero. They are counted under
 distributions, so missing measurements cannot improve an A/B result. A receipt
 with only some fields, an unknown schema, or non-zero unversioned values is
 rejected. New producers must report the schema and all measured values.
+
+D4 evaluation metadata is backward compatible but all-or-none. New direct or
+worker trials record `atlas_serving_mode`, the concurrent-query receipt path,
+and its 64-character SHA-256 hash together. A partial triplet, empty path, or
+invalid hash is rejected. This ties an E1 run to a reviewed concurrency matrix
+without turning that matrix's latency observations into E1 thresholds.
 
 The result contains total `receipts`, total `correctness` counts, aggregate
 `metrics`, and an `arms` object keyed by the populated arms. Each metric has
@@ -304,26 +313,32 @@ run always emits its receipt; correctness failures then return non-zero with
 `scripts/atlas-eval/run-opt-in.sh` is intentionally separate from the CLI.
 Default commands and tests do not invoke a real agent or model, or access the
 network.
-The runner requires `jq` and an explicit `ATLAS_EVAL_AGENT_COMMAND` value.
-That variable is one external executable: an explicit path or a name that
-resolves through `PATH` to a path containing `/`. It cannot be a shell builtin,
-shell function, or command string containing arguments; the runner never
-evaluates it as shell source.
+The runner requires `jq`, an explicit `ATLAS_EVAL_AGENT_COMMAND`, an explicit
+`ATLAS_EVAL_D4_MODE` of `direct` or `worker`, and a readable
+`ATLAS_EVAL_D4_RECEIPT`. The command variable is one external executable: an
+explicit path or a name that resolves through `PATH` to a path containing `/`.
+It cannot be a shell builtin, shell function, or command string containing
+arguments; the runner never evaluates it as shell source.
 
 ```bash
 export ATLAS_EVAL_AGENT_COMMAND=/absolute/path/to/evaluation-agent
+export ATLAS_EVAL_D4_MODE=worker
+export ATLAS_EVAL_D4_RECEIPT=benchmarks/atlas/concurrent-query-receipt-v1.json
 bash scripts/atlas-eval/run-opt-in.sh plan.json receipts.ndjson -- --agent-flag value
 ```
 
 The runner usage is `run-opt-in.sh PLAN RECEIPTS [-- AGENT_ARG...]`. Before
 starting the executable, it rejects a missing command, a command containing a
 newline or arguments, a shell builtin or function, an unavailable executable,
-a missing `jq`, and a malformed or empty run plan. It passes the plan path and
-any literal arguments supplied after `--` to the executable, captures its
-stdout in a temporary file, and atomically moves that file to the receipt path
-only when the executable succeeds. The saved stdout is a receipt candidate. The
-runner preserves those stdout bytes without parsing, adding default query
-measurements, validating, or reconciling receipt output against that plan.
+a missing `jq`, a malformed or empty run plan, an invalid D4 mode, a missing D4
+receipt, and a missing SHA-256 utility. It exports the selected serving mode,
+receipt path, and computed hash to the external process. It passes the plan
+path and any literal arguments supplied after `--` to the executable, captures
+its stdout in a temporary file, and atomically moves that file to the receipt
+path only when the executable succeeds. The saved stdout is a receipt
+candidate. The runner preserves those stdout bytes without parsing, adding
+default query measurements, validating, or reconciling receipt output against
+that plan.
 
 `atlas benchmark summarize` is the validated receipt boundary. It typed-parses
 the candidate as a JSON array or NDJSON, rejects unknown fields and empty input,
@@ -333,6 +348,23 @@ planned run has exactly one receipt or that the plan and receipt set are
 complete matches. The agent command must produce a complete receipt candidate,
 and that candidate must pass `summarize`; plan-receipt reconciliation is not
 implemented.
+
+## D4 Concurrent Query Matrix
+
+`benchmarks/atlas/concurrent-query-receipt-v1.json` is the checked-in D4
+correctness and measurement receipt. Its strict parser rejects unknown fields,
+wrong schema, duplicate request ids, mixed generation/fingerprint state,
+missing failed runs, invalid outcome/digest combinations, retained reader
+leases, non-idle final pool state, and incomplete worktree or fallback
+identity. It covers all four B5 load profiles and all seven query outcomes.
+
+Semantic direct/worker parity, snapshot identity, typed outcome shape, resource
+cleanup, and matrix completeness are correctness gates. Queue wait, service
+time, heartbeat lag, response bytes, CPU, and RSS are measurements only. The
+checked-in test intentionally replaces those measurements with `u64::MAX` and
+still requires the correctness gate to pass, proving there is no hidden
+performance threshold. See
+[Rust Atlas Concurrent Query Serving](atlas-concurrent-query-serving.md).
 
 ## D2 Incremental Correctness Matrix
 

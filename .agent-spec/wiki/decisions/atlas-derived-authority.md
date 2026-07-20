@@ -11,9 +11,14 @@ source_files:
   - crates/rust-atlas/src/flow.rs
   - crates/rust-atlas/src/runtime_boundary.rs
   - src/spec_mcp/tools.rs
+  - src/spec_mcp/mod.rs
+  - src/atlas_query_service.rs
+  - src/atlas_daemon.rs
+  - src/atlas_eval.rs
   - docs/atlas-roadmap.md
   - docs/atlas-runtime-boundaries.md
   - docs/atlas-live-runtime.md
+  - docs/atlas-concurrent-query-serving.md
 tags:
   - atlas
   - derived-data
@@ -58,6 +63,11 @@ continuation to one graph fingerprint, while retrieval/projection counts expose
 loss; neither the projected body nor its receipt can promote a graph fact,
 create a code binding, or satisfy a requirement or scenario.
 
+D4 queue state, worker counters, cancellation, panic circuit, fallback, and
+measurement receipts remain derived runtime evidence. Transport isolation does
+not make stale graph data current. Only success carries a complete context;
+non-success typed outcomes cannot be interpreted as empty proof.
+
 ## Maintenance
 
 Revise this page when the graph authority boundary, rebuild diagnostics, or MCP
@@ -73,3 +83,6 @@ and retain conservative pending context.
 
 Atlas B5 adds a bounded representation layer without changing graph, KLL,
 lifecycle, trace, or default MCP authority.
+
+Atlas D4 adds bounded serving and hidden MCP context opt-ins without changing
+that authority or promoting worker defaults before E1.

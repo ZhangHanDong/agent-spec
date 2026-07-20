@@ -526,19 +526,19 @@ git commit -m "test(atlas): gate concurrent query serving"
 **Interfaces:**
 - Produces: final command/config guidance, measured fixture numbers, D4 delivered status and current trace evidence.
 
-- [ ] **Step 1: Add reader-facing workflow and authority boundaries**
+- [x] **Step 1: Add reader-facing workflow and authority boundaries**
 
 Document direct default, daemon opt-in startup, context worker/fallback, service status, MCP env gates,
 typed outcomes, receipt interpretation and recovery. State that worker mode cannot improve graph
 coverage/freshness and remains non-default pending E1.
 
-- [ ] **Step 2: Update roadmap and working memory**
+- [x] **Step 2: Update roadmap and working memory**
 
 Mark D4 delivered only as an opt-in prototype. Keep E1 real Agent A/B pending. Record actual fixture
 workers, queue capacity, profile counts, busy/timeout/cancel/crash cases, response bytes and
 unavailable/degraded observations. Update wiki source links without promoting derived runtime facts to KLL.
 
-- [ ] **Step 3: Run code and documentation gates**
+- [x] **Step 3: Run code and documentation gates**
 
 ```bash
 cargo fmt --all -- --check
@@ -553,7 +553,7 @@ target/debug/agent-spec requirements plan --knowledge knowledge --specs specs --
 
 Expected: code, docs, wiki and KLL gates pass; missing optional local docs tools may be reported only according to the existing script policy.
 
-- [ ] **Step 4: Run lifecycle and trace on the final commit**
+- [x] **Step 4: Run lifecycle and trace on the final commit**
 
 ```bash
 target/debug/agent-spec atlas build --code . --graph .agent-spec/graph --full
@@ -565,7 +565,7 @@ target/debug/agent-spec requirements trace-graph REQ-ATLAS-CONCURRENT-QUERY-SERV
 
 Expected: 19/19 scenarios pass with zero skip/uncertain; trace reaches one current canonical symbol and the final Git commit.
 
-- [ ] **Step 5: Commit final docs and evidence**
+- [x] **Step 5: Commit final docs and evidence**
 
 ```bash
 git add docs/atlas-concurrent-query-serving.md docs/atlas-live-runtime.md \

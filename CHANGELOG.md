@@ -8,6 +8,16 @@ All notable changes to `agent-spec` are documented here. Format follows
 
 ### Added
 
+- Atlas D4 concurrent query serving: an opt-in fixed worker pool, bounded queue
+  and memory admission, pinned generation leases, cooperative timeout/cancel,
+  one panic retry plus circuit state, isolated maintenance/control lanes,
+  daemon protocol v2, direct/worker/fallback CLI modes, and a hidden concurrent
+  MCP `atlas_context` route. A strict 20-run fixture receipt covers four B5
+  load profiles, all seven typed outcomes, publish/stop behavior, and two
+  worktrees. Correctness gates semantic parity, snapshot identity, bounds, and
+  lease cleanup; latency, heartbeat, CPU, RSS, and response bytes remain
+  measurements. Direct execution and default MCP discovery remain unchanged
+  pending E1 real Agent A/B.
 - Atlas B5 query context compiler: additive `atlas context` profiles separate
   scored retrieval from relevance and byte-bounded projection. Results carry
   hash-verified source spans, required-evidence protection, omission manifests,

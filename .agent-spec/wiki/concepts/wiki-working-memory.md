@@ -31,6 +31,8 @@ to facts.
 The B5 entries add the same distinction for context projections and receipts:
 they can focus source reading and explain omission, but they do not become wiki
 freshness, KLL truth, or lifecycle acceptance evidence.
+The D4 entries extend the index with bounded serving, typed outcomes, and
+fixture measurements while keeping worker state and receipts derived.
 
 ## Maintenance
 
@@ -44,3 +46,6 @@ remain derived runtime context and must not be promoted by the wiki.
 
 Atlas B5 was reviewed here; the regenerated index exposes the new context
 compiler sources while maintained article content remains the reusable memory.
+
+Atlas D4 was reviewed here; the regenerated index exposes concurrent query
+serving without promoting runtime counters or measurements to durable truth.

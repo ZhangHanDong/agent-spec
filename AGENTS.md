@@ -55,6 +55,7 @@ agent-spec atlas status --code . --graph .agent-spec/graph --format json
 agent-spec atlas check --code . --graph .agent-spec/graph
 agent-spec atlas daemon start --code . --graph .agent-spec/graph
 agent-spec atlas daemon status --code . --graph .agent-spec/graph
+agent-spec atlas daemon service-status --code . --graph .agent-spec/graph
 agent-spec atlas daemon sync --code . --graph .agent-spec/graph
 agent-spec atlas daemon stop --code . --graph .agent-spec/graph
 ```
@@ -75,6 +76,13 @@ immutable generation read ends; ambiguous leases prevent reclamation. MCP
 discovery and no-daemon queries remain deterministic. This runtime never
 replaces graph freshness, KLL, or lifecycle authority. See
 `docs/atlas-incremental-builds.md` and `docs/atlas-live-runtime.md`.
+
+D4 query workers remain disabled by default. For explicit concurrency, start
+the daemon with `--query-workers 2`, inspect `daemon service-status`, and use
+`atlas context --execution worker`. Queue, deadline, memory, cancellation,
+panic, circuit, fallback, generation, and lease state must remain typed in the
+response receipt. Worker mode cannot repair stale graph authority. See
+`docs/atlas-concurrent-query-serving.md`.
 
 `atlas build --scip <index> --dynamic-dispatch` opt-in enriches resolved trait
 method calls with at most 64 sorted implementation candidates. It preserves the
@@ -120,8 +128,9 @@ MCP Atlas reads are frozen and read-only. `atlas_search` is omitted from the
 default MCP tool list; set `AGENT_SPEC_MCP_ATLAS_SEARCH=1` when starting
 `agent-spec mcp` to list it. `atlas_explore` is unavailable unless
 `AGENT_SPEC_MCP_ATLAS_EXPLORE=1`; the default MCP surface stays unchanged while
-real Agent A/B remains pending. `atlas context` is not an MCP tool. The graph,
-index, and bindings remain derived
+real Agent A/B remains pending. `atlas_context` requires
+`AGENT_SPEC_MCP_ATLAS_CONTEXT=1`; its concurrent daemon route additionally
+requires `AGENT_SPEC_MCP_ATLAS_QUERY_MODE=worker`. The graph, index, and bindings remain derived
 working data, while KLL truth remains in `knowledge/`.
 
 ### KLL Requirements Intake

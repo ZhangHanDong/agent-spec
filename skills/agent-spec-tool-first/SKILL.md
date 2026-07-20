@@ -82,6 +82,7 @@ agent-spec atlas status --code . --graph .agent-spec/graph --format json
 agent-spec atlas check --code . --graph .agent-spec/graph
 agent-spec atlas daemon start --code . --graph .agent-spec/graph
 agent-spec atlas daemon status --code . --graph .agent-spec/graph
+agent-spec atlas daemon service-status --code . --graph .agent-spec/graph
 agent-spec atlas daemon sync --code . --graph .agent-spec/graph
 agent-spec atlas daemon stop --code . --graph .agent-spec/graph
 ```
@@ -102,6 +103,13 @@ immutable generation read ends; ambiguous leases prevent reclamation. MCP
 discovery and no-daemon queries remain deterministic. Live state never replaces
 graph freshness, KLL, or lifecycle authority. See
 `docs/atlas-incremental-builds.md` and `docs/atlas-live-runtime.md`.
+
+D4 query workers are an opt-in prototype. Start the daemon with
+`--query-workers 2`, inspect `daemon service-status`, and invoke
+`atlas context --execution worker`. Keep direct mode for default, CI, and
+single-Agent use. Preserve typed queue, deadline, memory, cancellation, panic,
+circuit, fallback, generation, and lease receipts; worker mode cannot make a
+stale graph fresh. See `docs/atlas-concurrent-query-serving.md`.
 
 `status` reports recorded/current graph identity and the three layer states;
 syn fresh is not authority for a stale SCIP or MIR layer. Rebuild after
@@ -135,7 +143,9 @@ MCP uses frozen, read-only Atlas reads. The default tool list omits
 `atlas_search`; start `agent-spec mcp` with `AGENT_SPEC_MCP_ATLAS_SEARCH=1` to
 list it. `atlas_explore` is unavailable unless
 `AGENT_SPEC_MCP_ATLAS_EXPLORE=1`; keep the default surface until a real Agent
-A/B gate passes. `atlas context` remains CLI/library-only until that gate.
+A/B gate passes. `atlas_context` requires `AGENT_SPEC_MCP_ATLAS_CONTEXT=1`;
+its concurrent route additionally requires
+`AGENT_SPEC_MCP_ATLAS_QUERY_MODE=worker`. Keep both opt-in until that gate.
 
 ## BDD-spine Commands (0.3.0)
 

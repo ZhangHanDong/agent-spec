@@ -551,6 +551,7 @@ agent-spec atlas status --code . --graph .agent-spec/graph --format json
 agent-spec atlas check --code . --graph .agent-spec/graph
 agent-spec atlas daemon start --code . --graph .agent-spec/graph
 agent-spec atlas daemon status --code . --graph .agent-spec/graph
+agent-spec atlas daemon service-status --code . --graph .agent-spec/graph
 agent-spec atlas daemon sync --code . --graph .agent-spec/graph
 agent-spec atlas daemon stop --code . --graph .agent-spec/graph
 ```
@@ -576,6 +577,13 @@ reclamation. Static MCP discovery and no-daemon queries remain available. Live
 state never replaces graph freshness, KLL, or lifecycle authority. See
 [Rust Atlas Incremental Builds](docs/atlas-incremental-builds.md) and
 [Rust Atlas Live Runtime](docs/atlas-live-runtime.md).
+
+D4 adds an opt-in fixed query pool without changing those defaults. Start the
+daemon with `--query-workers 2`, then use `atlas context --execution worker` or
+inspect `atlas daemon service-status`. Queue, deadline, memory, cancellation,
+panic retry, circuit state, and fallback remain typed in receipts. Direct mode
+and the default MCP tool list stay unchanged pending E1 real Agent A/B. See
+[Rust Atlas Concurrent Query Serving](docs/atlas-concurrent-query-serving.md).
 
 Bounded Rust trait-dispatch candidates are opt-in and require a SCIP call
 anchor. The original exact declaration edge remains; the enricher adds a
@@ -648,8 +656,12 @@ The MCP server is read-only and uses frozen Atlas reads. It lists
 `atlas_search` only when started with `AGENT_SPEC_MCP_ATLAS_SEARCH=1`.
 `atlas_explore` is unavailable to discovery and dispatch unless the server is
 started with `AGENT_SPEC_MCP_ATLAS_EXPLORE=1`; its default profile is compact.
-`atlas context` is CLI/library-only. The default MCP tool list remains unchanged
-while real Agent A/B is pending.
+`atlas_context` is also hidden by default. Set
+`AGENT_SPEC_MCP_ATLAS_CONTEXT=1` to expose its frozen direct path. Add
+`AGENT_SPEC_MCP_ATLAS_QUERY_MODE=worker` only after starting a daemon with
+non-zero query workers; initialize, discovery, and ping remain on the transport
+lane. The default MCP tool list remains unchanged while real Agent A/B is
+pending.
 
 ## Code Live Wiki
 
@@ -688,6 +700,12 @@ deterministic query-quality regression gate. It does not invoke models or the
 network unless an external runner is explicitly configured. See
 [Atlas Evaluation And Query Regression](docs/atlas-evaluation.md) for the
 corpus, run-plan, score receipt, summary, and opt-in runner contracts.
+
+D4 adds `benchmarks/atlas/concurrent-query-receipt-v1.json`: a strict 20-run
+direct/worker matrix covering four load profiles, seven typed outcomes,
+snapshot/lease invariants, and worktree isolation. Its latency, heartbeat,
+CPU, RSS, and response-size values are measurements, not pass thresholds or a
+performance claim.
 
 ```bash
 cargo run -- atlas benchmark validate --corpus benchmarks/atlas/corpus.json

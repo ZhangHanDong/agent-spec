@@ -74,6 +74,12 @@ pinned graph. It can expose stale source and missing evidence for investigation,
 but cannot become a pass verdict, infer a selector, or satisfy a binding. The
 Contract and lifecycle verifier remain authoritative.
 
+D4 worker receipts preserve typed execution state and can support selectors
+that explicitly test concurrency behavior. They do not become pass verdicts by
+themselves. The D4 contract binds 19 scenarios to computational tests,
+including default/direct parity, overload, cancellation, transport liveness,
+worktree isolation, and the checked-in matrix gate.
+
 ## Trace Implication
 
 Lifecycle results become useful only when they remain tied to:
@@ -98,3 +104,6 @@ while watcher/daemon state remains diagnostic rather than scenario evidence.
 
 Atlas B5 was reviewed here; context compilation can prepare Agent working input
 but does not change lifecycle verdict semantics or trace provenance.
+
+Atlas D4 was reviewed here; concurrent scheduling changes execution mechanics,
+not lifecycle verdict semantics or evidence provenance.
