@@ -887,6 +887,9 @@ mod tests {
             syn: layer(Some("source-set-v1")),
             scip: layer(Some("scip-v1")),
             mir: layer(Some("mir-v1")),
+            live: rust_atlas::live::LiveRuntimeStatus::new(
+                rust_atlas::live::LiveRuntimeState::Unavailable,
+            ),
         };
         let input = atlas_provider_fingerprint_input(&status);
         let expected = canonical_atlas_provider_fingerprint(&input).unwrap();
@@ -907,6 +910,9 @@ mod tests {
             layer.diagnostics.reverse();
             layer.diagnostics.push("new display diagnostic".to_string());
         }
+        excluded.live =
+            rust_atlas::live::LiveRuntimeStatus::new(rust_atlas::live::LiveRuntimeState::Degraded);
+        excluded.live.pending_paths = vec!["src/lib.rs".to_string()];
         assert_eq!(atlas_provider_fingerprint(&excluded).unwrap(), expected);
 
         let assert_changes = |changed: AtlasProviderFingerprintInput, label: &str| {

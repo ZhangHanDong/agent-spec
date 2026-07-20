@@ -268,6 +268,7 @@ git commit -m "feat(atlas): serialize live graph writers"
 - Modify: `crates/rust-atlas/src/flow.rs`
 - Modify: `crates/rust-atlas/src/impact.rs`
 - Modify: `crates/rust-atlas/src/affected.rs`
+- Modify: `src/spec_knowledge/code_graph.rs`
 
 **Interfaces:**
 - Produces additive `AtlasStatus.live` and `scope_live_status`.
@@ -302,7 +303,8 @@ cargo test -p rust-atlas flow::tests
 cargo test -p rust-atlas impact::tests
 git add crates/rust-atlas/src/status.rs crates/rust-atlas/src/lib.rs \
   crates/rust-atlas/src/explore.rs crates/rust-atlas/src/flow.rs \
-  crates/rust-atlas/src/impact.rs crates/rust-atlas/src/affected.rs
+  crates/rust-atlas/src/impact.rs crates/rust-atlas/src/affected.rs \
+  src/spec_knowledge/code_graph.rs
 git commit -m "feat(atlas): report live pending query scope"
 ```
 

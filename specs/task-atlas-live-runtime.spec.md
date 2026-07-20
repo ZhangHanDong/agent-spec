@@ -52,6 +52,7 @@ worktree 的 stale window。后台模式必须保留事件水位、单 writer、
 - src/atlas_daemon.rs
 - src/main.rs
 - src/spec_mcp/**
+- src/spec_knowledge/code_graph.rs
 - fixtures/atlas/live-runtime/**
 - benchmarks/atlas/**
 - docs/atlas-live-runtime.md
