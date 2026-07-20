@@ -84,7 +84,7 @@ git commit -m "docs(atlas): define concurrent query serving contract"
 - Produces: `PinnedContextSnapshot`, `ContextExecutionControl`, `pin_context_snapshot`, `retrieve_context_pinned`, `project_context_controlled`.
 - Consumers: Task 3 production `QueryRunner` and Task 4 daemon admission.
 
-- [ ] **Step 1: Write failing pinned-generation and cancellation tests**
+- [x] **Step 1: Write failing pinned-generation and cancellation tests**
 
 Add `test_atlas_context_pinned_session_survives_writer_publish` and
 `test_atlas_context_control_cancels_projection_at_checkpoint`. The first pins A, publishes B,
@@ -92,7 +92,7 @@ compiles from A, proves A remains during the session, drops it, then proves recl
 The second cancels after retrieval and asserts `AtlasError::QueryCancelled` before any source body is
 projected.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```bash
 cargo test -p rust-atlas test_atlas_context_pinned_session_survives_writer_publish -- --nocapture
@@ -101,7 +101,7 @@ cargo test -p rust-atlas test_atlas_context_control_cancels_projection_at_checkp
 
 Expected: compile failure for missing pinned/control APIs.
 
-- [ ] **Step 3: Add the pinned and control contracts**
+- [x] **Step 3: Add the pinned and control contracts**
 
 Implement these exact public shapes with private fields:
 
@@ -146,14 +146,14 @@ the query-index file size; it does not hash the worktree or deserialize the inde
 loads meta/index/status only from `snapshot.data_dir`. Add `QueryCancelled` and `QueryTimeout` Atlas
 errors with prefixes `atlas-query-cancelled` and `atlas-query-timeout`.
 
-- [ ] **Step 4: Add bounded checkpoints and route direct compilation through the session**
+- [x] **Step 4: Add bounded checkpoints and route direct compilation through the session**
 
 Check control before index load, after status/index load, after every identifier/relation expansion,
 after retrieval, for each projection candidate/source slice, and before receipt serialization.
 Refactor `compile_context` to retain the final selected snapshot until `ContextResult` is finalized;
 for non-frozen direct mode, perform any existing refresh before creating the final pinned session.
 
-- [ ] **Step 5: Verify parity and commit**
+- [x] **Step 5: Verify parity and commit**
 
 ```bash
 cargo test -p rust-atlas context::tests -- --nocapture

@@ -1,5 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
@@ -120,6 +123,66 @@ impl Default for ContextOptions {
             expected_graph_fingerprint: None,
             failure_evidence: Vec::new(),
         }
+    }
+}
+
+pub struct PinnedContextSnapshot {
+    graph_root: PathBuf,
+    snapshot: crate::generation::GraphSnapshot,
+    persisted: crate::PersistedMeta,
+    estimated_index_bytes: u64,
+}
+
+impl PinnedContextSnapshot {
+    pub fn generation(&self) -> Option<&str> {
+        self.snapshot.generation.as_deref()
+    }
+
+    pub fn graph_fingerprint(&self) -> &str {
+        &self.persisted.meta.graph_fingerprint
+    }
+
+    pub fn estimated_index_bytes(&self) -> u64 {
+        self.estimated_index_bytes
+    }
+}
+
+#[derive(Clone)]
+pub struct ContextExecutionControl {
+    cancelled: Arc<AtomicBool>,
+    deadline: Option<Instant>,
+}
+
+impl ContextExecutionControl {
+    pub fn unlimited() -> Self {
+        Self {
+            cancelled: Arc::new(AtomicBool::new(false)),
+            deadline: None,
+        }
+    }
+
+    pub fn with_deadline(deadline: Instant) -> Self {
+        Self {
+            cancelled: Arc::new(AtomicBool::new(false)),
+            deadline: Some(deadline),
+        }
+    }
+
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+
+    pub fn checkpoint(&self) -> Result<(), AtlasError> {
+        if self.cancelled.load(Ordering::Acquire) {
+            return Err(AtlasError::QueryCancelled);
+        }
+        if self
+            .deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            return Err(AtlasError::QueryTimeout);
+        }
+        Ok(())
     }
 }
 
@@ -513,17 +576,100 @@ pub fn retrieve_context(
             frozen: options.frozen,
         },
     )?;
+    retrieve_context_index_controlled(
+        code_root,
+        &meta,
+        &index,
+        &status,
+        intent,
+        options,
+        &ContextExecutionControl::unlimited(),
+    )
+}
+
+pub fn pin_context_snapshot(graph_dir: &Path) -> Result<PinnedContextSnapshot, AtlasError> {
+    let graph_root = canonical_graph_root(graph_dir)?;
+    let snapshot = crate::generation::resolve_snapshot(&graph_root)?;
+    let persisted = crate::read_persisted_meta_at(&snapshot.data_dir)?;
+    let index_path = snapshot.data_dir.join("query-index.json");
+    let estimated_index_bytes = std::fs::metadata(&index_path)
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                AtlasError::QueryIndexMissing {
+                    index_path: index_path.display().to_string(),
+                }
+            } else {
+                AtlasError::Io(error.to_string())
+            }
+        })?
+        .len();
+    Ok(PinnedContextSnapshot {
+        graph_root,
+        snapshot,
+        persisted,
+        estimated_index_bytes,
+    })
+}
+
+fn canonical_graph_root(graph_dir: &Path) -> Result<PathBuf, AtlasError> {
+    std::fs::canonicalize(graph_dir).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            AtlasError::MissingGraph {
+                graph_dir: graph_dir.display().to_string(),
+            }
+        } else {
+            AtlasError::Io(error.to_string())
+        }
+    })
+}
+
+pub fn retrieve_context_pinned(
+    code_root: &Path,
+    graph_dir: &Path,
+    snapshot: &PinnedContextSnapshot,
+    intent: &QueryIntent,
+    options: &ContextOptions,
+    control: &ContextExecutionControl,
+) -> Result<RetrievalCandidateSet, AtlasError> {
+    control.checkpoint()?;
+    let requested_graph_root = canonical_graph_root(graph_dir)?;
+    if requested_graph_root != snapshot.graph_root {
+        return Err(AtlasError::Invariant(format!(
+            "pinned context graph {} cannot serve request for {}",
+            snapshot.graph_root.display(),
+            requested_graph_root.display()
+        )));
+    }
+    let status = crate::status::status_with_meta(
+        code_root,
+        &snapshot.graph_root,
+        &snapshot.persisted,
+        snapshot.snapshot.generation.clone(),
+    )?;
+    crate::status::require_worktree_match(&status)?;
+    let index =
+        crate::index::load_query_index_at(&snapshot.snapshot.data_dir, &snapshot.persisted.meta)?;
+    control.checkpoint()?;
     if let Some(expected) = &options.expected_graph_fingerprint
-        && expected != &meta.graph_fingerprint
+        && expected != &snapshot.persisted.meta.graph_fingerprint
     {
         return Err(AtlasError::ContextGraphMismatch {
             expected: expected.clone(),
-            found: meta.graph_fingerprint,
+            found: snapshot.persisted.meta.graph_fingerprint.clone(),
         });
     }
-    retrieve_context_index(code_root, &meta, &index, &status, intent, options)
+    retrieve_context_index_controlled(
+        code_root,
+        &snapshot.persisted.meta,
+        &index,
+        &status,
+        intent,
+        options,
+        control,
+    )
 }
 
+#[cfg(test)]
 fn retrieve_context_index(
     code_root: &Path,
     meta: &Meta,
@@ -532,6 +678,27 @@ fn retrieve_context_index(
     intent: &QueryIntent,
     options: &ContextOptions,
 ) -> Result<RetrievalCandidateSet, AtlasError> {
+    retrieve_context_index_controlled(
+        code_root,
+        meta,
+        index,
+        status,
+        intent,
+        options,
+        &ContextExecutionControl::unlimited(),
+    )
+}
+
+fn retrieve_context_index_controlled(
+    code_root: &Path,
+    meta: &Meta,
+    index: &QueryIndex,
+    status: &AtlasStatus,
+    intent: &QueryIntent,
+    options: &ContextOptions,
+    control: &ContextExecutionControl,
+) -> Result<RetrievalCandidateSet, AtlasError> {
+    control.checkpoint()?;
     let plan = evidence_priority_plan(intent.profile, options)?;
     let mut candidates = BTreeMap::<String, EvidenceCandidate>::new();
     let mut seed_nodes = BTreeMap::<String, Node>::new();
@@ -546,6 +713,7 @@ fn retrieve_context_index(
         .collect::<Vec<_>>();
 
     for failure in &options.failure_evidence {
+        control.checkpoint()?;
         let value = failure.trim();
         if value.is_empty() {
             continue;
@@ -568,6 +736,7 @@ fn retrieve_context_index(
     }
 
     for path in &intent.paths {
+        control.checkpoint()?;
         for position in index.file.get(path).into_iter().flatten() {
             if let Some(node) = index.nodes.get(*position) {
                 seed_nodes.insert(node.id.clone(), node.clone());
@@ -579,6 +748,7 @@ fn retrieve_context_index(
         }
     }
     for identifier in &intent.identifiers {
+        control.checkpoint()?;
         let hits = index.search_nodes(identifier);
         let ambiguous = hits
             .iter()
@@ -630,6 +800,7 @@ fn retrieve_context_index(
                 ),
             );
         }
+        control.checkpoint()?;
     }
     if seed_nodes.is_empty() {
         diagnostics.push(ContextDiagnostic {
@@ -640,9 +811,9 @@ fn retrieve_context_index(
     }
 
     for seed in seed_nodes.values() {
-        collect_adjacent_candidates(index, seed, &mut candidates);
+        collect_adjacent_candidates(index, seed, &mut candidates, control)?;
     }
-    collect_implementation_candidates(index, seed_nodes.values(), &mut candidates);
+    collect_implementation_candidates(index, seed_nodes.values(), &mut candidates, control)?;
 
     match intent.profile {
         ContextProfile::Flow => collect_flow_candidates(
@@ -654,6 +825,7 @@ fn retrieve_context_index(
             &plan,
             &mut candidates,
             &mut diagnostics,
+            control,
         )?,
         ContextProfile::Impact => collect_impact_candidates(
             index,
@@ -662,12 +834,14 @@ fn retrieve_context_index(
             options.frozen,
             &mut candidates,
             &mut diagnostics,
+            control,
         )?,
         ContextProfile::Architecture => {
-            collect_architecture_candidates(index, seed_nodes.values(), &mut candidates)
+            collect_architecture_candidates(index, seed_nodes.values(), &mut candidates, control)?
         }
         ContextProfile::Symbol => {}
     }
+    control.checkpoint()?;
 
     let total_candidates = candidates.len();
     let mut candidates = candidates.into_values().collect::<Vec<_>>();
@@ -708,6 +882,7 @@ fn retrieve_context_index(
             file: None,
         });
     }
+    control.checkpoint()?;
     canonicalize_diagnostics(&mut diagnostics);
     Ok(RetrievalCandidateSet {
         schema: RETRIEVAL_SCHEMA.into(),
@@ -728,11 +903,13 @@ fn collect_adjacent_candidates(
     index: &QueryIndex,
     seed: &Node,
     candidates: &mut BTreeMap<String, EvidenceCandidate>,
-) {
+    control: &ContextExecutionControl,
+) -> Result<(), AtlasError> {
     for (node, edge) in index
         .incoming_neighbors_for(&seed.id)
         .chain(index.outgoing_neighbors_for(&seed.id))
     {
+        control.checkpoint()?;
         insert_candidate(
             candidates,
             node_candidate(
@@ -754,19 +931,23 @@ fn collect_adjacent_candidates(
             ),
         );
     }
+    Ok(())
 }
 
 fn collect_implementation_candidates<'a>(
     index: &QueryIndex,
     seeds: impl Iterator<Item = &'a Node>,
     candidates: &mut BTreeMap<String, EvidenceCandidate>,
-) {
+    control: &ContextExecutionControl,
+) -> Result<(), AtlasError> {
     let mut implementations = BTreeMap::<String, Node>::new();
     for seed in seeds {
+        control.checkpoint()?;
         for (node, edge) in index
             .incoming_neighbors_for(&seed.id)
             .chain(index.outgoing_neighbors_for(&seed.id))
         {
+            control.checkpoint()?;
             if matches!(edge.kind, EdgeKind::ImplFor | EdgeKind::ImplsTrait)
                 || node.kind == NodeKind::Impl
             {
@@ -776,6 +957,7 @@ fn collect_implementation_candidates<'a>(
     }
     let unique = implementations.len() == 1;
     for (position, node) in implementations.into_values().enumerate() {
+        control.checkpoint()?;
         let (class, score, required, reason) = if unique {
             (
                 EvidenceClass::UniqueImplementation,
@@ -803,6 +985,7 @@ fn collect_implementation_candidates<'a>(
             node_candidate(&node, class, score, required, reason),
         );
     }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -815,7 +998,9 @@ fn collect_flow_candidates(
     plan: &EvidencePriorityPlan,
     candidates: &mut BTreeMap<String, EvidenceCandidate>,
     diagnostics: &mut Vec<ContextDiagnostic>,
+    control: &ContextExecutionControl,
 ) -> Result<(), AtlasError> {
+    control.checkpoint()?;
     let query = match intent.identifiers.as_slice() {
         [through] => FlowQuery::Through {
             symbol: through.clone(),
@@ -840,6 +1025,7 @@ fn collect_flow_candidates(
         },
         status,
     )?;
+    control.checkpoint()?;
     let primary = result
         .highest_confidence
         .as_ref()
@@ -856,6 +1042,7 @@ fn collect_flow_candidates(
     }
     let primary_signature = primary.map(path_identity);
     for path in result.alternatives.iter().take(plan.limits.max_paths) {
+        control.checkpoint()?;
         if primary_signature.as_deref() == Some(path_identity(path).as_str()) {
             continue;
         }
@@ -869,6 +1056,7 @@ fn collect_flow_candidates(
         );
     }
     for diagnostic in result.diagnostics {
+        control.checkpoint()?;
         diagnostics.push(ContextDiagnostic {
             code: diagnostic.code,
             message: diagnostic.message,
@@ -880,7 +1068,9 @@ fn collect_flow_candidates(
         FlowState::NoPath | FlowState::CapabilityUnavailable
     ) {
         let projection = project_runtime_boundaries(code_root, meta, index, status, &query, limits);
+        control.checkpoint()?;
         for hint in projection.hints {
+            control.checkpoint()?;
             let span = EvidenceSpan {
                 file: hint.site.file.clone(),
                 line_start: hint.site.line_start,
@@ -957,6 +1147,7 @@ fn collect_impact_candidates(
     frozen: bool,
     candidates: &mut BTreeMap<String, EvidenceCandidate>,
     diagnostics: &mut Vec<ContextDiagnostic>,
+    control: &ContextExecutionControl,
 ) -> Result<(), AtlasError> {
     if seeds.is_empty() {
         return Ok(());
@@ -970,7 +1161,9 @@ fn collect_impact_candidates(
             frozen,
         },
     )?;
+    control.checkpoint()?;
     for entry in traversal.affected {
+        control.checkpoint()?;
         let score = 900u16.saturating_sub((entry.distance as u16).saturating_mul(75));
         let source_span = EvidenceSpan {
             file: entry.node.file.clone(),
@@ -994,6 +1187,7 @@ fn collect_impact_candidates(
         );
     }
     for diagnostic in traversal.diagnostics {
+        control.checkpoint()?;
         diagnostics.push(ContextDiagnostic {
             code: diagnostic.code,
             message: diagnostic.message,
@@ -1014,11 +1208,13 @@ fn collect_architecture_candidates<'a>(
     index: &QueryIndex,
     seeds: impl Iterator<Item = &'a Node>,
     candidates: &mut BTreeMap<String, EvidenceCandidate>,
-) {
+    control: &ContextExecutionControl,
+) -> Result<(), AtlasError> {
     let roots = seeds
         .filter_map(|node| node.symbol.split("::").next())
         .collect::<BTreeSet<_>>();
     for node in &index.nodes {
+        control.checkpoint()?;
         if !matches!(node.kind, NodeKind::Crate | NodeKind::Module)
             || (!roots.is_empty()
                 && !roots.iter().any(|root| {
@@ -1042,6 +1238,7 @@ fn collect_architecture_candidates<'a>(
             ),
         );
     }
+    Ok(())
 }
 
 fn node_candidate(
@@ -1235,6 +1432,21 @@ pub fn project_context(
     retrieval: &RetrievalCandidateSet,
     options: &ContextOptions,
 ) -> Result<ContextResult, AtlasError> {
+    project_context_controlled(
+        code_root,
+        retrieval,
+        options,
+        &ContextExecutionControl::unlimited(),
+    )
+}
+
+pub fn project_context_controlled(
+    code_root: &Path,
+    retrieval: &RetrievalCandidateSet,
+    options: &ContextOptions,
+    control: &ContextExecutionControl,
+) -> Result<ContextResult, AtlasError> {
+    control.checkpoint()?;
     let plan = evidence_priority_plan(retrieval.intent.profile, options)?;
     let threshold = plan.limits.relevance_threshold;
     let mut diagnostics = retrieval.diagnostics.clone();
@@ -1255,6 +1467,7 @@ pub fn project_context(
     let mut source_slices = 0;
     let mut source_cache = BTreeMap::<EvidenceSpan, SourceSlice>::new();
     for candidate in &retrieval.candidates {
+        control.checkpoint()?;
         if candidate.score < threshold && !candidate.required {
             omitted.push(omitted_candidate(candidate, OmissionReason::BelowRelevance));
             continue;
@@ -1287,6 +1500,7 @@ pub fn project_context(
                     plan.limits.max_source_lines,
                 ) {
                     Ok(slice) => {
+                        control.checkpoint()?;
                         source_slices += 1;
                         source_cache.insert(span.clone(), slice.clone());
                         Some(slice)
@@ -1334,12 +1548,14 @@ pub fn project_context(
         retrieval.after_cursor_omitted,
     );
     loop {
-        refresh_context_receipt(&mut result)?;
+        control.checkpoint()?;
+        refresh_context_receipt_controlled(&mut result, control)?;
         if result.receipt.serialized_bytes <= plan.limits.max_serialized_bytes {
             let mut represented = represented_files(&result);
             crate::status::scope_live_status(&mut result.status, std::mem::take(&mut represented));
-            refresh_context_receipt(&mut result)?;
+            refresh_context_receipt_controlled(&mut result, control)?;
             if result.receipt.serialized_bytes <= plan.limits.max_serialized_bytes {
+                control.checkpoint()?;
                 return Ok(result);
             }
         }
@@ -1458,7 +1674,10 @@ fn context_result(
     }
 }
 
-fn refresh_context_receipt(result: &mut ContextResult) -> Result<(), AtlasError> {
+fn refresh_context_receipt_controlled(
+    result: &mut ContextResult,
+    control: &ContextExecutionControl,
+) -> Result<(), AtlasError> {
     result.receipt.projection.retained = result.projection.evidence.len();
     result.receipt.projection.retention_numerator = result.projection.evidence.len();
     result.receipt.projection.byte_omitted =
@@ -1498,6 +1717,7 @@ fn refresh_context_receipt(result: &mut ContextResult) -> Result<(), AtlasError>
     result.receipt.follow_up_queries = result.omissions.len();
     result.receipt.load_profile = load_profile(&result.projection.evidence);
     for _ in 0..16 {
+        control.checkpoint()?;
         let bytes = serde_json::to_vec(result)
             .map_err(|error| {
                 AtlasError::Invariant(format!("context serialization failed: {error}"))
@@ -1856,9 +2076,15 @@ pub fn compile_context(
     query: &str,
     options: &ContextOptions,
 ) -> Result<ContextResult, AtlasError> {
+    if !options.frozen {
+        crate::refresh(code_root, graph_dir, &QueryOptions { frozen: false })?;
+    }
+    let snapshot = pin_context_snapshot(graph_dir)?;
     let intent = parse_query_intent(query, options.profile);
-    let retrieval = retrieve_context(code_root, graph_dir, &intent, options)?;
-    project_context(code_root, &retrieval, options)
+    let control = ContextExecutionControl::unlimited();
+    let retrieval =
+        retrieve_context_pinned(code_root, graph_dir, &snapshot, &intent, options, &control)?;
+    project_context_controlled(code_root, &retrieval, options, &control)
 }
 
 #[cfg(test)]
@@ -2400,6 +2626,65 @@ mod tests {
         };
         let error = compile_context(&code, &graph, "entry", &options).unwrap_err();
         assert!(matches!(error, AtlasError::ContextGraphMismatch { .. }));
+        fs::remove_dir_all(code).ok();
+    }
+
+    #[test]
+    fn test_atlas_context_pinned_session_survives_writer_publish() {
+        let code = temp_dir("pinned-session");
+        fs::create_dir_all(code.join("src")).unwrap();
+        fs::write(
+            code.join("Cargo.toml"),
+            "[package]\nname='pinned-context'\nversion='0.1.0'\nedition='2024'\n",
+        )
+        .unwrap();
+        fs::write(code.join("src/lib.rs"), "pub fn entry() {}\n").unwrap();
+        let graph = code.join("graph");
+        crate::build(&code, &graph, &crate::BuildOptions::default()).unwrap();
+
+        let pinned = pin_context_snapshot(&graph).unwrap();
+        let generation_a = pinned.generation().unwrap().to_string();
+        let graph_a = pinned.graph_fingerprint().to_string();
+        fs::write(
+            code.join("src/lib.rs"),
+            "pub fn entry() {}\npub fn later() {}\n",
+        )
+        .unwrap();
+        crate::build(&code, &graph, &crate::BuildOptions::default()).unwrap();
+        let current = crate::graph_snapshot(&graph).unwrap();
+        assert_ne!(current.generation.as_deref(), Some(generation_a.as_str()));
+
+        let options = ContextOptions {
+            frozen: true,
+            ..ContextOptions::default()
+        };
+        let intent = parse_query_intent("entry", ContextProfile::Symbol);
+        let control = ContextExecutionControl::unlimited();
+        let retrieval =
+            retrieve_context_pinned(&code, &graph, &pinned, &intent, &options, &control).unwrap();
+        let result = project_context_controlled(&code, &retrieval, &options, &control).unwrap();
+        assert_eq!(result.receipt.graph_fingerprint, graph_a);
+        assert!(pinned.snapshot.data_dir.is_dir());
+
+        let generation_a_dir = pinned.snapshot.data_dir.clone();
+        drop(pinned);
+        let writer = crate::locking::WriterLease::try_acquire(&graph).unwrap();
+        crate::generation::safe_reclaim(&graph, &writer).unwrap();
+        assert!(!generation_a_dir.exists());
+        fs::remove_dir_all(code).ok();
+    }
+
+    #[test]
+    fn test_atlas_context_control_cancels_projection_at_checkpoint() {
+        let (code, retrieval) = retrieval(ContextProfile::Symbol, "entry");
+        let control = ContextExecutionControl::unlimited();
+        control.cancel();
+
+        let error =
+            project_context_controlled(&code, &retrieval, &ContextOptions::default(), &control)
+                .unwrap_err();
+
+        assert!(matches!(error, AtlasError::QueryCancelled));
         fs::remove_dir_all(code).ok();
     }
 

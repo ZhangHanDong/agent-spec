@@ -41,12 +41,13 @@ pub use affected::{
     AffectedDiagnostic, AffectedOptions, AffectedResult, AffectedSeed, affected_paths,
 };
 pub use context::{
-    ContextDiagnostic, ContextLimits, ContextOptions, ContextProfile, ContextProjection,
-    ContextRelation, ContextResult, ContinuationQuery, EvidenceCandidate, EvidenceClass,
-    EvidencePriorityPlan, EvidenceSpan, OmissionEntry, OmissionReason, ProjectedEvidence,
-    ProjectionReceipt, QueryIntent, QueryLoadProfile, QueryReceipt, RetrievalCandidateSet,
-    RetrievalReceipt, SourceSlice, compile_context, evidence_priority_plan, parse_query_intent,
-    project_context, retrieve_context,
+    ContextDiagnostic, ContextExecutionControl, ContextLimits, ContextOptions, ContextProfile,
+    ContextProjection, ContextRelation, ContextResult, ContinuationQuery, EvidenceCandidate,
+    EvidenceClass, EvidencePriorityPlan, EvidenceSpan, OmissionEntry, OmissionReason,
+    PinnedContextSnapshot, ProjectedEvidence, ProjectionReceipt, QueryIntent, QueryLoadProfile,
+    QueryReceipt, RetrievalCandidateSet, RetrievalReceipt, SourceSlice, compile_context,
+    evidence_priority_plan, parse_query_intent, pin_context_snapshot, project_context,
+    project_context_controlled, retrieve_context, retrieve_context_pinned,
 };
 pub use explore::{
     BudgetUsage, ExploreBudget, ExploreDiagnostic, ExploreNode, ExploreOptions, ExploreProfile,
@@ -182,6 +183,10 @@ pub enum AtlasError {
         "atlas-context-required-source-cap: required source span count {required} exceeds profile cap {max}"
     )]
     ContextRequiredSourceCap { required: usize, max: usize },
+    #[error("atlas-query-cancelled: query cancelled at an execution checkpoint")]
+    QueryCancelled,
+    #[error("atlas-query-timeout: query deadline elapsed at an execution checkpoint")]
+    QueryTimeout,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
