@@ -87,7 +87,7 @@ git commit -m "docs(atlas): accept explore flow impact wave"
 
 **Interfaces:**
 - Consumes: `QueryIndex::{matching_nodes,incoming_edges,outgoing_edges}`, `Edge`, `Node`, `AtlasStatus`.
-- Produces: public `GraphPath`, `PathHop`, `PathConfidence`, `FlowState`, `TraversalLimits`; crate-private `EndpointResolution`, `PathEnumeration`, `resolve_endpoint`, `enumerate_paths`, `confidence_cost`.
+- Produces: public `GraphPath`, `PathHop`, `PathDirection`, `PathConfidence`, `FlowState`, `TraversalLimits`; crate-private `EndpointResolution`, `PathEnumeration`, `resolve_endpoint`, `enumerate_paths`, `confidence_cost`.
 
 - [ ] **Step 1: Write the failing shared-contract test**
 
@@ -100,6 +100,7 @@ fn test_atlas_query_surfaces_share_traversal_contract() {
         edge: edge("a", "b", EdgeConfidence::Exact),
         chosen_target: "b".into(),
         candidate: false,
+        direction: PathDirection::Forward,
     };
     let path = GraphPath {
         nodes: vec![node("a"), node("b")],
@@ -130,11 +131,16 @@ Implement these exact public shapes:
 #[serde(rename_all = "kebab-case")]
 pub enum PathConfidence { Exact, BoundedCandidates, Heuristic }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PathDirection { Forward, Reverse }
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PathHop {
     pub edge: Edge,
     pub chosen_target: String,
     pub candidate: bool,
+    pub direction: PathDirection,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

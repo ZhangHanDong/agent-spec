@@ -39,7 +39,8 @@ truncation 与测试覆盖结论的诚实边界。
   已解析、没有找到 path 且 SCIP 不可用时为 `capability-unavailable`，SCIP 可用且搜索完整时才为
   `no-path`；本阶段不以 MIR 可用性改变 flow verdict。
 - impact depth 取值 1..=8、默认 3，默认 max nodes 200；container 成员以相同 distance 展开，
-  leaf 不反向沿 `contains` 进入 parent 后再扩展 siblings。
+  leaf 不反向沿 `contains` 进入 parent 后再扩展 siblings；反向 dependency hop 保留原始 edge，
+  并用 `PathDirection::Reverse` 明示 path 的遍历方向。
 - `atlas affected` 的 explicit paths、`--stdin`、`--staged`、`--worktree`、`--commit <range>`
   五种模式互斥；Git 使用 `Command` argv 调用并拒绝以 `-` 开头的 revision。
 - affected 只返回 code nodes、distance 与 evidence path；本任务不得按 `_test.rs`、`tests/`、
@@ -205,7 +206,7 @@ truncation 与测试覆盖结论的诚实边界。
   假设 多条 calls、references、uses-type 与 impl edge 汇入同一 dependent
   当 impact depth 为 3
   那么 每个 affected node 只出现一次并携带 minimum distance
-  并且 其 evidence path 可连续回到 seed
+  并且 其 evidence path 可连续回到 seed，反向 dependency hop 保留原始 edge 并标记 reverse direction
 
 场景: leaf impact 不产生 containment sibling explosion
   测试: test_atlas_impact_container_expansion_avoids_sibling_explosion

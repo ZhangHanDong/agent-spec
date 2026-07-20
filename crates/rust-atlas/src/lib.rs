@@ -18,15 +18,19 @@ use quote::ToTokens;
 use serde::{Deserialize, Serialize};
 
 mod flow;
+mod impact;
 mod index;
 mod status;
 mod traversal;
 
 pub use flow::{FlowDiagnostic, FlowEndpoint, FlowOptions, FlowQuery, FlowResult, flow};
+pub use impact::{ImpactDiagnostic, ImpactEntry, ImpactOptions, ImpactResult, impact};
 use index::write_json_atomic;
 pub use index::{QueryIndex, canonical_graph_fingerprint, load_query_index, rebuild_query_index};
 pub use status::{AtlasStatus, GraphIdentity, LayerState, LayerStatus, require_authority, status};
-pub use traversal::{FlowState, GraphPath, PathConfidence, PathHop, TraversalLimits};
+pub use traversal::{
+    FlowState, GraphPath, PathConfidence, PathDirection, PathHop, TraversalLimits,
+};
 
 pub const SCHEMA_VERSION: u32 = 6;
 

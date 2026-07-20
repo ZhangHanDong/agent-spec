@@ -12,11 +12,19 @@ pub enum PathConfidence {
     Heuristic,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PathDirection {
+    Forward,
+    Reverse,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PathHop {
     pub edge: Edge,
     pub chosen_target: String,
     pub candidate: bool,
+    pub direction: PathDirection,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -335,6 +343,7 @@ fn add_target_neighbors(
                 edge: edge.clone(),
                 chosen_target: node.id,
                 candidate,
+                direction: PathDirection::Forward,
             },
         ));
     }
@@ -461,6 +470,7 @@ mod tests {
             edge: edge("a", "b", EdgeConfidence::Exact),
             chosen_target: "b".into(),
             candidate: false,
+            direction: PathDirection::Forward,
         };
         let path = GraphPath {
             nodes: vec![node("a"), node("b")],
