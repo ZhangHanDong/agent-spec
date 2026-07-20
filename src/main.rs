@@ -430,6 +430,24 @@ enum AtlasCommands {
         /// Add bounded trait implementation candidates from resolved SCIP call anchors
         #[arg(long)]
         dynamic_dispatch: bool,
+        /// Cargo features that participate in target discovery and cache identity
+        #[arg(long, value_delimiter = ',')]
+        features: Vec<String>,
+        /// Cargo target triple used for metadata filtering and cache identity
+        #[arg(long)]
+        target: Option<String>,
+        /// Additional cfg values that participate in cache identity
+        #[arg(long = "cfg")]
+        cfg: Vec<String>,
+        /// Maximum number of shards in an incremental resolution frontier
+        #[arg(long, default_value_t = 2048)]
+        frontier_limit: usize,
+        /// Number of source files processed between cancellation checks
+        #[arg(long, default_value_t = 256)]
+        batch_size: usize,
+        /// Maximum source bytes admitted by one build
+        #[arg(long, default_value_t = 536_870_912)]
+        working_byte_limit: usize,
         /// Optional versioned rust-atlas MIR overlay (requires Cargo feature `mir`)
         #[cfg(feature = "mir")]
         #[arg(long, conflicts_with = "mir_driver")]
@@ -3736,6 +3754,12 @@ fn cmd_atlas(action: AtlasCommands) -> Result<(), Box<dyn std::error::Error>> {
             full,
             scip,
             dynamic_dispatch,
+            features,
+            target,
+            cfg,
+            frontier_limit,
+            batch_size,
+            working_byte_limit,
             #[cfg(feature = "mir")]
             mir,
             #[cfg(feature = "mir")]
@@ -3745,6 +3769,13 @@ fn cmd_atlas(action: AtlasCommands) -> Result<(), Box<dyn std::error::Error>> {
                 full,
                 scip_index: scip,
                 dynamic_dispatch,
+                features,
+                target,
+                cfg,
+                frontier_limit,
+                batch_size,
+                working_byte_limit,
+                cancellation: None,
             };
             let report = {
                 #[cfg(feature = "mir")]
@@ -11168,6 +11199,30 @@ Scenario: verification metadata stays visible
     }
 
     #[test]
+    fn test_atlas_incremental_docs_describe_generation_and_d3_boundary() {
+        let guide = include_str!("../docs/atlas-incremental-builds.md");
+        let roadmap = include_str!("../docs/atlas-roadmap.md");
+        let skill = include_str!("../skills/agent-spec-tool-first/SKILL.md");
+        let wiki = include_str!("../.agent-spec/wiki/architecture/atlas.md");
+        for content in [guide, roadmap, skill, wiki] {
+            for term in ["generation", "frontier", "orphan", "zero-change"] {
+                assert!(content.contains(term), "missing `{term}`");
+            }
+            assert!(content.contains("watcher"));
+            assert!(content.contains("daemon"));
+            assert!(
+                ["does not", "not a watcher", "仍未启用", "不启动"]
+                    .iter()
+                    .any(|boundary| content.contains(boundary)),
+                "D3 boundary is not explicit"
+            );
+        }
+        assert!(guide.contains("derived working data"));
+        assert!(wiki.contains("derived"));
+        assert!(roadmap.contains("Wave 8 已交付"));
+    }
+
+    #[test]
     fn test_docs_describe_deepened_live_wiki_workflow() {
         let readme = include_str!("../README.md");
         let agents = include_str!("../AGENTS.md");
@@ -11861,6 +11916,7 @@ Scenario: pass
                 full: false,
                 scip_index: Some(repo_root().join("fixtures/atlas/scip/index.json")),
                 dynamic_dispatch: false,
+                ..rust_atlas::BuildOptions::default()
             },
         )
         .unwrap();
@@ -12266,10 +12322,7 @@ Scenario: pass
             frozen: true,
         })
         .unwrap();
-        assert_eq!(
-            fs::read(index_path).unwrap(),
-            index_before
-        );
+        assert_eq!(fs::read(index_path).unwrap(), index_before);
         fs::remove_dir_all(code.parent().unwrap()).ok();
     }
 
@@ -12553,6 +12606,50 @@ Scenario: pass
     }
 
     #[test]
+    fn test_atlas_incremental_build_cli_options() {
+        let cli = super::Cli::try_parse_from([
+            "agent-spec",
+            "atlas",
+            "build",
+            "--features",
+            "serde,mir",
+            "--target",
+            "x86_64-unknown-linux-gnu",
+            "--cfg",
+            "tokio_unstable",
+            "--frontier-limit",
+            "17",
+            "--batch-size",
+            "3",
+            "--working-byte-limit",
+            "4096",
+        ])
+        .unwrap();
+        match cli.command {
+            super::Commands::Atlas {
+                action:
+                    super::AtlasCommands::Build {
+                        features,
+                        target,
+                        cfg,
+                        frontier_limit,
+                        batch_size,
+                        working_byte_limit,
+                        ..
+                    },
+            } => {
+                assert_eq!(features, ["serde", "mir"]);
+                assert_eq!(target.as_deref(), Some("x86_64-unknown-linux-gnu"));
+                assert_eq!(cfg, ["tokio_unstable"]);
+                assert_eq!(frontier_limit, 17);
+                assert_eq!(batch_size, 3);
+                assert_eq!(working_byte_limit, 4096);
+            }
+            _ => panic!("expected atlas build"),
+        }
+    }
+
+    #[test]
     fn test_atlas_affected_cli_covers_all_vcs_modes_and_failures() {
         let code = Path::new("repo");
         let staged = super::git_diff_request(code, &super::AffectedInputMode::Staged)
@@ -12767,10 +12864,7 @@ Scenario: pass
                 .iter()
                 .any(|file| file == "src/service.rs")
         );
-        assert_eq!(
-            fs::read(index_path).unwrap(),
-            index_before
-        );
+        assert_eq!(fs::read(index_path).unwrap(), index_before);
         fs::remove_dir_all(code.parent().unwrap()).ok();
     }
 

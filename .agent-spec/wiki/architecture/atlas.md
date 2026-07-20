@@ -4,6 +4,9 @@ type: architecture
 source_files:
   - crates/rust-atlas/src/lib.rs
   - crates/rust-atlas/src/index.rs
+  - crates/rust-atlas/src/generation.rs
+  - crates/rust-atlas/src/input_plan.rs
+  - crates/rust-atlas/src/incremental.rs
   - crates/rust-atlas/src/status.rs
   - crates/rust-atlas/src/traversal.rs
   - crates/rust-atlas/src/flow.rs
@@ -15,6 +18,7 @@ source_files:
   - src/spec_mcp/tools.rs
   - specs/task-atlas-explore-flow-impact.spec.md
   - specs/task-atlas-runtime-boundary-hints.spec.md
+  - specs/task-atlas-incremental-hardening.spec.md
 tags:
   - atlas
   - code-graph
@@ -53,6 +57,22 @@ exact symbol in the source module before global suffix fallback. Frontier
 construction and AST scanning share one hash-validated per-file cache, applying
 node and byte budgets before another source read.
 
+Build authority is published as one immutable committed generation. The
+content-addressed Cargo input plan caches target metadata but source module
+ownership is reconstructed each build; automatic stale refresh retains the
+committed feature, target, and cfg inputs. Dirty declarations produce a bounded
+reverse-dependent frontier; overflow and capability changes become explicit
+full passes. Frontier planning, resolution, and validation stream shard batches
+under source, serialized-graph, and overlay byte admission. Resolution work is
+persisted as an orphan queue before processing, and the queue is cleared only
+after pointer commit. A failed post-commit clear rebases the queue for the next
+recovery build. Healthy zero-change builds validate artifact digests and
+perform no staging, resolution, validation, or authority rewrite. Every read
+surface pins and reports one generation id.
+Only current-transaction staging is cleaned in D2. Reclaiming another process's
+staging or an old committed generation requires D3 single-writer identity and a
+reader-retention contract.
+
 ## Boundaries
 
 The graph and index are derived working data, not KLL truth. MCP Atlas reads
@@ -65,6 +85,8 @@ syn, SCIP, and MIR separately, so consumers do not infer semantic freshness
 from syn refresh.
 `runtime-boundary` results carry `query-hint` authority: they never become graph
 edges or deterministic impact, binding, lifecycle, or archive evidence.
+Incremental D2 does not start a watcher or daemon; event watermarks, retry, and
+daemon lifecycle remain D3 work.
 
 ## Maintenance
 

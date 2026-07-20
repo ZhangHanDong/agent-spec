@@ -153,18 +153,28 @@ impl GenerationTransaction {
         let generations = self.graph_root.join(GENERATIONS_DIR);
         fs::create_dir_all(&generations).map_err(io_error)?;
         let final_dir = generations.join(&generation);
-        match fs::rename(&self.staging, &final_dir) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                let existing = read_manifest(&final_dir)?;
-                if existing != manifest {
-                    return Err(AtlasError::Invariant(format!(
-                        "generation id collision for {generation}"
-                    )));
-                }
-                fs::remove_dir_all(&self.staging).map_err(io_error)?;
+        if final_dir.exists() {
+            let existing = read_manifest(&final_dir)?;
+            if existing != manifest {
+                return Err(AtlasError::Invariant(format!(
+                    "generation id collision for {generation}"
+                )));
             }
-            Err(error) => return Err(io_error(error)),
+            fs::remove_dir_all(&self.staging).map_err(io_error)?;
+        } else {
+            match fs::rename(&self.staging, &final_dir) {
+                Ok(()) => {}
+                Err(_) if final_dir.exists() => {
+                    let existing = read_manifest(&final_dir)?;
+                    if existing != manifest {
+                        return Err(AtlasError::Invariant(format!(
+                            "generation id collision for {generation}"
+                        )));
+                    }
+                    fs::remove_dir_all(&self.staging).map_err(io_error)?;
+                }
+                Err(error) => return Err(io_error(error)),
+            }
         }
         self.committed = true;
         sync_directory(&generations)?;
@@ -188,8 +198,16 @@ impl GenerationTransaction {
 impl Drop for GenerationTransaction {
     fn drop(&mut self) {
         if !self.committed {
-            let _ = fs::remove_dir_all(&self.staging);
+            let _ = cleanup_owned_staging(&self.staging);
         }
+    }
+}
+
+fn cleanup_owned_staging(path: &Path) -> Result<(), AtlasError> {
+    match fs::remove_dir_all(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(io_error(error)),
     }
 }
 
@@ -197,6 +215,17 @@ pub(crate) fn resolve_snapshot(graph_root: &Path) -> Result<GraphSnapshot, Atlas
     resolve_optional_snapshot(graph_root)?.ok_or_else(|| AtlasError::MissingGraph {
         graph_dir: graph_root.display().to_string(),
     })
+}
+
+pub(crate) fn artifacts_match_manifest(snapshot: &GraphSnapshot) -> bool {
+    let Some(expected_generation) = snapshot.generation.as_deref() else {
+        return false;
+    };
+    let Ok(manifest) = read_manifest(&snapshot.data_dir) else {
+        return false;
+    };
+    manifest.generation == expected_generation
+        && artifact_hashes(&snapshot.data_dir).is_ok_and(|actual| actual == manifest.artifacts)
 }
 
 pub(crate) fn resolve_optional_snapshot(
@@ -218,9 +247,7 @@ pub(crate) fn resolve_optional_snapshot(
                 )));
             }
             validate_generation_id(&pointer.generation)?;
-            let data_dir = graph_root
-                .join(GENERATIONS_DIR)
-                .join(&pointer.generation);
+            let data_dir = graph_root.join(GENERATIONS_DIR).join(&pointer.generation);
             reject_symlink(&data_dir)?;
             let manifest = read_manifest(&data_dir)?;
             if manifest.generation != pointer.generation {
@@ -429,12 +456,7 @@ mod tests {
         let transaction = GenerationTransaction::begin(graph, base.as_ref())?;
         crate::index::write_json_atomic(&transaction.data_dir().join("marker.json"), &marker)?;
         let fingerprint = blake3::hash(marker.as_bytes()).to_hex();
-        transaction.publish_with_fault(
-            fingerprint.as_ref(),
-            &Capability::default(),
-            None,
-            fault,
-        )
+        transaction.publish_with_fault(fingerprint.as_ref(), &Capability::default(), None, fault)
     }
 
     fn read_marker(snapshot: &GraphSnapshot) -> String {
@@ -468,7 +490,10 @@ mod tests {
 
             assert!(publish_marker(&graph, "changed", fault).is_err());
 
-            assert_eq!(fs::read(graph.join("CURRENT.json")).unwrap(), pointer_before);
+            assert_eq!(
+                fs::read(graph.join("CURRENT.json")).unwrap(),
+                pointer_before
+            );
             assert_eq!(resolve_snapshot(&graph).unwrap(), baseline);
             assert_eq!(read_marker(&baseline), "baseline");
         }
@@ -489,6 +514,25 @@ mod tests {
         let committed = publish_marker(&graph, "committed", PublishFault::None).unwrap();
         assert!(committed.generation.is_some());
         assert_eq!(resolve_snapshot(&graph).unwrap(), committed);
-        assert_eq!(fs::read_to_string(graph.join("meta.json")).unwrap(), "legacy");
+        assert_eq!(
+            fs::read_to_string(graph.join("meta.json")).unwrap(),
+            "legacy"
+        );
+    }
+
+    #[test]
+    fn test_atlas_owned_staging_cleanup_is_idempotent_and_preserves_active_generation() {
+        let graph = temp_dir("owned-cleanup");
+        let baseline = publish_marker(&graph, "baseline", PublishFault::None).unwrap();
+        let transaction = GenerationTransaction::begin(&graph, Some(&baseline)).unwrap();
+        let staging = transaction.staging.clone();
+        assert!(staging.is_dir());
+        drop(transaction);
+
+        assert!(!staging.exists());
+        cleanup_owned_staging(&staging).unwrap();
+        cleanup_owned_staging(&staging).unwrap();
+        assert_eq!(resolve_snapshot(&graph).unwrap(), baseline);
+        assert_eq!(read_marker(&baseline), "baseline");
     }
 }

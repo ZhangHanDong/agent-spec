@@ -4,6 +4,8 @@ type: concept
 source_files:
   - crates/rust-atlas/src/status.rs
   - crates/rust-atlas/src/lib.rs
+  - crates/rust-atlas/src/generation.rs
+  - crates/rust-atlas/src/incremental.rs
   - crates/rust-atlas/src/explore.rs
   - crates/rust-atlas/src/flow.rs
   - crates/rust-atlas/src/runtime_boundary.rs
@@ -13,6 +15,7 @@ source_files:
   - src/spec_verify/atlas_symbols.rs
   - docs/atlas-roadmap.md
   - docs/atlas-runtime-boundaries.md
+  - docs/atlas-incremental-builds.md
 tags:
   - atlas
   - freshness
@@ -29,6 +32,13 @@ status: active
 toolchain. `AtlasStatus` carries that recorded/current identity and independent
 syn, SCIP, and MIR layer state. A worktree mismatch blocks definitive reads; a
 fresh syn baseline does not make a stale SCIP overlay authoritative.
+
+`AtlasStatus` also reports the generation pinned at operation start. Metadata,
+shards, query index, input plan, and overlay capability become visible only as
+one committed generation. Cancellation, resource failure, or publication
+failure leaves the old generation active and retains orphan work. A healthy
+zero-change build does not rewrite derived authority. This is an incremental
+build contract, not a watcher or daemon freshness claim.
 
 ## Consumers
 

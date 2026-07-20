@@ -636,6 +636,7 @@ mod tests {
             diagnostics: Vec::new(),
         };
         AtlasStatus {
+            generation: Some("g-impact-test".into()),
             graph_fingerprint: "impact-test".into(),
             recorded_identity: identity.clone(),
             current_identity: identity,

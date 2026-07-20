@@ -218,6 +218,7 @@ mod tests {
                     Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/atlas/scip/index.json"),
                 ),
                 dynamic_dispatch: false,
+                ..rust_atlas::BuildOptions::default()
             },
         )
         .unwrap();

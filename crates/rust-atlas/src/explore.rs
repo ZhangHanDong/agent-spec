@@ -900,6 +900,7 @@ mod tests {
             diagnostics: Vec::new(),
         };
         AtlasStatus {
+            generation: Some("g-explore-test".into()),
             graph_fingerprint: "explore-test".into(),
             recorded_identity: identity.clone(),
             current_identity: identity,

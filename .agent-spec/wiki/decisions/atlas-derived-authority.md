@@ -48,3 +48,7 @@ intent-aware consumer joins it to explicit bindings and Contract selectors.
 
 Revise this page when the graph authority boundary, rebuild diagnostics, or MCP
 exposure policy changes.
+
+Atlas D2 now commits the complete derived graph as one generation. This
+strengthens publication consistency without promoting graph facts to KLL truth
+or changing default MCP exposure.

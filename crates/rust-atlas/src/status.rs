@@ -1,11 +1,12 @@
 use std::collections::BTreeMap;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AtlasError, Meta, PersistedMeta, io_err, read_persisted_meta, rel_path, walk_rs_files,
+    AtlasError, Meta, PersistedMeta, io_err, read_persisted_meta_at, rel_path, walk_rs_files,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,6 +43,7 @@ pub struct LayerStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AtlasStatus {
+    pub generation: Option<String>,
     pub graph_fingerprint: String,
     pub recorded_identity: GraphIdentity,
     pub current_identity: GraphIdentity,
@@ -56,14 +58,16 @@ pub struct AtlasStatus {
 /// Metadata is fully schema-validated before inspecting the current worktree,
 /// which keeps schema mismatch as the first actionable failure.
 pub fn status(code_root: &Path, graph_dir: &Path) -> Result<AtlasStatus, AtlasError> {
-    let recorded = read_persisted_meta(graph_dir)?;
-    status_with_meta(code_root, graph_dir, &recorded)
+    let snapshot = crate::generation::resolve_snapshot(graph_dir)?;
+    let recorded = read_persisted_meta_at(&snapshot.data_dir)?;
+    status_with_meta(code_root, graph_dir, &recorded, snapshot.generation)
 }
 
 pub(crate) fn status_with_meta(
     code_root: &Path,
     graph_dir: &Path,
     recorded: &PersistedMeta,
+    generation: Option<String>,
 ) -> Result<AtlasStatus, AtlasError> {
     let current_identity = capture_identity(code_root, graph_dir)?;
     let current_files = source_hashes(code_root)?;
@@ -96,6 +100,7 @@ pub(crate) fn status_with_meta(
         });
 
     Ok(AtlasStatus {
+        generation,
         graph_fingerprint: recorded.meta.graph_fingerprint.clone(),
         recorded_identity: recorded.identity.clone(),
         current_identity,
@@ -400,13 +405,22 @@ fn unavailable(diagnostic: &str) -> LayerStatus {
     }
 }
 
-fn source_hashes(code_root: &Path) -> Result<BTreeMap<String, String>, AtlasError> {
+pub(crate) fn source_hashes(code_root: &Path) -> Result<BTreeMap<String, String>, AtlasError> {
     let code_root = canonical_path(code_root)?;
     let mut files = BTreeMap::new();
     for path in walk_rs_files(&code_root) {
         let relative = rel_path(&code_root, &path);
-        let bytes = std::fs::read(path).map_err(io_err)?;
-        files.insert(relative, blake3::hash(&bytes).to_hex().to_string());
+        let mut file = std::fs::File::open(path).map_err(io_err)?;
+        let mut hasher = blake3::Hasher::new();
+        let mut buffer = [0_u8; 64 * 1024];
+        loop {
+            let read = file.read(&mut buffer).map_err(io_err)?;
+            if read == 0 {
+                break;
+            }
+            hasher.update(&buffer[..read]);
+        }
+        files.insert(relative, hasher.finalize().to_hex().to_string());
     }
     Ok(files)
 }
@@ -544,6 +558,7 @@ mod tests {
                 full: false,
                 scip_index: Some(scip_fixture()),
                 dynamic_dispatch: false,
+                ..BuildOptions::default()
             },
         )
         .unwrap();
@@ -623,6 +638,7 @@ mod tests {
                 full: false,
                 scip_index: Some(index),
                 dynamic_dispatch: false,
+                ..BuildOptions::default()
             },
         )
         .unwrap();
@@ -662,6 +678,7 @@ mod tests {
                 full: false,
                 scip_index: Some(index.clone()),
                 dynamic_dispatch: false,
+                ..BuildOptions::default()
             },
         )
         .unwrap();
@@ -769,6 +786,7 @@ mod tests {
                 full: false,
                 scip_index: Some(index.clone()),
                 dynamic_dispatch: false,
+                ..BuildOptions::default()
             },
         )
         .unwrap();
@@ -817,6 +835,7 @@ mod tests {
                 full: false,
                 scip_index: Some(index),
                 dynamic_dispatch: false,
+                ..BuildOptions::default()
             },
         )
         .unwrap();

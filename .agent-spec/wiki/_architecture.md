@@ -21,3 +21,6 @@ source_files:
 - Dependencies: 17
 - Modules: 78
 - Module edges: 151
+
+Reviewed for Atlas D2: committed generations change graph publication, not the
+workspace package or dependency topology summarized above.

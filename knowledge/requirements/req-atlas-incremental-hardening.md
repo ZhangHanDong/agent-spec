@@ -11,12 +11,12 @@ tags: [atlas, incremental, generation, frontier, recovery, performance]
 
 ## Problem
 
-Rust Atlas currently hashes source files incrementally but mutates live shards,
-re-resolves and validates the complete graph, then publishes metadata and the
-query index separately. A crash can expose mixed authority, a declaration edit
-can require unchanged callers to be re-resolved, and a healthy zero-change
-build still pays a full-graph floor. D3 watch or daemon behavior would amplify
-these correctness and liveness failures.
+Before D2, Rust Atlas hashed source files incrementally but mutated live shards,
+re-resolved and validated the complete graph, then published metadata and the
+query index separately. A crash could expose mixed authority, a declaration
+edit could require unchanged callers to be re-resolved, and a healthy
+zero-change build still paid a full-graph floor. D3 watch or daemon behavior
+would amplify those correctness and liveness failures.
 
 ## Requirements
 
@@ -32,15 +32,17 @@ these correctness and liveness failures.
 
 [REQ-ATLAS-INCREMENTAL-PATHS] Generation ids plus manifest paths MUST pass strict safe-component validation.
 
-[REQ-ATLAS-INCREMENTAL-CLEANUP] Repeating abandoned staging cleanup MUST produce the same retained path set.
+[REQ-ATLAS-INCREMENTAL-CLEANUP] Repeating cleanup of transaction-owned uncommitted staging MUST produce the same retained path set.
 
-[REQ-ATLAS-INCREMENTAL-CLEANUP-ACTIVE] Abandoned staging cleanup MUST NOT delete the active generation.
+[REQ-ATLAS-INCREMENTAL-CLEANUP-ACTIVE] Transaction-owned staging cleanup MUST NOT delete any committed generation.
 
 [REQ-ATLAS-INCREMENTAL-INPUT-KEY] Cargo input-plan reuse MUST compare the canonical input-plan fingerprint defined by the D2 Task Contract.
 
 [REQ-ATLAS-INCREMENTAL-MTIME] Cargo input-plan reuse MUST NOT treat file mtime as authority.
 
 [REQ-ATLAS-INCREMENTAL-MODULE-OWNERSHIP] Reusing Cargo metadata MUST NOT skip reconstruction of source module ownership.
+
+[REQ-ATLAS-INCREMENTAL-REFRESH-INPUTS] Automatic stale-query refresh MUST reuse the committed features, target, and cfg input-plan configuration.
 
 [REQ-ATLAS-INCREMENTAL-FRONTIER] A changed declaration MUST re-resolve directly affected reverse dependents in unchanged shards.
 
@@ -70,7 +72,7 @@ these correctness and liveness failures.
 
 [REQ-ATLAS-INCREMENTAL-BATCH] Resolution plus validation MUST use configurable positive batch limits.
 
-[REQ-ATLAS-INCREMENTAL-MEMORY] A build MUST enforce a configurable positive working-byte ceiling before publication.
+[REQ-ATLAS-INCREMENTAL-MEMORY] A build MUST enforce a configurable positive working-byte ceiling over source, serialized graph, and overlay admission before publication.
 
 [REQ-ATLAS-INCREMENTAL-CAPABILITY] Semantic overlay capability metadata MUST share a generation id with its graph evidence.
 
@@ -79,6 +81,8 @@ these correctness and liveness failures.
 [REQ-ATLAS-INCREMENTAL-MAINTENANCE] Post-commit maintenance failure MUST produce a warning diagnostic.
 
 [REQ-ATLAS-INCREMENTAL-MAINTENANCE-COMMIT] Post-commit maintenance failure MUST NOT change the committed generation pointer.
+
+[REQ-ATLAS-INCREMENTAL-MAINTENANCE-RECOVERY] A retained post-commit orphan queue MUST remain consumable by the next build.
 
 [REQ-ATLAS-INCREMENTAL-MATRIX] The deterministic acceptance matrix MUST cover cold, zero-change, edit, delete, manifest, overflow, overlay, cancellation, commit failure, plus orphan recovery cases.
 
@@ -106,6 +110,11 @@ Scenario: Legacy graph migrates only after success
   When one build fails and a later build succeeds
   Then the failure keeps legacy reads available and only the successful build publishes a pointer
 
+Scenario: Transaction-owned staging cleanup is idempotent
+  Given an active generation and one uncommitted transaction staging directory
+  When transaction cleanup is repeated
+  Then the staging path stays absent and the active generation remains byte-identical
+
 Scenario: Cargo input plan is content addressed
   Given unchanged manifest bytes with changed mtimes and changed bytes with restored mtimes
   When Atlas builds after each mutation
@@ -115,6 +124,11 @@ Scenario: Source module ownership is never cached as Cargo metadata
   Given an unchanged Cargo plan and a source edit that moves one module through a path attribute
   When Atlas incrementally builds
   Then the new generation contains only the new canonical module ownership and ids
+
+Scenario: Automatic refresh preserves committed Cargo inputs
+  Given a graph was built with explicit features, target, or cfg inputs
+  When a non-frozen query refreshes stale source
+  Then the new input-plan artifact retains the committed input configuration and fingerprint
 
 Scenario: Declaration rename repairs unchanged callers
   Given an unchanged caller has a resolved edge to a declaration in another file
@@ -164,6 +178,11 @@ Scenario: Overlay capability is generation atomic
   Given a semantic overlay changes edges and capability fingerprints
   When publication succeeds or fails at the pointer boundary
   Then each query JSON contains one generation id shared by capability metadata and semantic edges
+
+Scenario: Post-commit maintenance remains recoverable
+  Given pointer publication succeeds and orphan queue deletion fails
+  When the next zero-change build runs
+  Then the first build reports a warning without rollback and the next build consumes the rebased queue
 
 Scenario: Build receipt records the deterministic D2 matrix
   Given the checked-in incremental-hardening fixture matrix

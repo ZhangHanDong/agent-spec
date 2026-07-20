@@ -312,6 +312,20 @@ complete matches. The agent command must produce a complete receipt candidate,
 and that candidate must pass `summarize`; plan-receipt reconciliation is not
 implemented.
 
+## D2 Incremental Correctness Matrix
+
+`fixtures/atlas/incremental-hardening/matrix.json` is the checked-in D2 case
+inventory. The bound production-API test runs isolated cold, zero-change,
+single-file edit, deletion, manifest-content edit, frontier-overflow, overlay,
+cancellation, generation-commit-failure, and orphan-recovery cases.
+
+Every case emits the same deterministic receipt shape: outcome, generation,
+input-plan result, touched shards, resolved/unresolved edge delta, bounded
+working bytes, fallback reason, and orphan recovery count. Correctness,
+artifact identity, and bounded counters gate the test. Duration and operating
+system RSS may be observed externally but are not cross-machine pass/fail
+thresholds.
+
 ## Limits
 
 These are evaluation and regression harnesses, not benchmark results. The

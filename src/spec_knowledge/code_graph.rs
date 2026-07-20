@@ -830,6 +830,7 @@ mod tests {
                 full: false,
                 scip_index: Some(scip_fixture()),
                 dynamic_dispatch: false,
+                ..rust_atlas::BuildOptions::default()
             },
         )
         .unwrap();
@@ -878,6 +879,7 @@ mod tests {
             toolchain: "rustc 1.92.0".to_string(),
         };
         let status = rust_atlas::AtlasStatus {
+            generation: Some("g-provider-test".to_string()),
             graph_fingerprint: "graph-v1".to_string(),
             recorded_identity: recorded_identity.clone(),
             current_identity: recorded_identity,

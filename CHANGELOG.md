@@ -8,6 +8,18 @@ All notable changes to `agent-spec` are documented here. Format follows
 
 ### Added
 
+- Atlas D2 incremental hardening: builds now publish immutable committed
+  generations behind one atomic pointer; read surfaces pin and report the same
+  generation. A content-addressed Cargo input plan, source-owned module
+  reconstruction, bounded reverse-dependent frontier, explicit overflow
+  fallback, recoverable orphan queue, batch cancellation, working-byte limit,
+  and byte-inert zero-change fast path replace in-place graph refresh. A
+  deterministic 10-case fixture matrix covers cold, zero, edit, delete,
+  manifest, overflow, overlay, cancellation, commit failure, and recovery.
+  Automatic refresh preserves committed Cargo inputs; capability changes use
+  explicit full frontiers, shard phases stream by batch, and byte admission
+  covers source, serialized graph, and overlays. Failed post-commit orphan
+  cleanup remains recoverable. D3 watcher/daemon behavior remains out of scope.
 - Atlas disconnected `flow` queries now explain fresh Rust runtime boundaries
   for async tasks, channels, callback registries, reflection, and framework
   routes. The bounded AST-derived results are explicitly heuristic query hints:

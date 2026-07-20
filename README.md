@@ -550,6 +550,22 @@ agent-spec atlas status --code . --graph .agent-spec/graph --format json
 agent-spec atlas check --code . --graph .agent-spec/graph
 ```
 
+Builds publish one immutable committed generation containing metadata, shards,
+the query index, input plan, and semantic capability state. Queries pin and
+report one generation. A healthy zero-change build performs no resolution,
+validation, staging, or authority rewrite; changed declarations re-resolve a
+bounded reverse-dependent frontier, with an explicit complete fallback on
+overflow. Failed or cancelled work remains recoverable through an orphan queue
+without changing the active generation.
+
+Use `--features`, `--target`, and repeatable `--cfg` values for the
+content-addressed Cargo input plan. `--frontier-limit`, `--batch-size`, and
+`--working-byte-limit` set deterministic resource boundaries. These D2 build
+primitives preserve committed Cargo inputs during automatic refresh, use an
+explicit full frontier for capability changes, and keep post-commit orphan
+maintenance failures recoverable. They do not start a watcher or daemon. See
+[Rust Atlas Incremental Builds](docs/atlas-incremental-builds.md).
+
 Bounded Rust trait-dispatch candidates are opt-in and require a SCIP call
 anchor. The original exact declaration edge remains; the enricher adds a
 separate unresolved candidate edge with a hard fan-out cap:

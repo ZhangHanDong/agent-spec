@@ -23,3 +23,6 @@ establish whether the requirement remains honored.
 ## Maintenance
 
 Update this page when any listed `source_files` change in a way that alters the project understanding an agent should reuse.
+
+Atlas D2 was reviewed here; committed graph generations remain derived
+evidence and do not replace KLL requirement truth.

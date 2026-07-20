@@ -1689,6 +1689,7 @@ mod tests {
                 full: true,
                 scip_index: Some(root.join("fixtures/atlas/scip/index.scip")),
                 dynamic_dispatch: false,
+                ..rust_atlas::BuildOptions::default()
             },
         )
         .expect("fixture graph builds offline");
@@ -1789,6 +1790,7 @@ mod tests {
                 full: true,
                 scip_index: Some(code.join("scip-helper.json")),
                 dynamic_dispatch: false,
+                ..rust_atlas::BuildOptions::default()
             },
         )
         .expect("runtime-boundary fixture graph builds offline");

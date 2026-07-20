@@ -54,6 +54,18 @@ agent-spec atlas status --code . --graph .agent-spec/graph --format json
 agent-spec atlas check --code . --graph .agent-spec/graph
 ```
 
+Atlas builds publish one committed generation. Query and status results pin and
+report that generation; build reports expose input-plan hit/miss, touched
+shards, edge deltas, bounded working bytes, orphan recovery, and fallback
+reason. Healthy zero-change builds do not stage, resolve, validate, or rewrite
+authority files. Use `--features`, `--target`, `--cfg`, `--frontier-limit`,
+`--batch-size`, and `--working-byte-limit` when the project needs explicit
+input/resource identity. Cancellation, overflow, and failed publication leave
+the prior generation readable; later builds recover orphan work. Automatic
+refresh preserves committed Cargo inputs, and capability changes report an
+explicit full-frontier fallback. D2 does not enable a watcher or daemon. See
+`docs/atlas-incremental-builds.md`.
+
 `atlas build --scip <index> --dynamic-dispatch` opt-in enriches resolved trait
 method calls with at most 64 sorted implementation candidates. It preserves the
 exact declaration edge and marks the inferred edge unresolved,

@@ -31,3 +31,6 @@ the user-facing command contract.
 ## Maintenance
 
 Update this page when any listed `source_files` change in a way that alters the project understanding an agent should reuse.
+
+Atlas D2 was reviewed here; the reader guide remains in `docs/`, the normative
+requirement remains in `knowledge/`, and generated graph data remains derived.

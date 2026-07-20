@@ -582,10 +582,7 @@ pub fn load_query_index(graph_dir: &Path, meta: &Meta) -> Result<QueryIndex, Atl
     load_query_index_at(&snapshot.data_dir, meta)
 }
 
-pub(crate) fn load_query_index_at(
-    data_dir: &Path,
-    meta: &Meta,
-) -> Result<QueryIndex, AtlasError> {
+pub(crate) fn load_query_index_at(data_dir: &Path, meta: &Meta) -> Result<QueryIndex, AtlasError> {
     let path = data_dir.join(QUERY_INDEX_FILE);
     let text = std::fs::read_to_string(&path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
@@ -678,9 +675,9 @@ mod tests {
 
     use crate::{
         AtlasError, BuildOptions, Capability, Edge, EdgeKind, EdgeResolution, EdgeSite, MatchKind,
-        Meta, Node, NodeKind, Provenance, QueryIndex, SCHEMA_VERSION, SearchOptions, Shard, build,
-        active_data_dir, canonical_graph_fingerprint, load_graph, load_query_index, read_meta,
-        search, write_json_atomic,
+        Meta, Node, NodeKind, Provenance, QueryIndex, SCHEMA_VERSION, SearchOptions, Shard,
+        active_data_dir, build, canonical_graph_fingerprint, load_graph, load_query_index,
+        read_meta, search, write_json_atomic,
     };
 
     fn temp_dir(name: &str) -> PathBuf {
@@ -782,7 +779,11 @@ mod tests {
                 edges: Vec::new(),
             }],
         );
-        write_json_atomic(&active_data_dir(graph).join(super::QUERY_INDEX_FILE), &index).unwrap();
+        write_json_atomic(
+            &active_data_dir(graph).join(super::QUERY_INDEX_FILE),
+            &index,
+        )
+        .unwrap();
     }
 
     #[test]
@@ -1346,10 +1347,8 @@ mod tests {
         let data_dir = active_data_dir(&graph);
         let _: Meta =
             serde_json::from_slice(&fs::read(data_dir.join("meta.json")).unwrap()).unwrap();
-        let _: QueryIndex = serde_json::from_slice(
-            &fs::read(data_dir.join("query-index.json")).unwrap(),
-        )
-        .unwrap();
+        let _: QueryIndex =
+            serde_json::from_slice(&fs::read(data_dir.join("query-index.json")).unwrap()).unwrap();
         let temporary_files: Vec<_> = fs::read_dir(&data_dir)
             .unwrap()
             .filter_map(Result::ok)

@@ -52,3 +52,6 @@ enter plans, lifecycle, and trace ledgers.
 ## Maintenance
 
 Update this page when any listed `source_files` change in a way that alters the project understanding an agent should reuse.
+
+Atlas D2 was reviewed here; graph publication changed, but governed bindings
+and explicit Contract selectors remain the intent compiler boundary.

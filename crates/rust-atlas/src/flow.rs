@@ -454,6 +454,7 @@ mod tests {
             diagnostics: Vec::new(),
         };
         AtlasStatus {
+            generation: Some("g-flow-test".into()),
             graph_fingerprint: "flow-test".into(),
             recorded_identity: identity.clone(),
             current_identity: identity,

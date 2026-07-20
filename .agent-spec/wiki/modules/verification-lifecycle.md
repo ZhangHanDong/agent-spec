@@ -82,3 +82,8 @@ Lifecycle results become useful only when they remain tied to:
 
 That chain is what lets agent-spec answer which requirement, work unit, scenario,
 test, code path, worktree, and commit failed.
+
+## Maintenance
+
+Atlas D2 was reviewed here; lifecycle consumes one pinned graph generation and
+does not treat generation publication as scenario evidence by itself.

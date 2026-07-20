@@ -104,3 +104,8 @@ Old wiki content should be summarized into `learnings/` or `archive/` pages with
 source links instead of being deleted abruptly. Non-goals: no built-in LLM
 long-form generation, no web UI, and no replacement for KLL requirements or
 decisions.
+
+## Maintenance
+
+Atlas D2 was reviewed here; wiki freshness still tracks source changes and does
+not infer freshness from the Atlas generation pointer.

@@ -204,9 +204,8 @@ fn scan_nodes(
                 .map(|target| (target.id.clone(), target))
                 .collect::<BTreeMap<_, _>>();
             if reachable.len() == MAX_SCAN_NODES {
-                truncated |= position + 1 < layer.len()
-                    || !neighbors.is_empty()
-                    || !next_layer.is_empty();
+                truncated |=
+                    position + 1 < layer.len() || !neighbors.is_empty() || !next_layer.is_empty();
                 break 'frontier;
             }
             if depth == limits.max_depth {
@@ -388,10 +387,7 @@ fn node_in_candidate_namespace(node: &Node, namespace: CandidateNamespace) -> bo
 
 fn inherent_callable_lookup_queries(index: &QueryIndex, queries: &[String]) -> Vec<String> {
     let mut results = BTreeSet::new();
-    for (type_path, member) in queries
-        .iter()
-        .filter_map(|query| query.rsplit_once("::"))
-    {
+    for (type_path, member) in queries.iter().filter_map(|query| query.rsplit_once("::")) {
         let type_ids = index
             .matching_nodes(type_path)
             .into_iter()
@@ -414,9 +410,7 @@ fn inherent_callable_lookup_queries(index: &QueryIndex, queries: &[String]) -> V
                 let Some(node) = index.node_by_id(&edge.to) else {
                     continue;
                 };
-                if node.kind == NodeKind::Fn
-                    && node.symbol.rsplit("::").next() == Some(member)
-                {
+                if node.kind == NodeKind::Fn && node.symbol.rsplit("::").next() == Some(member) {
                     results.insert(node.id.clone());
                 }
             }
@@ -1570,6 +1564,7 @@ pub fn dispatch(registry: &Registry) {
                 full: true,
                 scip_index: Some(code.join("scip.json")),
                 dynamic_dispatch: false,
+                ..crate::BuildOptions::default()
             },
         )
         .unwrap();
@@ -1612,6 +1607,7 @@ pub fn dispatch(registry: &Registry) {
                 full: true,
                 scip_index: Some(code.join("scip-helper.json")),
                 dynamic_dispatch: false,
+                ..crate::BuildOptions::default()
             },
         )
         .unwrap();
@@ -1780,6 +1776,7 @@ pub fn boundary(registry: &Registry) {
                 full: true,
                 scip_index: Some(scip.clone()),
                 dynamic_dispatch: false,
+                ..crate::BuildOptions::default()
             },
         )
         .unwrap();
@@ -2218,7 +2215,10 @@ pub trait Runner {
             test_node("parent-a", "crate::parent_a"),
             test_node("parent-b", "crate::parent_b"),
         ];
-        let mut edges = vec![test_edge("start", "parent-a"), test_edge("start", "parent-b")];
+        let mut edges = vec![
+            test_edge("start", "parent-a"),
+            test_edge("start", "parent-b"),
+        ];
         for index in 0..6 {
             let a = format!("a-{index}");
             let z = format!("z-{index}");
@@ -2259,7 +2259,9 @@ pub trait Runner {
                 .iter()
                 .map(|node| node.id.as_str())
                 .collect::<Vec<_>>(),
-            ["start", "parent-a", "parent-b", "a-0", "a-1", "a-2", "a-3", "a-4"]
+            [
+                "start", "parent-a", "parent-b", "a-0", "a-1", "a-2", "a-3", "a-4"
+            ]
         );
         fs::remove_dir_all(&code).ok();
     }
@@ -2395,6 +2397,7 @@ pub trait Runner {
             diagnostics: Vec::new(),
         };
         crate::AtlasStatus {
+            generation: Some("g-runtime-test".into()),
             graph_fingerprint: "test".into(),
             recorded_identity: identity.clone(),
             current_identity: identity,

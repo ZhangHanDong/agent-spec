@@ -23,7 +23,9 @@ mod explore;
 mod flow;
 mod generation;
 mod impact;
+mod incremental;
 mod index;
+mod input_plan;
 mod mir;
 mod runtime_boundary;
 mod status;
@@ -41,6 +43,7 @@ pub use generation::GraphSnapshot;
 pub use impact::{ImpactDiagnostic, ImpactEntry, ImpactOptions, ImpactResult, impact};
 use index::write_json_atomic;
 pub use index::{QueryIndex, canonical_graph_fingerprint, load_query_index, rebuild_query_index};
+pub use input_plan::InputPlanState;
 pub use runtime_boundary::{
     RuntimeBoundaryAuthority, RuntimeBoundaryHint, RuntimeBoundaryMechanism,
 };
@@ -107,6 +110,16 @@ pub enum AtlasError {
     SearchLimit { limit: usize },
     #[error("atlas-traversal-limit: {detail}")]
     TraversalLimit { detail: String },
+    #[error("atlas-cancelled: build cancelled before publication")]
+    Cancelled,
+    #[error("atlas-resource-limit: {resource} requires {required} bytes, limit is {limit}")]
+    ResourceLimit {
+        resource: String,
+        required: usize,
+        limit: usize,
+    },
+    #[error("atlas-orphan-queue: {detail}")]
+    OrphanQueue { detail: String },
     #[error("atlas-affected-path: `{path}`: {detail}")]
     AffectedPath { path: String, detail: String },
     #[error(
@@ -315,11 +328,35 @@ pub struct Meta {
     pub graph_fingerprint: String,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct BuildOptions {
     pub full: bool,
     pub scip_index: Option<PathBuf>,
     pub dynamic_dispatch: bool,
+    pub features: Vec<String>,
+    pub target: Option<String>,
+    pub cfg: Vec<String>,
+    pub frontier_limit: usize,
+    pub batch_size: usize,
+    pub working_byte_limit: usize,
+    pub cancellation: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+}
+
+impl Default for BuildOptions {
+    fn default() -> Self {
+        Self {
+            full: false,
+            scip_index: None,
+            dynamic_dispatch: false,
+            features: Vec::new(),
+            target: None,
+            cfg: Vec::new(),
+            frontier_limit: 2048,
+            batch_size: 256,
+            working_byte_limit: 512 * 1024 * 1024,
+            cancellation: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -331,11 +368,20 @@ pub struct MirBuildOptions {
 #[derive(Debug, Clone, Serialize)]
 pub struct BuildReport {
     pub generation: String,
+    pub input_plan: InputPlanState,
     pub rebuilt: Vec<String>,
     pub removed: Vec<String>,
     pub unparsed: Vec<String>,
     pub capability: Capability,
     pub diagnostics: Vec<BuildDiagnostic>,
+    pub touched_shards: Vec<String>,
+    pub resolved_shards: usize,
+    pub validated_shards: usize,
+    pub resolved_edge_delta: isize,
+    pub unresolved_edge_delta: isize,
+    pub working_bytes: usize,
+    pub fallback_reason: Option<String>,
+    pub orphans_recovered: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -480,41 +526,133 @@ fn build_with_meta(
     // yields relative walk paths that never match the absolute target dirs).
     let code_root = &std::fs::canonicalize(code_root).map_err(io_err)?;
     std::fs::create_dir_all(graph_dir).map_err(io_err)?;
+    validate_build_options(opts)?;
+    check_cancelled(opts)?;
     let base = generation::resolve_optional_snapshot(graph_dir)?;
     let known_meta = known_meta.or_else(|| {
         base.as_ref()
             .and_then(|snapshot| read_meta_at(&snapshot.data_dir).ok())
     });
-    let transaction = generation::GenerationTransaction::begin(graph_dir, base.as_ref())?;
-    let (mut report, staged_meta) = build_staged(
-        code_root,
+    let identity = status::capture_identity(code_root, graph_dir)?;
+    let input_key = input_plan::InputPlanKey::capture(code_root, opts, &identity.toolchain)?;
+    let input_fingerprint = input_key.fingerprint()?;
+    let prior_orphan = incremental::load_orphan(
         graph_dir,
-        transaction.data_dir(),
+        base.as_ref()
+            .and_then(|snapshot| snapshot.generation.as_deref()),
+    )?;
+    let cached_plan = base
+        .as_ref()
+        .and_then(|snapshot| input_plan::load(&snapshot.data_dir, &input_fingerprint));
+    let (layout, input_plan_state) = match cached_plan {
+        Some(plan) => (
+            ProjectLayout::from_input_plan(code_root, &plan),
+            InputPlanState::Hit,
+        ),
+        None => (
+            ProjectLayout::discover(code_root, opts)?,
+            InputPlanState::Miss,
+        ),
+    };
+    let input_artifact = layout.to_input_plan(input_fingerprint.clone(), &input_key);
+    let current_files = status::source_hashes(code_root)?;
+    if !opts.full
+        && input_plan_state == InputPlanState::Hit
+        && prior_orphan.is_none()
+        && base.as_ref().is_some_and(|snapshot| {
+            known_meta.as_ref().is_some_and(|meta| {
+                graph_is_unchanged(snapshot, meta, &layout, &current_files, opts, mir_options)
+            })
+        })
+    {
+        let meta = known_meta.unwrap_or_else(|| unreachable!("checked above"));
+        let snapshot = base.unwrap_or_else(|| unreachable!("checked above"));
+        return Ok(BuildReport {
+            generation: snapshot.generation.unwrap_or_default(),
+            input_plan: InputPlanState::Hit,
+            rebuilt: Vec::new(),
+            removed: Vec::new(),
+            unparsed: Vec::new(),
+            capability: meta.capability,
+            diagnostics: Vec::new(),
+            touched_shards: Vec::new(),
+            resolved_shards: 0,
+            validated_shards: 0,
+            resolved_edge_delta: 0,
+            unresolved_edge_delta: 0,
+            working_bytes: 0,
+            fallback_reason: None,
+            orphans_recovered: 0,
+        });
+    }
+    let transaction = generation::GenerationTransaction::begin(graph_dir, base.as_ref())?;
+    input_plan::write(transaction.data_dir(), &input_artifact)?;
+    let (mut report, staged_meta) = build_staged(BuildStagedContext {
+        code_root,
+        graph_root: graph_dir,
+        graph_dir: transaction.data_dir(),
+        layout,
         opts,
         known_meta,
+        input_plan_state,
+        prior_orphan,
+        base_generation: base
+            .as_ref()
+            .and_then(|snapshot| snapshot.generation.clone()),
         retain_semantic_authority_fingerprints,
         mir_options,
-    )?;
+    })?;
+    check_cancelled(opts)?;
     let snapshot = transaction.publish(
         &staged_meta.graph_fingerprint,
         &staged_meta.capability,
-        None,
+        Some(&input_fingerprint),
     )?;
     report.generation = snapshot.generation.unwrap_or_default();
+    if let Err(error) = incremental::clear_orphan(graph_dir) {
+        let recovery = incremental::rebase_orphan_after_commit(graph_dir, &report.generation)
+            .map(|()| "queue rebased for the next recovery build".to_string())
+            .unwrap_or_else(|rebase| format!("queue rebase also failed: {rebase}"));
+        report.diagnostics.push(BuildDiagnostic {
+            code: "incremental-maintenance-failed".to_string(),
+            severity: "warning".to_string(),
+            message: format!(
+                "committed generation retained; cannot clear orphan queue: {error}; {recovery}"
+            ),
+        });
+    }
     Ok(report)
 }
 
-fn build_staged(
-    code_root: &Path,
-    graph_root: &Path,
-    graph_dir: &Path,
-    opts: &BuildOptions,
+struct BuildStagedContext<'a> {
+    code_root: &'a Path,
+    graph_root: &'a Path,
+    graph_dir: &'a Path,
+    layout: ProjectLayout,
+    opts: &'a BuildOptions,
     known_meta: Option<Meta>,
+    input_plan_state: InputPlanState,
+    prior_orphan: Option<incremental::OrphanQueue>,
+    base_generation: Option<String>,
     retain_semantic_authority_fingerprints: bool,
-    mir_options: Option<&MirBuildOptions>,
-) -> Result<(BuildReport, Meta), AtlasError> {
+    mir_options: Option<&'a MirBuildOptions>,
+}
+
+fn build_staged(context: BuildStagedContext<'_>) -> Result<(BuildReport, Meta), AtlasError> {
+    let BuildStagedContext {
+        code_root,
+        graph_root,
+        graph_dir,
+        layout,
+        opts,
+        known_meta,
+        input_plan_state,
+        prior_orphan,
+        base_generation,
+        retain_semantic_authority_fingerprints,
+        mir_options,
+    } = context;
     let identity = status::capture_identity(code_root, graph_root)?;
-    let layout = ProjectLayout::discover(code_root)?;
     let shards_dir = graph_dir.join("shards");
     std::fs::create_dir_all(&shards_dir).map_err(io_err)?;
 
@@ -539,9 +677,40 @@ fn build_staged(
     let mut files = BTreeMap::new();
     let mut rebuilt = Vec::new();
     let mut unparsed = Vec::new();
-    for path in walk_rs_files(code_root) {
+    let mut old_changed_shards = BTreeMap::new();
+    let mut working_bytes: usize = 0;
+    for (position, path) in walk_rs_files(code_root).into_iter().enumerate() {
+        if position % opts.batch_size == 0 {
+            check_cancelled(opts)?;
+        }
         let rel = rel_path(code_root, &path);
+        let file_bytes = std::fs::metadata(&path)
+            .map_err(io_err)?
+            .len()
+            .try_into()
+            .map_err(|_| AtlasError::ResourceLimit {
+                resource: "source working set".to_string(),
+                required: usize::MAX,
+                limit: opts.working_byte_limit,
+            })?;
+        let required = working_bytes.saturating_add(file_bytes);
+        if required > opts.working_byte_limit {
+            return Err(AtlasError::ResourceLimit {
+                resource: "source working set".to_string(),
+                required,
+                limit: opts.working_byte_limit,
+            });
+        }
         let bytes = std::fs::read(&path).map_err(io_err)?;
+        let required = working_bytes.saturating_add(bytes.len());
+        if required > opts.working_byte_limit {
+            return Err(AtlasError::ResourceLimit {
+                resource: "source working set".to_string(),
+                required,
+                limit: opts.working_byte_limit,
+            });
+        }
+        working_bytes = required;
         let hash = blake3::hash(&bytes).to_hex().to_string();
         let unit = layout.source_unit(&path).ok_or_else(|| {
             AtlasError::Cargo(format!("{} is not owned by a Cargo target", path.display()))
@@ -554,6 +723,11 @@ fn build_staged(
             };
         let dirty = opts.full || old_files.get(&rel) != Some(&hash) || layout_changed;
         if dirty {
+            if old_files.contains_key(&rel)
+                && let Ok(shard) = read_shard(&shards_dir, &rel)
+            {
+                old_changed_shards.insert(rel.clone(), shard);
+            }
             let source = String::from_utf8_lossy(&bytes);
             let shard = extract_shard(&unit, &rel, &hash, &source);
             if shard.unparsed.is_some() {
@@ -572,16 +746,81 @@ fn build_staged(
     let mut removed = Vec::new();
     for rel in old_files.keys() {
         if !files.contains_key(rel) {
+            if let Ok(shard) = read_shard(&shards_dir, rel) {
+                old_changed_shards.insert(rel.clone(), shard);
+            }
             let _ = std::fs::remove_file(shards_dir.join(shard_file_name(rel)));
             removed.push(rel.clone());
         }
     }
 
+    working_bytes = admit_working_bytes(
+        working_bytes,
+        serialized_shard_bytes(&shards_dir, &files)?,
+        opts,
+        "serialized graph working set",
+    )?;
+
+    let input_plan_changed = old_meta.is_some() && input_plan_state == InputPlanState::Miss;
+    let capability_change_reason = old_meta.as_ref().and_then(|meta| {
+        if meta.capability.dynamic_dispatch != opts.dynamic_dispatch {
+            Some("dynamic-dispatch-full-recompute")
+        } else if !capability_matches_request(&meta.capability, opts, mir_options) {
+            Some("semantic-overlay-change")
+        } else {
+            None
+        }
+    });
+    let frontier = incremental::plan_frontier(incremental::FrontierRequest {
+        shards_dir: &shards_dir,
+        files: &files,
+        old_changed_shards: &old_changed_shards,
+        rebuilt: &rebuilt,
+        removed: &removed,
+        prior: prior_orphan.as_ref(),
+        full: opts.full || old_meta.is_none(),
+        input_plan_changed,
+        capability_change_reason,
+        opts,
+    })?;
+    let orphans_recovered = prior_orphan
+        .as_ref()
+        .map_or(0, |queue| queue.affected_files.len());
+    if !frontier.files.is_empty() {
+        let reason = if prior_orphan.is_some() && rebuilt.is_empty() && removed.is_empty() {
+            "orphan-recovery"
+        } else if let Some(reason) = &frontier.fallback_reason {
+            reason
+        } else if old_meta.is_none() || opts.full {
+            "full-build"
+        } else {
+            "source-change"
+        };
+        let queue = incremental::OrphanQueue::new(
+            base_generation,
+            status::source_fingerprint(&files)?,
+            frontier.files.clone(),
+            frontier.changed_symbols.clone(),
+            reason.to_string(),
+        )?;
+        incremental::write_orphan(graph_root, &queue)?;
+    }
+
+    check_cancelled(opts)?;
     dynamic_dispatch::remove(&shards_dir, &files)?;
-    resolve_syn_edges(&shards_dir, &files)?;
+    let before_resolution = resolution_counts(&shards_dir, &frontier.files, opts)?;
+    resolve_syn_edges(&shards_dir, &files, &frontier.files, opts)?;
+    let after_resolution = resolution_counts(&shards_dir, &frontier.files, opts)?;
 
     let mut capability = Capability::default();
+    check_cancelled(opts)?;
     if let Some(index_path) = &opts.scip_index {
+        working_bytes = admit_working_bytes(
+            working_bytes,
+            serialized_file_bytes(index_path)?,
+            opts,
+            "SCIP overlay working set",
+        )?;
         let (tool, overlaid_scip_fingerprint) = overlay_scip(&shards_dir, index_path, &files)?;
         capability.scip = true;
         capability.scip_tool = tool;
@@ -603,8 +842,17 @@ fn build_staged(
         remove_scip_edges(&shards_dir, &files)?;
     }
     let mut diagnostics = Vec::new();
-    remove_mir_facts(&shards_dir, &files)?;
+    check_cancelled(opts)?;
+    remove_mir_facts(&shards_dir, &files, opts)?;
     if let Some(options) = mir_options {
+        if let Some(overlay) = &options.overlay {
+            working_bytes = admit_working_bytes(
+                working_bytes,
+                serialized_file_bytes(overlay)?,
+                opts,
+                "MIR overlay working set",
+            )?;
+        }
         match mir::prepare_and_overlay(
             code_root,
             graph_dir,
@@ -645,13 +893,27 @@ fn build_staged(
         }
     }
     if opts.dynamic_dispatch {
+        check_cancelled(opts)?;
         let outcome =
             dynamic_dispatch::enrich(&shards_dir, &files, dynamic_dispatch::MAX_CANDIDATES)?;
         capability.dynamic_dispatch = true;
         capability.dynamic_dispatch_edges = outcome.edges_added;
         diagnostics.extend(outcome.diagnostics);
     }
-    validate_graph(&shards_dir, &files)?;
+    check_cancelled(opts)?;
+    working_bytes = admit_working_bytes(
+        working_bytes,
+        serialized_shard_bytes(&shards_dir, &files)?,
+        opts,
+        "serialized graph working set",
+    )?;
+    let validation_files =
+        if opts.scip_index.is_some() || mir_options.is_some() || opts.dynamic_dispatch {
+            files.keys().cloned().collect::<Vec<_>>()
+        } else {
+            frontier.files.clone()
+        };
+    validate_graph_frontier(&shards_dir, &files, &validation_files, opts)?;
 
     let mut meta = Meta {
         schema_version: SCHEMA_VERSION,
@@ -662,21 +924,46 @@ fn build_staged(
         files,
         graph_fingerprint: String::new(),
     };
-    let mut shards = Vec::new();
-    for rel in meta.files.keys() {
-        shards.push(read_shard(&shards_dir, rel)?);
+    let mut shards = Vec::with_capacity(meta.files.len());
+    for batch in meta
+        .files
+        .keys()
+        .collect::<Vec<_>>()
+        .chunks(opts.batch_size)
+    {
+        check_cancelled(opts)?;
+        for rel in batch {
+            shards.push(read_shard(&shards_dir, rel)?);
+        }
     }
     meta.graph_fingerprint = graph_fingerprint_with_identity(&meta, &shards, &identity)?;
     write_persisted_meta(&graph_dir.join("meta.json"), &meta, &identity)?;
     index::rebuild_query_index_at(graph_dir, &meta, &shards)?;
+    let touched_shards = frontier
+        .files
+        .iter()
+        .chain(removed.iter())
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
     Ok((
         BuildReport {
             generation: String::new(),
+            input_plan: input_plan_state,
             rebuilt,
             removed,
             unparsed,
             capability,
             diagnostics,
+            touched_shards,
+            resolved_shards: frontier.files.len(),
+            validated_shards: validation_files.len(),
+            resolved_edge_delta: after_resolution.0 as isize - before_resolution.0 as isize,
+            unresolved_edge_delta: after_resolution.1 as isize - before_resolution.1 as isize,
+            working_bytes,
+            fallback_reason: frontier.fallback_reason,
+            orphans_recovered,
         },
         meta,
     ))
@@ -942,6 +1229,169 @@ fn io_err(error: std::io::Error) -> AtlasError {
     AtlasError::Io(error.to_string())
 }
 
+fn validate_build_options(opts: &BuildOptions) -> Result<(), AtlasError> {
+    if opts.frontier_limit == 0 {
+        return Err(AtlasError::TraversalLimit {
+            detail: "frontier_limit must be greater than zero".to_string(),
+        });
+    }
+    if opts.batch_size == 0 {
+        return Err(AtlasError::TraversalLimit {
+            detail: "batch_size must be greater than zero".to_string(),
+        });
+    }
+    if opts.working_byte_limit == 0 {
+        return Err(AtlasError::TraversalLimit {
+            detail: "working_byte_limit must be greater than zero".to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn check_cancelled(opts: &BuildOptions) -> Result<(), AtlasError> {
+    if opts
+        .cancellation
+        .as_ref()
+        .is_some_and(|token| token.load(std::sync::atomic::Ordering::Acquire))
+    {
+        Err(AtlasError::Cancelled)
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static TEST_CANCEL_AFTER_RESOLUTION_BATCHES: std::cell::Cell<Option<usize>> = const {
+        std::cell::Cell::new(None)
+    };
+}
+
+#[cfg(test)]
+fn set_test_cancel_after_resolution_batches(value: Option<usize>) {
+    TEST_CANCEL_AFTER_RESOLUTION_BATCHES.with(|remaining| remaining.set(value));
+}
+
+fn resolution_batch_completed(opts: &BuildOptions) {
+    #[cfg(test)]
+    TEST_CANCEL_AFTER_RESOLUTION_BATCHES.with(|remaining| {
+        let Some(count) = remaining.get() else {
+            return;
+        };
+        if count <= 1 {
+            remaining.set(None);
+            if let Some(token) = &opts.cancellation {
+                token.store(true, std::sync::atomic::Ordering::Release);
+            }
+        } else {
+            remaining.set(Some(count - 1));
+        }
+    });
+    #[cfg(not(test))]
+    let _ = opts;
+}
+
+fn admit_working_bytes(
+    current: usize,
+    required: usize,
+    opts: &BuildOptions,
+    resource: &str,
+) -> Result<usize, AtlasError> {
+    if required > opts.working_byte_limit {
+        Err(AtlasError::ResourceLimit {
+            resource: resource.to_string(),
+            required,
+            limit: opts.working_byte_limit,
+        })
+    } else {
+        Ok(current.max(required))
+    }
+}
+
+fn serialized_file_bytes(path: &Path) -> Result<usize, AtlasError> {
+    std::fs::metadata(path)
+        .map_err(io_err)?
+        .len()
+        .try_into()
+        .map_err(|_| AtlasError::ResourceLimit {
+            resource: "serialized artifact working set".to_string(),
+            required: usize::MAX,
+            limit: usize::MAX,
+        })
+}
+
+fn serialized_shard_bytes(
+    shards_dir: &Path,
+    files: &BTreeMap<String, String>,
+) -> Result<usize, AtlasError> {
+    files.keys().try_fold(0_usize, |total, rel| {
+        Ok(total.saturating_add(serialized_file_bytes(
+            &shards_dir.join(shard_file_name(rel)),
+        )?))
+    })
+}
+
+fn graph_is_unchanged(
+    snapshot: &GraphSnapshot,
+    meta: &Meta,
+    layout: &ProjectLayout,
+    current_files: &BTreeMap<String, String>,
+    opts: &BuildOptions,
+    mir_options: Option<&MirBuildOptions>,
+) -> bool {
+    meta.files == *current_files
+        && meta.package == layout.graph_root
+        && meta.packages == layout.packages
+        && meta.roots == layout.roots
+        && capability_matches_request(&meta.capability, opts, mir_options)
+        && generation::artifacts_match_manifest(snapshot)
+        && index::load_query_index_at(&snapshot.data_dir, meta).is_ok()
+}
+
+fn capability_matches_request(
+    capability: &Capability,
+    opts: &BuildOptions,
+    mir_options: Option<&MirBuildOptions>,
+) -> bool {
+    if capability.dynamic_dispatch != opts.dynamic_dispatch {
+        return false;
+    }
+    match &opts.scip_index {
+        Some(path) => {
+            let Ok(bytes) = std::fs::read(path) else {
+                return false;
+            };
+            if !capability.scip
+                || capability.scip_fingerprint.as_deref()
+                    != Some(blake3::hash(&bytes).to_hex().as_ref())
+            {
+                return false;
+            }
+        }
+        None if capability.scip => return false,
+        None => {}
+    }
+    match mir_options {
+        Some(MirBuildOptions {
+            overlay: Some(path),
+            driver: None,
+        }) => {
+            let Ok(bytes) = std::fs::read(path) else {
+                return false;
+            };
+            capability.mir
+                && capability.mir_fingerprint.as_deref()
+                    == Some(blake3::hash(&bytes).to_hex().as_ref())
+        }
+        Some(MirBuildOptions {
+            overlay: None,
+            driver: Some(_),
+        }) => false,
+        Some(_) => !capability.mir,
+        None => !capability.mir,
+    }
+}
+
 fn syn_extractor() -> ExtractorIdentity {
     ExtractorIdentity {
         name: "syn".to_string(),
@@ -1130,29 +1580,32 @@ fn read_shard(shards_dir: &Path, rel: &str) -> Result<Shard, AtlasError> {
 fn resolve_syn_edges(
     shards_dir: &Path,
     files: &BTreeMap<String, String>,
+    frontier: &[String],
+    opts: &BuildOptions,
 ) -> Result<(), AtlasError> {
-    let mut shards = BTreeMap::new();
     let mut symbols: BTreeMap<String, Vec<String>> = BTreeMap::new();
     // Bare-name index: last path segment -> set of fully-qualified symbols that
     // end in `::<segment>`. Lets us resolve `use`-imported bare names (e.g. a
     // trait referenced as `SpecLinter` whose symbol is
     // `crate::spec_lint::SpecLinter`) when there is exactly one candidate.
     let mut by_last: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for rel in files.keys() {
-        let shard = read_shard(shards_dir, rel)?;
-        for node in &shard.nodes {
-            symbols
-                .entry(node.symbol.clone())
-                .or_default()
-                .push(node.id.clone());
-            if let Some(last) = node.symbol.rsplit("::").next() {
-                by_last
-                    .entry(last.to_string())
+    for batch in files.keys().collect::<Vec<_>>().chunks(opts.batch_size) {
+        check_cancelled(opts)?;
+        for rel in batch {
+            let shard = read_shard(shards_dir, rel)?;
+            for node in &shard.nodes {
+                symbols
+                    .entry(node.symbol.clone())
                     .or_default()
-                    .insert(node.symbol.clone());
+                    .push(node.id.clone());
+                if let Some(last) = node.symbol.rsplit("::").next() {
+                    by_last
+                        .entry(last.to_string())
+                        .or_default()
+                        .insert(node.symbol.clone());
+                }
             }
         }
-        shards.insert(rel.clone(), shard);
     }
     for ids in symbols.values_mut() {
         ids.sort();
@@ -1175,87 +1628,132 @@ fn resolve_syn_edges(
         }
     };
 
-    for (rel, shard) in &mut shards {
-        let before = shard.edges.clone();
-        for edge in &mut shard.edges {
-            if edge.provenance != Provenance::Syn || edge.kind == EdgeKind::Contains {
+    for batch in frontier.chunks(opts.batch_size) {
+        check_cancelled(opts)?;
+        for rel in batch {
+            if !files.contains_key(rel) {
                 continue;
             }
-            let target_text = edge.target_text.clone().unwrap_or_else(|| edge.to.clone());
-            edge.target_text = Some(target_text.clone());
-            match symbols.get(&target_text).map(Vec::as_slice) {
-                Some([id]) => {
-                    edge.to = id.clone();
-                    edge.resolution = EdgeResolution::Resolved;
-                    edge.confidence = Some(EdgeConfidence::Exact);
+            let mut shard = read_shard(shards_dir, rel)?;
+            let before = shard.edges.clone();
+            for edge in &mut shard.edges {
+                if edge.provenance != Provenance::Syn || edge.kind == EdgeKind::Contains {
+                    continue;
                 }
-                _ => match resolve_bare(&target_text) {
-                    Some(id) => {
-                        edge.to = id;
+                let target_text = edge.target_text.clone().unwrap_or_else(|| edge.to.clone());
+                edge.target_text = Some(target_text.clone());
+                match symbols.get(&target_text).map(Vec::as_slice) {
+                    Some([id]) => {
+                        edge.to = id.clone();
                         edge.resolution = EdgeResolution::Resolved;
                         edge.confidence = Some(EdgeConfidence::Exact);
                     }
-                    None => {
-                        edge.to = target_text.clone();
-                        edge.resolution = if target_text.starts_with("std::")
-                            || target_text.starts_with("core::")
-                            || target_text.starts_with("alloc::")
-                        {
-                            EdgeResolution::External
-                        } else {
-                            EdgeResolution::Unresolved
-                        };
-                        edge.confidence = None;
-                    }
-                },
+                    _ => match resolve_bare(&target_text) {
+                        Some(id) => {
+                            edge.to = id;
+                            edge.resolution = EdgeResolution::Resolved;
+                            edge.confidence = Some(EdgeConfidence::Exact);
+                        }
+                        None => {
+                            edge.to = target_text.clone();
+                            edge.resolution = if target_text.starts_with("std::")
+                                || target_text.starts_with("core::")
+                                || target_text.starts_with("alloc::")
+                            {
+                                EdgeResolution::External
+                            } else {
+                                EdgeResolution::Unresolved
+                            };
+                            edge.confidence = None;
+                        }
+                    },
+                }
+            }
+            shard.edges.sort();
+            shard.edges.dedup();
+            if shard.edges != before {
+                write_shard(shards_dir, &shard)?;
             }
         }
-        shard.edges.sort();
-        shard.edges.dedup();
-        if shard.edges != before {
-            write_shard(shards_dir, shard)?;
-        }
-        let _ = rel;
+        resolution_batch_completed(opts);
     }
     Ok(())
 }
 
-fn validate_graph(shards_dir: &Path, files: &BTreeMap<String, String>) -> Result<(), AtlasError> {
-    let mut node_ids = BTreeSet::new();
-    let mut shards = Vec::new();
-    for rel in files.keys() {
-        let shard = read_shard(shards_dir, rel)?;
-        let mut shard_ids = BTreeSet::new();
-        for node in &shard.nodes {
-            if !shard_ids.insert(node.id.as_str()) {
-                return Err(AtlasError::Invariant(format!(
-                    "duplicate node id `{}` in {}",
-                    node.id, shard.file
-                )));
-            }
-            if !node_ids.insert(node.id.clone()) {
-                return Err(AtlasError::Invariant(format!(
-                    "duplicate node id `{}` across graph",
-                    node.id
-                )));
+fn resolution_counts(
+    shards_dir: &Path,
+    frontier: &[String],
+    opts: &BuildOptions,
+) -> Result<(usize, usize), AtlasError> {
+    let mut resolved = 0;
+    let mut unresolved = 0;
+    for batch in frontier.chunks(opts.batch_size) {
+        check_cancelled(opts)?;
+        for rel in batch {
+            let shard = read_shard(shards_dir, rel)?;
+            for edge in shard.edges.iter().filter(|edge| {
+                edge.provenance == Provenance::Syn && edge.kind != EdgeKind::Contains
+            }) {
+                match edge.resolution {
+                    EdgeResolution::Resolved => resolved += 1,
+                    EdgeResolution::Unresolved => unresolved += 1,
+                    EdgeResolution::External => {}
+                }
             }
         }
-        shards.push(shard);
     }
-    for shard in &shards {
-        validate_edges(shard.edges.iter())?;
-        for edge in &shard.edges {
-            if !node_ids.contains(&edge.from) {
-                return Err(AtlasError::Invariant(format!(
-                    "edge source `{}` does not exist ({})",
-                    edge.from, shard.file
-                )));
+    Ok((resolved, unresolved))
+}
+
+fn validate_graph_frontier(
+    shards_dir: &Path,
+    files: &BTreeMap<String, String>,
+    frontier: &[String],
+    opts: &BuildOptions,
+) -> Result<(), AtlasError> {
+    let mut node_ids = BTreeSet::new();
+    for batch in files.keys().collect::<Vec<_>>().chunks(opts.batch_size) {
+        check_cancelled(opts)?;
+        for rel in batch {
+            let shard = read_shard(shards_dir, rel)?;
+            let mut shard_ids = BTreeSet::new();
+            for node in &shard.nodes {
+                if !shard_ids.insert(node.id.as_str()) {
+                    return Err(AtlasError::Invariant(format!(
+                        "duplicate node id `{}` in {}",
+                        node.id, shard.file
+                    )));
+                }
+                if !node_ids.insert(node.id.clone()) {
+                    return Err(AtlasError::Invariant(format!(
+                        "duplicate node id `{}` across graph",
+                        node.id
+                    )));
+                }
             }
-            if edge.resolution == EdgeResolution::Resolved && !node_ids.contains(&edge.to) {
-                return Err(AtlasError::Invariant(format!(
-                    "resolved edge target `{}` does not exist ({})",
-                    edge.to, shard.file
-                )));
+        }
+    }
+    for batch in frontier.chunks(opts.batch_size) {
+        check_cancelled(opts)?;
+        for rel in batch {
+            if !files.contains_key(rel) {
+                continue;
+            }
+            let shard = read_shard(shards_dir, rel)?;
+            validate_edges(shard.edges.iter())?;
+            for edge in &shard.edges {
+                if !node_ids.contains(&edge.from) {
+                    return Err(AtlasError::Invariant(format!(
+                        "edge source `{}` does not exist ({})",
+                        edge.from, shard.file
+                    )));
+                }
+                if edge.resolution == EdgeResolution::Resolved && !node_ids.contains(&edge.to) {
+                    return Err(AtlasError::Invariant(format!(
+                        "resolved edge target `{}` does not exist ({})",
+                        edge.to, shard.file
+                    )));
+                }
             }
         }
     }
@@ -1283,7 +1781,12 @@ fn refresh(
 ) -> Result<(Meta, AtlasStatus, generation::GraphSnapshot), AtlasError> {
     let snapshot = generation::resolve_snapshot(graph_dir)?;
     let persisted = read_persisted_meta_at(&snapshot.data_dir)?;
-    let status = status::status_with_meta(code_root, graph_dir, &persisted)?;
+    let status = status::status_with_meta(
+        code_root,
+        graph_dir,
+        &persisted,
+        snapshot.generation.clone(),
+    )?;
     status::require_worktree_match(&status)?;
     if status.syn.state == LayerState::Fresh {
         return Ok((persisted.meta, status, snapshot));
@@ -1291,9 +1794,13 @@ fn refresh(
     if opts.frozen {
         return Ok((persisted.meta, status, snapshot));
     }
-    let persisted = refresh_stale_graph(code_root, graph_dir, persisted.meta)?;
-    let snapshot = generation::resolve_snapshot(graph_dir)?;
-    let status = status::status_with_meta(code_root, graph_dir, &persisted)?;
+    let (persisted, snapshot) = refresh_stale_graph(code_root, graph_dir, persisted.meta)?;
+    let status = status::status_with_meta(
+        code_root,
+        graph_dir,
+        &persisted,
+        snapshot.generation.clone(),
+    )?;
     status::require_worktree_match(&status)?;
     Ok((persisted.meta, status, snapshot))
 }
@@ -1305,7 +1812,12 @@ fn indexed_query_state(
 ) -> Result<(Meta, QueryIndex, AtlasStatus), AtlasError> {
     let snapshot = generation::resolve_snapshot(graph_dir)?;
     let persisted = read_persisted_meta_at(&snapshot.data_dir)?;
-    let status = status::status_with_meta(code_root, graph_dir, &persisted)?;
+    let status = status::status_with_meta(
+        code_root,
+        graph_dir,
+        &persisted,
+        snapshot.generation.clone(),
+    )?;
     status::require_worktree_match(&status)?;
     let index = index::load_query_index_at(&snapshot.data_dir, &persisted.meta)?;
     if status.syn.state == LayerState::Fresh {
@@ -1314,9 +1826,13 @@ fn indexed_query_state(
     if opts.frozen {
         return Ok((persisted.meta, index, status));
     }
-    let persisted = refresh_stale_graph(code_root, graph_dir, persisted.meta)?;
-    let snapshot = generation::resolve_snapshot(graph_dir)?;
-    let status = status::status_with_meta(code_root, graph_dir, &persisted)?;
+    let (persisted, snapshot) = refresh_stale_graph(code_root, graph_dir, persisted.meta)?;
+    let status = status::status_with_meta(
+        code_root,
+        graph_dir,
+        &persisted,
+        snapshot.generation.clone(),
+    )?;
     status::require_worktree_match(&status)?;
     let index = index::load_query_index_at(&snapshot.data_dir, &persisted.meta)?;
     Ok((persisted.meta, index, status))
@@ -1326,7 +1842,7 @@ fn refresh_stale_graph(
     code_root: &Path,
     graph_dir: &Path,
     meta: Meta,
-) -> Result<PersistedMeta, AtlasError> {
+) -> Result<(PersistedMeta, generation::GraphSnapshot), AtlasError> {
     // Keep the SCIP layer alive across incremental refreshes: re-overlay the
     // index recorded in the prior build if it still exists. A vanished index
     // falls back to syn (scip edges purged, capability cleared).
@@ -1346,19 +1862,39 @@ fn refresh_stale_graph(
             overlay: Some(overlay),
             driver: None,
         });
+    let mut build_options = BuildOptions {
+        full: false,
+        scip_index,
+        dynamic_dispatch: meta.capability.dynamic_dispatch,
+        ..BuildOptions::default()
+    };
+    let snapshot = generation::resolve_snapshot(graph_dir)?;
+    if snapshot.generation.is_some() {
+        if !generation::artifacts_match_manifest(&snapshot) {
+            return Err(AtlasError::Invariant(
+                "committed generation artifact integrity check failed; run `atlas build`"
+                    .to_string(),
+            ));
+        }
+        let plan = input_plan::load_committed(&snapshot.data_dir).ok_or_else(|| {
+            AtlasError::Invariant(
+                "committed generation input plan is missing or incompatible; run `atlas build`"
+                    .to_string(),
+            )
+        })?;
+        plan.apply_build_inputs(&mut build_options);
+    }
     build_with_meta(
         code_root,
         graph_dir,
-        &BuildOptions {
-            full: false,
-            scip_index,
-            dynamic_dispatch: meta.capability.dynamic_dispatch,
-        },
+        &build_options,
         Some(meta),
         true,
         mir_options.as_ref(),
     )?;
-    read_persisted_meta(graph_dir)
+    let snapshot = generation::resolve_snapshot(graph_dir)?;
+    let persisted = read_persisted_meta_at(&snapshot.data_dir)?;
+    Ok((persisted, snapshot))
 }
 
 #[derive(Debug, Deserialize)]
@@ -1382,7 +1918,7 @@ struct CargoTarget {
     src_path: PathBuf,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct TargetLayout {
     crate_name: String,
     package_dir: PathBuf,
@@ -1415,9 +1951,10 @@ fn rust_name(name: &str) -> String {
     name.replace('-', "_")
 }
 
-fn cargo_metadata(manifest: &Path) -> Result<CargoMetadata, AtlasError> {
+fn cargo_metadata(manifest: &Path, opts: &BuildOptions) -> Result<CargoMetadata, AtlasError> {
     let current_dir = manifest.parent().unwrap_or_else(|| Path::new("."));
-    let output = Command::new("cargo")
+    let mut command = Command::new("cargo");
+    command
         .args([
             "metadata",
             "--format-version",
@@ -1425,7 +1962,14 @@ fn cargo_metadata(manifest: &Path) -> Result<CargoMetadata, AtlasError> {
             "--no-deps",
             "--manifest-path",
         ])
-        .arg(manifest)
+        .arg(manifest);
+    if !opts.features.is_empty() {
+        command.arg("--features").arg(opts.features.join(","));
+    }
+    if let Some(target) = &opts.target {
+        command.arg("--filter-platform").arg(target);
+    }
+    let output = command
         .current_dir(current_dir)
         .output()
         .map_err(|error| AtlasError::Cargo(format!("cannot run cargo metadata: {error}")))?;
@@ -1663,9 +2207,9 @@ fn source_units(code_root: &Path, targets: &[TargetLayout]) -> BTreeMap<PathBuf,
 }
 
 impl ProjectLayout {
-    fn discover(code_root: &Path) -> Result<Self, AtlasError> {
+    fn discover(code_root: &Path, opts: &BuildOptions) -> Result<Self, AtlasError> {
         let manifest = code_root.join("Cargo.toml");
-        let root_metadata = cargo_metadata(&manifest)?;
+        let root_metadata = cargo_metadata(&manifest, opts)?;
         let root_workspace = root_metadata.workspace_root.clone();
         let mut metadata_sets = vec![root_metadata];
         let mut known_manifests: BTreeSet<PathBuf> = metadata_sets[0]
@@ -1677,7 +2221,7 @@ impl ProjectLayout {
             if known_manifests.contains(&nested_manifest) {
                 continue;
             }
-            let metadata = cargo_metadata(&nested_manifest)?;
+            let metadata = cargo_metadata(&nested_manifest, opts)?;
             known_manifests.extend(
                 metadata
                     .packages
@@ -1781,6 +2325,39 @@ impl ProjectLayout {
             units,
             code_root: code_root.to_path_buf(),
         })
+    }
+
+    fn from_input_plan(code_root: &Path, plan: &input_plan::CargoInputPlan) -> Self {
+        let units = source_units(code_root, &plan.targets);
+        let roots = units
+            .values()
+            .filter(|unit| unit.modules.is_empty())
+            .map(|unit| unit.node_id.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        Self {
+            graph_root: plan.graph_root.clone(),
+            packages: plan.packages.clone(),
+            roots,
+            targets: plan.targets.clone(),
+            units,
+            code_root: code_root.to_path_buf(),
+        }
+    }
+
+    fn to_input_plan(
+        &self,
+        fingerprint: String,
+        key: &input_plan::InputPlanKey,
+    ) -> input_plan::CargoInputPlan {
+        input_plan::CargoInputPlan::new(
+            fingerprint,
+            self.graph_root.clone(),
+            self.packages.clone(),
+            self.targets.clone(),
+            key,
+        )
     }
 
     fn source_unit(&self, path: &Path) -> Option<SourceUnit> {
@@ -3126,23 +3703,27 @@ fn remove_scip_edges(
     Ok(())
 }
 
-fn remove_mir_facts(shards_dir: &Path, files: &BTreeMap<String, String>) -> Result<(), AtlasError> {
-    let mut shards = BTreeMap::new();
-    let mut changed = false;
-    for rel in files.keys() {
-        let mut shard = read_shard(shards_dir, rel)?;
-        let old_edges = shard.edges.len();
-        shard
-            .edges
-            .retain(|edge| edge.provenance != Provenance::Mir);
-        changed |= shard.edges.len() != old_edges;
-        for node in &mut shard.nodes {
-            changed |= node.cfg.take().is_some();
+fn remove_mir_facts(
+    shards_dir: &Path,
+    files: &BTreeMap<String, String>,
+    opts: &BuildOptions,
+) -> Result<(), AtlasError> {
+    for batch in files.keys().collect::<Vec<_>>().chunks(opts.batch_size) {
+        check_cancelled(opts)?;
+        for rel in batch {
+            let mut shard = read_shard(shards_dir, rel)?;
+            let old_edges = shard.edges.len();
+            shard
+                .edges
+                .retain(|edge| edge.provenance != Provenance::Mir);
+            let mut changed = shard.edges.len() != old_edges;
+            for node in &mut shard.nodes {
+                changed |= node.cfg.take().is_some();
+            }
+            if changed {
+                write_shard(shards_dir, &shard)?;
+            }
         }
-        shards.insert(rel.clone(), shard);
-    }
-    if changed {
-        commit_shard_generation(shards_dir, &shards)?;
     }
     Ok(())
 }
@@ -3190,6 +3771,25 @@ mod tests {
         }
         let graph = base.join("graph");
         (code, graph)
+    }
+
+    fn copy_incremental_fixture(name: &str) -> (PathBuf, PathBuf) {
+        let base = temp_dir(name);
+        let code = base.join("code");
+        fs::create_dir_all(code.join("src")).unwrap();
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/atlas/incremental-hardening");
+        for rel in [
+            "Cargo.toml",
+            "src/lib.rs",
+            "src/api.rs",
+            "src/a.rs",
+            "src/b.rs",
+            "src/c.rs",
+        ] {
+            fs::copy(fixture.join(rel), code.join(rel)).unwrap();
+        }
+        (code, base.join("graph"))
     }
 
     fn node<'a>(shards: &'a [Shard], id: &str) -> Option<&'a Node> {
@@ -3915,15 +4515,15 @@ impl std::fmt::Display for Local {
         build(&code, &graph, &BuildOptions::default()).unwrap();
         let snapshot: BTreeMap<String, Vec<u8>> =
             fs::read_dir(active_data_dir(&graph).join("shards"))
-            .unwrap()
-            .map(|e| e.unwrap().path())
-            .map(|p| {
-                (
-                    p.file_name().unwrap().to_string_lossy().to_string(),
-                    fs::read(&p).unwrap(),
-                )
-            })
-            .collect();
+                .unwrap()
+                .map(|e| e.unwrap().path())
+                .map(|p| {
+                    (
+                        p.file_name().unwrap().to_string_lossy().to_string(),
+                        fs::read(&p).unwrap(),
+                    )
+                })
+                .collect();
 
         let service = code.join("src/service.rs");
         let mut text = fs::read_to_string(&service).unwrap();
@@ -3946,7 +4546,7 @@ impl std::fmt::Display for Local {
     }
 
     #[test]
-    fn test_atlas_rebuilds_unchanged_file_when_module_path_changes() {
+    fn test_atlas_input_plan_rebuilds_source_module_ownership() {
         let (code, graph) = copy_fixture("atlas-incremental-module-layout");
         let lib = code.join("src/lib.rs");
         let mut source = fs::read_to_string(&lib).unwrap();
@@ -3958,6 +4558,7 @@ impl std::fmt::Display for Local {
         let source = source.replace("mod actual;", "#[path = \"actual.rs\"]\nmod renamed;");
         fs::write(&lib, source).unwrap();
         let report = build(&code, &graph, &BuildOptions::default()).unwrap();
+        assert_eq!(report.input_plan, InputPlanState::Hit);
         assert_eq!(
             report.rebuilt,
             vec!["src/actual.rs".to_string(), "src/lib.rs".to_string()]
@@ -3966,6 +4567,674 @@ impl std::fmt::Display for Local {
         assert!(node(&shards, "atlas_basic::renamed::endpoint").is_some());
         assert!(node(&shards, "atlas_basic::actual::endpoint").is_none());
         fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_auto_refresh_preserves_input_plan_configuration() {
+        let (code, graph) = scratch_crate(
+            "atlas_refresh_input_plan",
+            &[("src/lib.rs", "pub fn value() -> u32 { 1 }\n")],
+        );
+        fs::write(
+            code.join("Cargo.toml"),
+            "[package]\nname = \"atlas_refresh_input_plan\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[features]\nalt = []\n\n[workspace]\n",
+        )
+        .unwrap();
+        build(
+            &code,
+            &graph,
+            &BuildOptions {
+                features: vec!["alt".to_string()],
+                cfg: vec!["atlas_test".to_string()],
+                ..BuildOptions::default()
+            },
+        )
+        .unwrap();
+        let baseline_plan: serde_json::Value = serde_json::from_slice(
+            &fs::read(active_data_dir(&graph).join("input-plan.json")).unwrap(),
+        )
+        .unwrap();
+
+        fs::write(code.join("src/lib.rs"), "pub fn value() -> u32 { 2 }\n").unwrap();
+        query(
+            &code,
+            &graph,
+            "atlas_refresh_input_plan::value",
+            &QueryOptions::default(),
+        )
+        .unwrap();
+
+        let refreshed_plan: serde_json::Value = serde_json::from_slice(
+            &fs::read(active_data_dir(&graph).join("input-plan.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            refreshed_plan["fingerprint"], baseline_plan["fingerprint"],
+            "automatic refresh must reuse the committed Cargo input configuration"
+        );
+        assert_eq!(refreshed_plan["features"], serde_json::json!(["alt"]));
+        assert_eq!(refreshed_plan["cfg"], serde_json::json!(["atlas_test"]));
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_auto_refresh_rejects_corrupt_input_plan_artifact() {
+        let (code, graph) = copy_fixture("atlas-refresh-corrupt-input-plan");
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let input_plan_path = active_data_dir(&graph).join("input-plan.json");
+        let mut input_plan: serde_json::Value =
+            serde_json::from_slice(&fs::read(&input_plan_path).unwrap()).unwrap();
+        input_plan["features"] = serde_json::json!(["uncommitted-feature"]);
+        fs::write(
+            &input_plan_path,
+            serde_json::to_vec_pretty(&input_plan).unwrap(),
+        )
+        .unwrap();
+        let service = code.join("src/service.rs");
+        let mut source = fs::read_to_string(&service).unwrap();
+        source.push_str("\npub fn stale_after_plan_corruption() {}\n");
+        fs::write(service, source).unwrap();
+
+        let error = query(
+            &code,
+            &graph,
+            "atlas_basic::store::MemStore",
+            &QueryOptions::default(),
+        )
+        .unwrap_err();
+        let AtlasError::Invariant(detail) = error else {
+            panic!("expected committed artifact integrity failure");
+        };
+        assert!(detail.contains("artifact integrity"));
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_incremental_frontier_repairs_renamed_target_dependents() {
+        let (code, graph) = scratch_crate(
+            "atlas_frontier_rename",
+            &[
+                ("src/lib.rs", "pub mod api;\npub mod client;\n"),
+                ("src/api.rs", "pub trait Service {}\n"),
+                (
+                    "src/client.rs",
+                    "use crate::api::Service;\npub struct Client;\nimpl Service for Client {}\n",
+                ),
+            ],
+        );
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        fs::write(code.join("src/api.rs"), "pub trait ServiceV2 {}\n").unwrap();
+
+        let report = build(&code, &graph, &BuildOptions::default()).unwrap();
+        assert_eq!(
+            report.touched_shards,
+            vec!["src/api.rs".to_string(), "src/client.rs".to_string()]
+        );
+        assert_eq!(report.resolved_shards, 2);
+        let (_, shards) = load_graph(&graph).unwrap();
+        let edge = all_edges(&shards)
+            .into_iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::ImplsTrait && edge.target_text.as_deref() == Some("Service")
+            })
+            .unwrap();
+        assert_eq!(edge.resolution, EdgeResolution::Unresolved);
+        assert_eq!(edge.to, "Service");
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_incremental_frontier_repairs_bare_name_ambiguity() {
+        let (code, graph) = scratch_crate(
+            "atlas_frontier_ambiguity",
+            &[
+                ("src/lib.rs", "pub mod api;\npub mod client;\n"),
+                ("src/api.rs", "pub trait Service {}\n"),
+                (
+                    "src/client.rs",
+                    "use crate::api::Service;\npub struct Client;\nimpl Service for Client {}\n",
+                ),
+            ],
+        );
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        let (_, baseline) = load_graph(&graph).unwrap();
+        let old_target = all_edges(&baseline)
+            .into_iter()
+            .find(|edge| edge.kind == EdgeKind::ImplsTrait)
+            .unwrap()
+            .to;
+        fs::write(
+            code.join("src/lib.rs"),
+            "pub mod api;\npub mod client;\npub mod other;\n",
+        )
+        .unwrap();
+        fs::write(code.join("src/other.rs"), "pub trait Service {}\n").unwrap();
+
+        let report = build(&code, &graph, &BuildOptions::default()).unwrap();
+        assert!(report.touched_shards.contains(&"src/client.rs".to_string()));
+        let (_, shards) = load_graph(&graph).unwrap();
+        let edge = all_edges(&shards)
+            .into_iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::ImplsTrait && edge.target_text.as_deref() == Some("Service")
+            })
+            .unwrap();
+        assert_eq!(edge.resolution, EdgeResolution::Unresolved);
+        assert_ne!(edge.to, old_target);
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_incremental_frontier_overflow_falls_back_completely() {
+        let (code, graph) = scratch_crate(
+            "atlas_frontier_overflow",
+            &[
+                (
+                    "src/lib.rs",
+                    "pub mod api;\npub mod a;\npub mod b;\npub mod c;\n",
+                ),
+                ("src/api.rs", "pub trait Service {}\n"),
+                (
+                    "src/a.rs",
+                    "use crate::api::Service; pub struct A; impl Service for A {}\n",
+                ),
+                (
+                    "src/b.rs",
+                    "use crate::api::Service; pub struct B; impl Service for B {}\n",
+                ),
+                (
+                    "src/c.rs",
+                    "use crate::api::Service; pub struct C; impl Service for C {}\n",
+                ),
+            ],
+        );
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        fs::write(code.join("src/api.rs"), "pub trait ServiceV2 {}\n").unwrap();
+        let report = build(
+            &code,
+            &graph,
+            &BuildOptions {
+                frontier_limit: 2,
+                ..BuildOptions::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            report.fallback_reason.as_deref(),
+            Some("dependency-frontier-overflow")
+        );
+        assert_eq!(report.resolved_shards, 5);
+        assert_eq!(report.validated_shards, 5);
+        let (_, shards) = load_graph(&graph).unwrap();
+        assert!(
+            all_edges(&shards)
+                .iter()
+                .filter(|edge| edge.kind == EdgeKind::ImplsTrait)
+                .all(|edge| edge.resolution == EdgeResolution::Unresolved)
+        );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_zero_change_fast_path_is_byte_and_counter_inert() {
+        let (code, graph) = copy_fixture("atlas-zero-change-fast-path");
+        let baseline = build(&code, &graph, &BuildOptions::default()).unwrap();
+        let bytes = file_tree_snapshot(&graph);
+
+        let report = build(&code, &graph, &BuildOptions::default()).unwrap();
+        assert_eq!(report.input_plan, InputPlanState::Hit);
+        assert_eq!(report.generation, baseline.generation);
+        assert!(report.touched_shards.is_empty());
+        assert_eq!(report.resolved_shards, 0);
+        assert_eq!(report.validated_shards, 0);
+        assert_eq!(report.resolved_edge_delta, 0);
+        assert_eq!(report.unresolved_edge_delta, 0);
+        assert_eq!(report.working_bytes, 0);
+        assert_eq!(file_tree_snapshot(&graph), bytes);
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    fn persist_test_orphan(
+        code: &Path,
+        graph: &Path,
+        affected_files: Vec<String>,
+        changed_symbols: Vec<String>,
+    ) {
+        let snapshot = graph_snapshot(graph).unwrap();
+        let fingerprint =
+            status::source_fingerprint(&status::source_hashes(code).unwrap()).unwrap();
+        let queue = incremental::OrphanQueue::new(
+            snapshot.generation,
+            fingerprint,
+            affected_files,
+            changed_symbols,
+            "source-change".to_string(),
+        )
+        .unwrap();
+        incremental::write_orphan(graph, &queue).unwrap();
+    }
+
+    #[test]
+    fn test_atlas_zero_change_build_recovers_interrupted_orphans() {
+        let (code, graph) = scratch_crate(
+            "atlas_orphan_recovery",
+            &[
+                ("src/lib.rs", "pub mod api;\npub mod client;\n"),
+                ("src/api.rs", "pub trait Service {}\n"),
+                (
+                    "src/client.rs",
+                    "use crate::api::Service; pub struct Client; impl Service for Client {}\n",
+                ),
+            ],
+        );
+        let baseline = build(&code, &graph, &BuildOptions::default()).unwrap();
+        fs::write(code.join("src/api.rs"), "pub trait ServiceV2 {}\n").unwrap();
+        persist_test_orphan(
+            &code,
+            &graph,
+            vec!["src/client.rs".to_string()],
+            vec!["Service".to_string()],
+        );
+
+        let report = build(&code, &graph, &BuildOptions::default()).unwrap();
+        assert_eq!(report.orphans_recovered, 1);
+        assert_ne!(report.generation, baseline.generation);
+        assert!(!graph.join("orphans.json").exists());
+        let generation = report.generation.clone();
+        let zero = build(&code, &graph, &BuildOptions::default()).unwrap();
+        assert_eq!(zero.generation, generation);
+        assert_eq!(zero.resolved_shards, 0);
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_orphan_recovery_consumes_deterministic_unresolved() {
+        let (code, graph) = scratch_crate(
+            "atlas_orphan_unresolved",
+            &[
+                ("src/lib.rs", "pub mod api;\npub mod client;\n"),
+                ("src/api.rs", "pub trait Service {}\n"),
+                (
+                    "src/client.rs",
+                    "use crate::api::Service; pub struct Client; impl Service for Client {}\n",
+                ),
+            ],
+        );
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        fs::write(code.join("src/api.rs"), "pub trait Replacement {}\n").unwrap();
+        persist_test_orphan(
+            &code,
+            &graph,
+            vec!["src/client.rs".to_string()],
+            vec!["Service".to_string()],
+        );
+
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+        assert!(!graph.join("orphans.json").exists());
+        let (_, shards) = load_graph(&graph).unwrap();
+        let edge = all_edges(&shards)
+            .into_iter()
+            .find(|edge| edge.kind == EdgeKind::ImplsTrait)
+            .unwrap();
+        assert_eq!(edge.resolution, EdgeResolution::Unresolved);
+        assert_eq!(edge.to, "Service");
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_incremental_cancellation_preserves_generation_and_orphans() {
+        let (code, graph) = copy_fixture("atlas-incremental-cancel");
+        let baseline = build(&code, &graph, &BuildOptions::default()).unwrap();
+        let pointer = fs::read(graph.join("CURRENT.json")).unwrap();
+        let service = code.join("src/service.rs");
+        let mut source = fs::read_to_string(&service).unwrap();
+        source.push_str("\npub fn cancel_after_batch() {}\n");
+        fs::write(service, source).unwrap();
+        let token = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        set_test_cancel_after_resolution_batches(Some(1));
+        let result = build(
+            &code,
+            &graph,
+            &BuildOptions {
+                cancellation: Some(token),
+                batch_size: 1,
+                ..BuildOptions::default()
+            },
+        );
+        set_test_cancel_after_resolution_batches(None);
+        let error = result.unwrap_err();
+        assert!(matches!(error, AtlasError::Cancelled));
+        assert_eq!(
+            graph_snapshot(&graph).unwrap().generation,
+            Some(baseline.generation)
+        );
+        assert_eq!(fs::read(graph.join("CURRENT.json")).unwrap(), pointer);
+        assert!(graph.join("orphans.json").is_file());
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_incremental_working_byte_limit_fails_closed() {
+        let (code, graph) = copy_fixture("atlas-incremental-byte-limit");
+        let baseline = build(&code, &graph, &BuildOptions::default()).unwrap();
+        let pointer = fs::read(graph.join("CURRENT.json")).unwrap();
+        let service = code.join("src/service.rs");
+        let mut source = fs::read_to_string(&service).unwrap();
+        source.push_str("\npub fn exceeds_working_set() {}\n");
+        fs::write(service, source).unwrap();
+        let source_bytes = walk_rs_files(&code)
+            .iter()
+            .map(|path| fs::metadata(path).unwrap().len() as usize)
+            .sum::<usize>();
+        let shard_bytes = fs::read_dir(active_data_dir(&graph).join("shards"))
+            .unwrap()
+            .map(|entry| entry.unwrap().metadata().unwrap().len() as usize)
+            .sum::<usize>();
+        assert!(shard_bytes > source_bytes);
+        let working_byte_limit = source_bytes + (shard_bytes - source_bytes) / 2;
+        let error = build(
+            &code,
+            &graph,
+            &BuildOptions {
+                working_byte_limit,
+                ..BuildOptions::default()
+            },
+        )
+        .unwrap_err();
+        let AtlasError::ResourceLimit {
+            resource,
+            required,
+            limit,
+        } = error
+        else {
+            panic!("expected resource limit");
+        };
+        assert_eq!(resource, "serialized graph working set");
+        assert!(required > limit);
+        assert_eq!(limit, working_byte_limit);
+        assert_eq!(
+            graph_snapshot(&graph).unwrap().generation,
+            Some(baseline.generation)
+        );
+        assert_eq!(fs::read(graph.join("CURRENT.json")).unwrap(), pointer);
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_post_commit_orphan_clear_failure_remains_recoverable() {
+        let (code, graph) = copy_fixture("atlas-incremental-maintenance");
+        let baseline = build(&code, &graph, &BuildOptions::default()).unwrap();
+        let service = code.join("src/service.rs");
+        let mut source = fs::read_to_string(&service).unwrap();
+        source.push_str("\npub fn maintenance_recovery() {}\n");
+        fs::write(service, source).unwrap();
+
+        incremental::set_test_clear_failure(true);
+        let result = build(&code, &graph, &BuildOptions::default());
+        incremental::set_test_clear_failure(false);
+        let report = result.unwrap();
+
+        assert_ne!(report.generation, baseline.generation);
+        assert!(report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "incremental-maintenance-failed"
+                && diagnostic.severity == "warning"
+                && diagnostic.message.contains("queue rebased")
+        }));
+        assert_eq!(
+            graph_snapshot(&graph).unwrap().generation.as_deref(),
+            Some(report.generation.as_str())
+        );
+        assert!(
+            incremental::load_orphan(&graph, Some(&report.generation))
+                .unwrap()
+                .is_some()
+        );
+
+        let recovery = build(&code, &graph, &BuildOptions::default()).unwrap();
+        assert!(recovery.orphans_recovered > 0);
+        assert!(!graph.join("orphans.json").exists());
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_incremental_overlay_capability_is_generation_atomic() {
+        let (code, graph) = copy_fixture("atlas-incremental-overlay-atomic");
+        let baseline = build(&code, &graph, &BuildOptions::default()).unwrap();
+        let bad_index = code.parent().unwrap().join("bad-scip.json");
+        fs::write(&bad_index, "not valid SCIP").unwrap();
+        let error = build(
+            &code,
+            &graph,
+            &BuildOptions {
+                scip_index: Some(bad_index),
+                ..BuildOptions::default()
+            },
+        );
+        assert!(error.is_err());
+        let after_failure = status(&code, &graph).unwrap();
+        assert_eq!(after_failure.generation, Some(baseline.generation));
+        assert_eq!(after_failure.scip.state, LayerState::Unavailable);
+
+        let report = build(
+            &code,
+            &graph,
+            &BuildOptions {
+                scip_index: Some(scip_fixture()),
+                ..BuildOptions::default()
+            },
+        )
+        .unwrap();
+        let result = query(
+            &code,
+            &graph,
+            "atlas_basic::store::MemStore",
+            &QueryOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            result.status.generation.as_deref(),
+            Some(report.generation.as_str())
+        );
+        assert_eq!(result.status.scip.state, LayerState::Fresh);
+        assert!(report.capability.scip);
+        assert_eq!(
+            report.fallback_reason.as_deref(),
+            Some("semantic-overlay-change")
+        );
+        assert_eq!(report.touched_shards.len(), 3);
+        assert_eq!(report.validated_shards, 3);
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    fn incremental_receipt(
+        case: &str,
+        outcome: &str,
+        report: Option<&BuildReport>,
+        generation: &str,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "case": case,
+            "outcome": outcome,
+            "generation": report.map_or(generation, |report| report.generation.as_str()),
+            "input_plan": report.map(|report| report.input_plan),
+            "touched_shards": report.map_or_else(Vec::new, |report| report.touched_shards.clone()),
+            "resolved_edge_delta": report.map_or(0, |report| report.resolved_edge_delta),
+            "unresolved_edge_delta": report.map_or(0, |report| report.unresolved_edge_delta),
+            "working_bytes": report.map_or(0, |report| report.working_bytes),
+            "fallback_reason": report.and_then(|report| report.fallback_reason.as_deref()),
+            "orphans_recovered": report.map_or(0, |report| report.orphans_recovered),
+        })
+    }
+
+    #[test]
+    fn test_atlas_incremental_acceptance_matrix_records_receipts() {
+        let matrix: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../fixtures/atlas/incremental-hardening/matrix.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            matrix["schema"],
+            "rust-atlas/incremental-hardening-matrix-v1"
+        );
+        let cases = matrix["cases"].as_array().unwrap();
+        assert_eq!(cases.len(), 10);
+        let mut receipts = Vec::new();
+
+        for case in cases.iter().map(|case| case.as_str().unwrap()) {
+            let (code, graph) = copy_incremental_fixture(&format!("atlas-matrix-{case}"));
+            let (outcome, report, generation) = if case == "cold" {
+                let report = build(&code, &graph, &BuildOptions::default()).unwrap();
+                ("pass", Some(report.clone()), report.generation)
+            } else {
+                let baseline = build(&code, &graph, &BuildOptions::default()).unwrap();
+                match case {
+                    "zero-change" => {
+                        let report = build(&code, &graph, &BuildOptions::default()).unwrap();
+                        ("pass", Some(report.clone()), report.generation)
+                    }
+                    "single-file-edit" => {
+                        fs::write(
+                            code.join("src/api.rs"),
+                            "pub trait Service {}\npub fn changed() {}\n",
+                        )
+                        .unwrap();
+                        let report = build(&code, &graph, &BuildOptions::default()).unwrap();
+                        ("pass", Some(report.clone()), report.generation)
+                    }
+                    "deletion" => {
+                        fs::remove_file(code.join("src/c.rs")).unwrap();
+                        let report = build(&code, &graph, &BuildOptions::default()).unwrap();
+                        ("pass", Some(report.clone()), report.generation)
+                    }
+                    "manifest-content-edit" => {
+                        let manifest = code.join("Cargo.toml");
+                        let mut text = fs::read_to_string(&manifest).unwrap();
+                        text.push_str("\n# content-addressed cache miss\n");
+                        fs::write(manifest, text).unwrap();
+                        let report = build(&code, &graph, &BuildOptions::default()).unwrap();
+                        assert_eq!(report.input_plan, InputPlanState::Miss);
+                        ("pass", Some(report.clone()), report.generation)
+                    }
+                    "frontier-overflow" => {
+                        fs::write(code.join("src/api.rs"), "pub trait Replacement {}\n").unwrap();
+                        let report = build(
+                            &code,
+                            &graph,
+                            &BuildOptions {
+                                frontier_limit: 2,
+                                ..BuildOptions::default()
+                            },
+                        )
+                        .unwrap();
+                        assert_eq!(
+                            report.fallback_reason.as_deref(),
+                            Some("dependency-frontier-overflow")
+                        );
+                        ("pass", Some(report.clone()), report.generation)
+                    }
+                    "overlay" => {
+                        let report = build(
+                            &code,
+                            &graph,
+                            &BuildOptions {
+                                dynamic_dispatch: true,
+                                ..BuildOptions::default()
+                            },
+                        )
+                        .unwrap();
+                        assert!(report.capability.dynamic_dispatch);
+                        ("pass", Some(report.clone()), report.generation)
+                    }
+                    "cancellation" => {
+                        let token = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+                        let error = build(
+                            &code,
+                            &graph,
+                            &BuildOptions {
+                                cancellation: Some(token),
+                                ..BuildOptions::default()
+                            },
+                        )
+                        .unwrap_err();
+                        assert!(matches!(error, AtlasError::Cancelled));
+                        ("cancelled", None, baseline.generation)
+                    }
+                    "generation-commit-failure" => {
+                        let snapshot = graph_snapshot(&graph).unwrap();
+                        let (meta, _) = load_graph(&graph).unwrap();
+                        let transaction =
+                            generation::GenerationTransaction::begin(&graph, Some(&snapshot))
+                                .unwrap();
+                        index::write_json_atomic(
+                            &transaction.data_dir().join("matrix-marker.json"),
+                            &"failure",
+                        )
+                        .unwrap();
+                        let error = transaction.publish_with_fault(
+                            &meta.graph_fingerprint,
+                            &meta.capability,
+                            None,
+                            generation::PublishFault::FinalRename,
+                        );
+                        assert!(error.is_err());
+                        assert_eq!(
+                            graph_snapshot(&graph).unwrap().generation,
+                            snapshot.generation
+                        );
+                        ("commit-failed", None, baseline.generation)
+                    }
+                    "orphan-recovery" => {
+                        persist_test_orphan(
+                            &code,
+                            &graph,
+                            vec!["src/a.rs".to_string()],
+                            vec!["Service".to_string()],
+                        );
+                        let report = build(&code, &graph, &BuildOptions::default()).unwrap();
+                        assert_eq!(report.orphans_recovered, 1);
+                        ("recovered", Some(report.clone()), report.generation)
+                    }
+                    _ => unreachable!("matrix schema controls case names"),
+                }
+            };
+            receipts.push(incremental_receipt(
+                case,
+                outcome,
+                report.as_ref(),
+                &generation,
+            ));
+            fs::remove_dir_all(code.parent().unwrap()).ok();
+        }
+
+        let required = [
+            "case",
+            "outcome",
+            "generation",
+            "input_plan",
+            "touched_shards",
+            "resolved_edge_delta",
+            "unresolved_edge_delta",
+            "working_bytes",
+            "fallback_reason",
+            "orphans_recovered",
+        ];
+        for receipt in &receipts {
+            assert!(
+                required.iter().all(|field| receipt.get(field).is_some()),
+                "incomplete D2 receipt: {receipt}"
+            );
+            assert!(!receipt["generation"].as_str().unwrap().is_empty());
+        }
+        assert_eq!(
+            receipts
+                .iter()
+                .map(|receipt| receipt["case"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            cases
+                .iter()
+                .map(|case| case.as_str().unwrap())
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -4248,6 +5517,7 @@ impl std::fmt::Display for Local {
                 full: false,
                 scip_index: Some(scip_fixture()),
                 dynamic_dispatch: false,
+                ..BuildOptions::default()
             },
         )
         .unwrap();
@@ -4318,6 +5588,7 @@ impl std::fmt::Display for Local {
                 full: false,
                 scip_index: Some(scip_fixture()),
                 dynamic_dispatch: false,
+                ..BuildOptions::default()
             },
         )
         .unwrap();
@@ -4778,6 +6049,7 @@ impl std::fmt::Display for Local {
                 full: false,
                 scip_index: Some(scip_fixture()),
                 dynamic_dispatch: false,
+                ..BuildOptions::default()
             },
         )
         .unwrap();
@@ -5632,7 +6904,10 @@ impl std::fmt::Display for Local {
         assert_eq!(args[2], "--out");
         let output = Path::new(args[3]);
         assert!(output.starts_with(graph.join(".staging")));
-        assert_eq!(output.file_name().and_then(|name| name.to_str()), Some("mir-overlay.json"));
+        assert_eq!(
+            output.file_name().and_then(|name| name.to_str()),
+            Some("mir-overlay.json")
+        );
         fs::remove_dir_all(base).ok();
     }
 
@@ -5646,6 +6921,7 @@ impl std::fmt::Display for Local {
                 full: false,
                 scip_index: Some(scip_fixture()),
                 dynamic_dispatch: false,
+                ..BuildOptions::default()
             },
         )
         .unwrap();
@@ -5710,6 +6986,7 @@ impl std::fmt::Display for Local {
                 full: false,
                 scip_index: Some(scip_protobuf_fixture()),
                 dynamic_dispatch: false,
+                ..BuildOptions::default()
             },
         )
         .unwrap();
@@ -5736,6 +7013,7 @@ impl std::fmt::Display for Local {
                 full: false,
                 scip_index: Some(scip_fixture()),
                 dynamic_dispatch: false,
+                ..BuildOptions::default()
             },
         )
         .unwrap();
@@ -5761,6 +7039,7 @@ impl std::fmt::Display for Local {
                 full: false,
                 scip_index: Some(scip_fixture()),
                 dynamic_dispatch: false,
+                ..BuildOptions::default()
             },
         )
         .unwrap();
@@ -5844,6 +7123,7 @@ impl std::fmt::Display for Local {
                 full: false,
                 scip_index: Some(scip_protobuf_fixture()),
                 dynamic_dispatch: false,
+                ..BuildOptions::default()
             },
         )
         .unwrap();
@@ -5898,6 +7178,7 @@ impl std::fmt::Display for Local {
                 full: false,
                 scip_index: Some(index_path),
                 dynamic_dispatch: false,
+                ..BuildOptions::default()
             },
         )
         .unwrap();
@@ -5950,6 +7231,7 @@ impl std::fmt::Display for Local {
                 full: false,
                 scip_index: Some(index_path),
                 dynamic_dispatch: false,
+                ..BuildOptions::default()
             },
         )
         .unwrap();
@@ -5997,6 +7279,7 @@ impl std::fmt::Display for Local {
                 full: false,
                 scip_index: Some(scip_protobuf_fixture()),
                 dynamic_dispatch: false,
+                ..BuildOptions::default()
             },
         )
         .unwrap();
@@ -6021,6 +7304,7 @@ impl std::fmt::Display for Local {
                 full: false,
                 scip_index: Some(scip_protobuf_fixture()),
                 dynamic_dispatch: false,
+                ..BuildOptions::default()
             },
         )
         .unwrap();
@@ -6059,6 +7343,7 @@ impl std::fmt::Display for Local {
                 full: false,
                 scip_index: Some(scip_protobuf_fixture()),
                 dynamic_dispatch: false,
+                ..BuildOptions::default()
             },
         )
         .unwrap();
@@ -6130,6 +7415,7 @@ impl std::fmt::Display for Local {
                 full: false,
                 scip_index: Some(index_path),
                 dynamic_dispatch: false,
+                ..BuildOptions::default()
             },
         )
         .unwrap();
@@ -6194,6 +7480,7 @@ impl std::fmt::Display for Local {
                 full: false,
                 scip_index: Some(scip_protobuf_fixture()),
                 dynamic_dispatch: false,
+                ..BuildOptions::default()
             },
         )
         .unwrap();
@@ -6237,6 +7524,7 @@ impl std::fmt::Display for Local {
                 full: false,
                 scip_index: Some(idx.clone()),
                 dynamic_dispatch: false,
+                ..BuildOptions::default()
             },
         )
         .unwrap();

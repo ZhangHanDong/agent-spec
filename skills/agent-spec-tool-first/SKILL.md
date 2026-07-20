@@ -81,6 +81,18 @@ agent-spec atlas status --code . --graph .agent-spec/graph --format json
 agent-spec atlas check --code . --graph .agent-spec/graph
 ```
 
+`atlas build` publishes one complete committed generation; all read surfaces
+pin and report that generation. Content-addressed Cargo input plans accept
+`--features`, `--target`, and repeatable `--cfg`. Incremental source edits use a
+bounded reverse-dependent frontier; configure `--frontier-limit`,
+`--batch-size`, and `--working-byte-limit`. A healthy zero-change build does no
+resolution, validation, staging, or authority rewrite. Cancellation and build
+failure preserve the old generation and orphan work for a later recovery build.
+Automatic refresh reuses committed Cargo inputs; capability changes use an
+explicit full-frontier fallback. These are D2 build primitives, not a watcher
+or daemon. See
+`docs/atlas-incremental-builds.md`.
+
 `status` reports recorded/current graph identity and the three layer states;
 syn fresh is not authority for a stale SCIP or MIR layer. Rebuild after
 `atlas-schema-mismatch` or an `atlas-query-index-*` diagnostic. A borrowed

@@ -72,8 +72,9 @@ Build staging hard-links unchanged shards when possible and copies them when a
 hard link is unavailable. Every staged shard rewrite uses atomic replacement so
 the base generation's inode cannot be modified through a link. Publication
 renames staging into `generations/` and atomically replaces only the pointer.
-Cleanup of abandoned staging and old generations is best-effort maintenance
-after authority is committed.
+Cleanup of the current transaction's uncommitted staging is idempotent and
+never removes a committed generation. Cross-process abandoned staging and old
+generation reclamation wait for D3 single-writer plus reader-retention rules.
 
 Tests must inject staging-write, final-rename, and pointer-write failures and
 prove the prior generation remains queryable and byte-identical.
@@ -90,7 +91,8 @@ Persist the Cargo target plan separately from source module ownership. The key
 contains canonical manifest paths plus content hashes, `rustc -vV`, schema and
 provider versions, requested features, target, cfg values, and relevant Cargo
 environment. Reusing the Cargo target plan must still rebuild source-unit module
-ownership from current Rust source.
+ownership from current Rust source. Persist the requested feature, target, and
+cfg values so query-triggered stale refresh reuses the committed configuration.
 
 Add CLI options for feature, target, and cfg inputs without executing a shell.
 The build report records `hit`, `miss`, or `disabled`. A content change with a
@@ -137,6 +139,8 @@ A successfully resolved edge and a deterministically unresolved/external edge
 both consume work. Cancellation or process failure leaves the queue intact.
 Clear it only after the generation pointer commit. Invalid, unsafe, oversized,
 or mismatched queue records fail closed with a typed diagnostic.
+If post-commit deletion fails, retain a warning and rebase the queue to the
+committed generation so the next build can consume it.
 
 Tests inject interruption after queue persistence and mid-batch, then run a
 zero-change build to prove recovery and eventual queue removal.
@@ -152,6 +156,9 @@ Extend `BuildOptions` with frontier, batch, and working-byte limits plus an
 optional atomic cancellation token for library callers. Validate all limits.
 Check cancellation before extraction batches, frontier batches, overlay work,
 validation batches, and pointer publication.
+The byte gate covers deterministic source, serialized shard, and explicit
+overlay inputs. Frontier planning, resolution, and validation stream shard
+batches instead of retaining every shard concurrently.
 
 When source hashes, input plan, requested capabilities, and committed artifacts
 are unchanged and no orphan exists, return before staging, resolution,
@@ -191,7 +198,7 @@ validation remains strict and schema/worktree errors retain precedence.
 
 Create deterministic fixture measurements for cold build, zero-change build,
 single-file declaration edit, deletion, manifest-content edit, frontier
-overflow, large overlay, cancellation, generation commit failure, and orphan
+overflow, overlay capability activation, cancellation, generation commit failure, and orphan
 recovery. Receipts record touched shards, resolved/unresolved edge delta,
 bounded working bytes, generation id, input-plan result, and fallback reason.
 

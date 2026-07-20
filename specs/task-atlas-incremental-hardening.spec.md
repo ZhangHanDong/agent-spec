@@ -24,14 +24,18 @@ estimate: 5d
   replace，禁止通过 hard link 原地改写 active inode。
 - generation manifest 记录 meta、query-index、shard artifact digest、graph/capability/input-plan
   fingerprint 与 base generation；pointer 只在 manifest 完整后原子替换。
+- 本事务持有的 uncommitted staging 可幂等清理且不得删除 committed generation；跨进程遗留
+  staging 与旧 generation 回收等待 D3 single-writer/reader-retention contract。
 - Cargo input-plan cache key 使用 manifest content hash、`rustc -vV`、features、target/cfg、
-  provider version 与 schema；source module ownership 每次从当前 Rust module tree 重建。
+  provider version 与 schema；source module ownership 每次从当前 Rust module tree 重建，query
+  触发的 stale refresh 继承已提交的 features、target 与 cfg。
 - frontier 包含 changed shard、removed target id dependent、changed canonical/bare target dependent
   与 impl dependent；默认上限 2048 shards，超限从 clean staging 重新执行 full resolution。
 - orphan queue 在 resolution 前原子写入，bounded 且 path-safe；resolved、external 与 deterministic
   unresolved 都消费，只有 pointer commit 后清空。前一轮 orphan 总在 zero-change fast path 前合并。
-- resolution/validation 默认 batch 256 shards，working-byte ceiling 默认 536870912 bytes；library
-  cancellation token 在 extraction、resolution、overlay、validation 与 publication 前检查。
+- resolution/validation 默认 batch 256 shards，working-byte ceiling 默认 536870912 bytes，并覆盖
+  source、serialized shard 与 overlay admission；library cancellation token 在 extraction、
+  resolution、overlay、validation 与 publication 前检查。
 - zero-change fast path 要求 source、input plan、requested capability、committed manifest 全匹配且
   orphan 为空；它不创建 staging，不调用 resolution/validation，不写任何 authority/control file。
 - maintenance 在 commit 后 best-effort；失败只进入 report warning。
@@ -106,6 +110,14 @@ estimate: 5d
   当 第一轮 build 失败而第二轮成功
   那么 第一轮后 legacy query 仍通过且第二轮后 pointer 与 manifest 完整
 
+场景: transaction-owned staging cleanup 幂等且保留 active generation
+  测试:
+    过滤: test_atlas_owned_staging_cleanup_is_idempotent_and_preserves_active_generation
+    层级: integration
+  假设 active generation 与一个未提交 transaction staging 同时存在
+  当 staging cleanup 重复运行
+  那么 staging 保持不存在且 active generation 仍 byte-identical
+
 场景: Cargo input plan 使用 content key
   测试:
     过滤: test_atlas_input_plan_uses_content_not_manifest_mtime
@@ -121,6 +133,14 @@ estimate: 5d
   假设 Cargo inputs 不变但 source path attribute 移动 module
   当 incremental build 命中 Cargo plan cache
   那么 graph 只保留新的 canonical module symbol 与 structural id
+
+场景: automatic refresh 保留 committed Cargo inputs
+  测试:
+    过滤: test_atlas_auto_refresh_preserves_input_plan_configuration
+    层级: integration
+  假设 baseline graph 使用显式 features 与 cfg 构建
+  当 source stale 后非 frozen query 自动 refresh
+  那么 新 input-plan 保留原 configuration 与 fingerprint
 
 场景: declaration rename 重算 unchanged caller
   测试:
@@ -193,6 +213,14 @@ estimate: 5d
   假设 新 overlay 同时改变 semantic edges 与 capability fingerprint
   当 build 分别在 pointer 前失败和完整成功
   那么 reader 只观察完整 old pair 或完整 new pair
+
+场景: post-commit orphan maintenance failure 保持可恢复
+  测试:
+    过滤: test_atlas_post_commit_orphan_clear_failure_remains_recoverable
+    层级: integration
+  假设 generation pointer 已提交但 orphan queue 删除失败
+  当 build 返回 maintenance warning 且下一次 zero-change build 运行
+  那么 已提交 generation 不回滚、queue 重绑定并在下一次 build 被恢复清除
 
 场景: D2 fixture matrix 输出完整 receipt
   测试:
