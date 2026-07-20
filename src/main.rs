@@ -628,6 +628,15 @@ enum AtlasBenchmarkCommands {
         #[arg(long)]
         out: Option<PathBuf>,
     },
+    /// Score ranked query observations against a versioned golden corpus
+    Score {
+        #[arg(long)]
+        corpus: PathBuf,
+        #[arg(long)]
+        results: PathBuf,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -4005,6 +4014,18 @@ fn cmd_atlas_benchmark_with_writer(
             let receipts = crate::atlas_eval::load_receipts(&receipts)?;
             let summary = crate::atlas_eval::summarize(&receipts)?;
             emit(&summary, out.as_deref(), stdout)
+        }
+        AtlasBenchmarkCommands::Score {
+            corpus,
+            results,
+            out,
+        } => {
+            let corpus = crate::atlas_eval::load_query_corpus(&corpus)?;
+            let results = crate::atlas_eval::load_query_results(&results)?;
+            let receipt = crate::atlas_eval::score_query_results(&corpus, &results)?;
+            emit(&receipt, out.as_deref(), stdout)?;
+            crate::atlas_eval::gate_query_regression(&receipt)?;
+            Ok(())
         }
     }
 }
@@ -11995,6 +12016,86 @@ Scenario: pass
         );
         assert!(result.is_err(), "failure must map to a non-zero CLI exit");
         assert!(failure_stdout.is_empty());
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn test_atlas_benchmark_score_cli_writes_atomic_receipt() {
+        let dir = make_temp_dir("atlas-benchmark-score-cli");
+        let corpus = repo_root().join("benchmarks/atlas/query-corpus.json");
+        let results = repo_root().join("benchmarks/atlas/query-results.json");
+        let out = dir.join("query-regression.json");
+        let mut stdout = Vec::new();
+
+        run_atlas_benchmark_cli(
+            &[
+                "agent-spec",
+                "atlas",
+                "benchmark",
+                "score",
+                "--corpus",
+                corpus.to_str().unwrap(),
+                "--results",
+                results.to_str().unwrap(),
+                "--out",
+                out.to_str().unwrap(),
+            ],
+            &mut stdout,
+        )
+        .unwrap();
+
+        assert!(stdout.is_empty());
+        let receipt: crate::atlas_eval::QueryRegressionReceipt =
+            serde_json::from_str(&fs::read_to_string(&out).unwrap()).unwrap();
+        assert_eq!(receipt.schema, crate::atlas_eval::QUERY_REGRESSION_SCHEMA);
+        assert_eq!(receipt.corpus_version, "2026-07-20.1");
+        assert_eq!(receipt.aggregate.failed, 0);
+        assert_eq!(
+            fs::read_dir(&dir).unwrap().count(),
+            1,
+            "atomic writer must not leave a temporary file"
+        );
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn test_atlas_benchmark_score_cli_fails_after_writing_regression_receipt() {
+        let dir = make_temp_dir("atlas-benchmark-score-failure");
+        let corpus = repo_root().join("benchmarks/atlas/query-corpus.json");
+        let source_results = repo_root().join("benchmarks/atlas/query-results.json");
+        let results = dir.join("failing-results.json");
+        let out = dir.join("query-regression.json");
+        let mut value: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(source_results).unwrap()).unwrap();
+        value["observations"][0]["ranked_symbols"] = serde_json::json!([]);
+        fs::write(&results, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+        let mut stdout = Vec::new();
+
+        let error = run_atlas_benchmark_cli(
+            &[
+                "agent-spec",
+                "atlas",
+                "benchmark",
+                "score",
+                "--corpus",
+                corpus.to_str().unwrap(),
+                "--results",
+                results.to_str().unwrap(),
+                "--out",
+                out.to_str().unwrap(),
+            ],
+            &mut stdout,
+        )
+        .expect_err("query correctness failure must fail the CLI gate");
+
+        assert!(stdout.is_empty());
+        assert!(error.to_string().contains("atlas-query-regression"));
+        let receipt: crate::atlas_eval::QueryRegressionReceipt =
+            serde_json::from_str(&fs::read_to_string(&out).unwrap()).unwrap();
+        assert_eq!(receipt.aggregate.failed, 1);
+        assert_eq!(receipt.aggregate.passed + receipt.aggregate.failed, 4);
 
         fs::remove_dir_all(dir).unwrap();
     }

@@ -39,7 +39,7 @@ agent-spec:   Write Contract (60%) → Agent codes (0%) → Read explain (30%) �
 | `agent-spec wiki query <text>` | Search tracked live wiki articles | Before opening many source files |
 | `agent-spec wiki check` | Live wiki lint + worktree status gate | Pre-commit / CI for tracked wiki |
 | `agent-spec atlas build/tree/query/search/explore/flow/impact/affected/refs/impls/status/check` | Rust project graph: bounded context, explainable paths, reverse impact, identity, and freshness | Build before querying; use frozen reads for review and `check` for syn staleness |
-| `agent-spec atlas benchmark validate/plan/summarize` | Validate an offline evaluation corpus, compile paired run plans, and summarize graded receipts | Use the correctness-first evaluation baseline; see `docs/atlas-evaluation.md` |
+| `agent-spec atlas benchmark validate/plan/summarize/score` | Validate an offline A/B corpus, compile paired run plans, summarize graded receipts, or score versioned query observations | Use the correctness-first E0/E3 gates; pinned repositories and real Agent runs remain opt-in. See `docs/atlas-evaluation.md` |
 
 ### Rust Atlas Workflow
 

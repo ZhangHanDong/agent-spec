@@ -8,6 +8,14 @@ All notable changes to `agent-spec` are documented here. Format follows
 
 ### Added
 
+- Atlas query-quality regression gate: a strict two-tier corpus combines
+  deterministic fixtures with immutable true-repository revisions and scores
+  ranked symbols, exact paths, required evidence, forbidden hits, ambiguity,
+  stale/capability diagnostics, response bytes, latency, read-backs, and
+  follow-up queries. `atlas benchmark score` emits a fingerprinted receipt and
+  exits non-zero after preserving any failed cases. Default tests rebuild the
+  Rust fixture and score current search/flow output without network access;
+  fresh pinned-repository observations and real Agent A/B remain opt-in.
 - Atlas Wave 2: deterministic compact/deep `atlas explore`, explainable
   `atlas flow`, reverse `atlas impact`, and changed-file `atlas affected`
   queries share bounded traversal, evidence paths, layered freshness, and

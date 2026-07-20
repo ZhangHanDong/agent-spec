@@ -1,4 +1,4 @@
-# Atlas Evaluation Baseline
+# Atlas Evaluation And Query Regression
 
 Atlas evaluation provides a reproducible comparison harness for an Atlas-assisted
 agent arm and a baseline arm. It defines inputs, run scheduling, receipts, and
@@ -8,6 +8,11 @@ access the network.
 The checked-in corpus is `benchmarks/atlas/corpus.json`. It is an offline
 fixture, not evidence that a real model evaluation has run or that Atlas yields
 a performance improvement.
+
+Query-quality regression is a second, deterministic layer. Its checked-in
+inputs are `benchmarks/atlas/query-corpus.json` and
+`benchmarks/atlas/query-results.json`. They detect retrieval regressions; they
+are not fresh observations from the pinned repository.
 
 ## Workflow
 
@@ -30,6 +35,15 @@ cargo run -- atlas benchmark summarize --receipts receipts.ndjson --out summary.
 The comparison is correctness-first. A summary is rejected when any receipt
 lacks a correctness verdict. Do not treat lower file reads, calls, duration,
 context, or cost as a benefit unless the corresponding runs have been graded.
+
+Score ranked query observations against the versioned golden corpus separately:
+
+```bash
+cargo run -- atlas benchmark score \
+  --corpus benchmarks/atlas/query-corpus.json \
+  --results benchmarks/atlas/query-results.json \
+  --out query-regression.json
+```
 
 ## Corpus Schema
 
@@ -146,14 +160,100 @@ calculation. Each metrics object also reports `query_metrics_receipts` and
 `legacy_query_metrics_receipts`; a valid E1 comparison requires zero legacy
 query-metric receipts in both arms.
 
+## Query Quality Corpus
+
+The E3 corpus uses schema `agent-spec/atlas-eval/query-corpus-v1` and carries a
+non-empty `version`. It has two required tiers:
+
+- `deterministic-fixture` cases point under `fixtures/` and run in the default
+  offline test suite.
+- `pinned-repository` cases identify a true Rust repository with a full 40-hex
+  Git revision and a `paired_fixture`. Validation and scoring never clone,
+  fetch, build, or query that repository.
+
+Every case records:
+
+| Field | Meaning |
+|---|---|
+| `query` | The exact user question being evaluated. |
+| `expected_symbols` | Canonical symbols that must all be returned. |
+| `expected_paths` | Complete ordered symbol paths that must all be returned. |
+| `forbidden_symbols`, `forbidden_paths` | Known wrong answers; any hit fails correctness. |
+| `required_evidence` | Exact evidence labels that the observation must retain. |
+| `required_diagnostics` | Exact `{kind, code}` boundaries; kinds are `capability`, `stale`, `worktree-mismatch`, `truncated`, or `degraded`. |
+| `allowed_ambiguity` | Maximum extra returned symbols plus paths, bounded to `0..=64`; it never permits a forbidden hit. |
+| `rubric` | Human answer-quality criteria retained for later Agent A/B review. |
+| `source_ref` | Requirement, issue, or roadmap evidence that introduced the case. |
+| `paired_fixture` | Required fixture case id for a pinned-repository case. |
+
+Unknown fields, duplicate ids or golden entries, empty required lists,
+expected/forbidden conflicts, mutable pinned revisions, pinned cases that point
+back into `fixtures/`, and invalid fixture links are rejected. This schema is
+independent of the E0 A/B corpus, so E0 plans and historical receipts remain
+compatible.
+
+## Query Observations And Scoring
+
+`score` consumes `agent-spec/atlas-eval/query-results-v1`. The results name the
+target `corpus_version` and provide exactly one observation for every corpus
+case. An observation preserves ranked symbols, complete paths, evidence,
+typed diagnostics, response bytes, duration, source read-back calls, and
+follow-up queries. Missing, duplicate, unknown, wrong-version, or malformed
+observations fail before a receipt is emitted.
+
+The output schema is `agent-spec/atlas-eval/query-regression-v1`. Per-case
+correctness and aggregate metrics use these deterministic rules:
+
+- symbol recall is matched expected symbols divided by expected symbols;
+- reciprocal rank is `1 / rank` of the first expected symbol, and aggregate
+  MRR is the mean across cases;
+- path precision and recall use exact ordered canonical paths;
+- evidence recall uses exact required evidence labels;
+- forbidden-hit rate is forbidden symbol and path hits divided by all returned
+  symbols and paths;
+- response bytes, latency, read-back calls, and follow-up queries report median
+  and median absolute deviation;
+- capability and stale diagnostic counts remain visible in the aggregate.
+
+The receipt also records a BLAKE3 `corpus_fingerprint` and preserves each
+case's observed typed diagnostic codes. A structurally valid observation set
+always produces a receipt. If any case fails correctness, `score` writes that
+receipt first and then exits non-zero with `atlas-query-regression`, so CI blocks
+without discarding failure evidence.
+
+A case fails when any expected symbol or path is missing, a forbidden item is
+returned, required evidence or diagnostics are missing, or extra results exceed
+`allowed_ambiguity`. Therefore a symbol hit cannot hide a wrong path or stale
+authority. The scorer exposes measurements and case-local correctness; it does
+not import benchmark percentages from another project.
+
+## Regression Promotion Loop
+
+When a production answer is wrong:
+
+1. Record the issue or requirement in `source_ref`.
+2. Reduce the failure to a deterministic fixture case.
+3. Add or update a pinned-repository case linked through `paired_fixture`.
+4. Capture a fresh observation explicitly, then run `atlas benchmark score`.
+5. Keep the regression in the checked-in corpus after the fix.
+6. Run the opt-in Agent A/B workflow when the change alters the default query
+   or MCP surface.
+
+Fresh pinned-repository observations and real Agent runs are explicit external
+steps. Default tests rebuild the checked-in Rust fixture, project current
+`rust_atlas::search` and `rust_atlas::flow` output into observations, and run the
+same scorer. The pinned-repository observation remains checked-in data; no
+default test performs network access or repository execution.
+
 ## Output Contract
 
-`plan` and `summarize` print pretty JSON followed by a newline when `--out` is
-not supplied:
+`plan`, `summarize`, and `score` print pretty JSON followed by a newline when
+`--out` is not supplied:
 
 ```bash
 cargo run -- atlas benchmark plan --corpus benchmarks/atlas/corpus.json
 cargo run -- atlas benchmark summarize --receipts receipts.json
+cargo run -- atlas benchmark score --corpus benchmarks/atlas/query-corpus.json --results benchmarks/atlas/query-results.json
 ```
 
 With `--out PATH`, they atomically replace `PATH` and keep stdout empty:
@@ -161,9 +261,12 @@ With `--out PATH`, they atomically replace `PATH` and keep stdout empty:
 ```bash
 cargo run -- atlas benchmark plan --corpus benchmarks/atlas/corpus.json --out plan.json
 cargo run -- atlas benchmark summarize --receipts receipts.ndjson --out summary.json
+cargo run -- atlas benchmark score --corpus benchmarks/atlas/query-corpus.json --results benchmarks/atlas/query-results.json --out query-regression.json
 ```
 
-Validation, parsing, and correctness errors occur before normal JSON output.
+Schema and parsing errors occur before JSON output. A structurally valid score
+run always emits its receipt; correctness failures then return non-zero with
+`atlas-query-regression`.
 
 ## Opt-In Runner
 
@@ -202,7 +305,8 @@ implemented.
 
 ## Limits
 
-This is a baseline harness, not a benchmark result. The repository provides an
-offline corpus, deterministic plan compilation, receipt validation, and robust
-summary statistics. It does not include a real-model run, a completed study, or
-evidence of an Atlas performance gain.
+These are evaluation and regression harnesses, not benchmark results. The
+repository provides offline corpora, deterministic plan compilation, typed
+receipt validation, query scoring, and robust summary statistics. It does not
+include a fresh real-repository observation, a real-model run, a completed
+study, or evidence of an Atlas performance gain.

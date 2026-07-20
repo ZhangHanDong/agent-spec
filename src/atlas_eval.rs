@@ -6,6 +6,10 @@ use std::path::{Path, PathBuf};
 pub const CORPUS_SCHEMA: &str = "agent-spec/atlas-eval/corpus-v1";
 pub const RUN_PLAN_SCHEMA: &str = "agent-spec/atlas-eval/run-plan-v1";
 pub const QUERY_METRICS_SCHEMA: &str = "agent-spec/atlas-eval/query-metrics-v1";
+pub const QUERY_CORPUS_SCHEMA: &str = "agent-spec/atlas-eval/query-corpus-v1";
+pub const QUERY_RESULTS_SCHEMA: &str = "agent-spec/atlas-eval/query-results-v1";
+pub const QUERY_REGRESSION_SCHEMA: &str = "agent-spec/atlas-eval/query-regression-v1";
+pub const QUERY_MAX_AMBIGUITY: usize = 64;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -63,6 +67,137 @@ pub enum Permissions {
 pub enum CacheCondition {
     Cold,
     Warm,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum QueryTier {
+    DeterministicFixture,
+    PinnedRepository,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum QueryDiagnosticKind {
+    Capability,
+    Stale,
+    WorktreeMismatch,
+    Truncated,
+    Degraded,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QueryCorpus {
+    pub schema: String,
+    pub version: String,
+    pub cases: Vec<QueryCase>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QueryCase {
+    pub id: String,
+    pub tier: QueryTier,
+    pub task_class: TaskClass,
+    pub repository: String,
+    pub revision: String,
+    pub query: String,
+    pub expected_symbols: Vec<String>,
+    pub expected_paths: Vec<Vec<String>>,
+    pub forbidden_symbols: Vec<String>,
+    pub forbidden_paths: Vec<Vec<String>>,
+    pub required_evidence: Vec<String>,
+    pub required_diagnostics: Vec<QueryDiagnostic>,
+    pub allowed_ambiguity: usize,
+    pub rubric: Vec<String>,
+    pub source_ref: String,
+    pub paired_fixture: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QueryResults {
+    pub schema: String,
+    pub corpus_version: String,
+    pub observations: Vec<QueryObservation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QueryObservation {
+    pub case_id: String,
+    pub ranked_symbols: Vec<String>,
+    pub paths: Vec<Vec<String>>,
+    pub evidence: Vec<String>,
+    pub diagnostics: Vec<QueryDiagnostic>,
+    pub response_bytes: u64,
+    pub duration_ms: u64,
+    pub read_back_calls: u64,
+    pub follow_up_queries: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QueryDiagnostic {
+    pub kind: QueryDiagnosticKind,
+    pub code: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QueryRegressionReceipt {
+    pub schema: String,
+    pub corpus_version: String,
+    pub corpus_fingerprint: String,
+    pub cases: Vec<QueryCaseScore>,
+    pub aggregate: QueryAggregateScore,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QueryCaseScore {
+    pub case_id: String,
+    pub tier: QueryTier,
+    pub passed: bool,
+    pub symbol_recall: f64,
+    pub reciprocal_rank: f64,
+    pub path_precision: f64,
+    pub path_recall: f64,
+    pub forbidden_hits: usize,
+    pub unexpected_items: usize,
+    pub evidence_recall: f64,
+    pub missing_evidence: Vec<String>,
+    pub missing_diagnostics: Vec<QueryDiagnostic>,
+    pub diagnostics: Vec<QueryDiagnostic>,
+    pub failure_reasons: Vec<String>,
+    pub returned_items: usize,
+    pub response_bytes: u64,
+    pub duration_ms: u64,
+    pub read_back_calls: u64,
+    pub follow_up_queries: u64,
+    pub capability_diagnostics: usize,
+    pub stale_diagnostics: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QueryAggregateScore {
+    pub cases: usize,
+    pub passed: usize,
+    pub failed: usize,
+    pub symbol_recall: f64,
+    pub mean_reciprocal_rank: f64,
+    pub path_precision: f64,
+    pub path_recall: f64,
+    pub forbidden_hit_rate: f64,
+    pub evidence_recall: f64,
+    pub response_bytes: MetricSummary,
+    pub duration_ms: MetricSummary,
+    pub read_back_calls: MetricSummary,
+    pub follow_up_queries: MetricSummary,
+    pub capability_diagnostics: usize,
+    pub stale_diagnostics: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -282,6 +417,638 @@ pub fn load_corpus(path: &Path) -> Result<Corpus, EvalError> {
     })?;
     validate_corpus(&corpus)?;
     Ok(corpus)
+}
+
+pub fn load_query_corpus(path: &Path) -> Result<QueryCorpus, EvalError> {
+    let bytes = std::fs::read(path).map_err(|error| {
+        EvalError::new(
+            "atlas-query-corpus-load",
+            format!("failed to read {}: {error}", path.display()),
+        )
+    })?;
+    let corpus = serde_json::from_slice(&bytes).map_err(|error| {
+        EvalError::new(
+            "atlas-query-corpus-parse",
+            format!("failed to parse {}: {error}", path.display()),
+        )
+    })?;
+    validate_query_corpus(&corpus)?;
+    Ok(corpus)
+}
+
+pub fn load_query_results(path: &Path) -> Result<QueryResults, EvalError> {
+    let bytes = std::fs::read(path).map_err(|error| {
+        EvalError::new(
+            "atlas-query-results-load",
+            format!("failed to read {}: {error}", path.display()),
+        )
+    })?;
+    serde_json::from_slice(&bytes).map_err(|error| {
+        EvalError::new(
+            "atlas-query-results-parse",
+            format!("failed to parse {}: {error}", path.display()),
+        )
+    })
+}
+
+pub fn validate_query_corpus(corpus: &QueryCorpus) -> Result<(), EvalError> {
+    if corpus.schema != QUERY_CORPUS_SCHEMA {
+        return Err(EvalError::new(
+            "atlas-query-corpus-schema",
+            format!(
+                "expected schema {QUERY_CORPUS_SCHEMA}, found {}",
+                corpus.schema
+            ),
+        ));
+    }
+    if corpus.version.trim().is_empty() {
+        return Err(EvalError::new(
+            "atlas-query-corpus-version",
+            "query corpus version must not be empty",
+        ));
+    }
+    if corpus.cases.is_empty() {
+        return Err(EvalError::new(
+            "atlas-query-corpus-empty",
+            "query corpus must contain at least one case",
+        ));
+    }
+
+    let mut ids = BTreeMap::new();
+    let mut has_fixture = false;
+    let mut has_pinned = false;
+    for case in &corpus.cases {
+        if case.id.trim().is_empty() {
+            return Err(EvalError::new(
+                "atlas-query-corpus-case-id",
+                "query case id must not be empty",
+            ));
+        }
+        if ids.insert(case.id.as_str(), case.tier).is_some() {
+            return Err(EvalError::new(
+                "atlas-query-corpus-duplicate",
+                format!("duplicate query case id {}", case.id),
+            ));
+        }
+        match case.tier {
+            QueryTier::DeterministicFixture => has_fixture = true,
+            QueryTier::PinnedRepository => has_pinned = true,
+        }
+    }
+    if !has_fixture || !has_pinned {
+        return Err(EvalError::new(
+            "atlas-query-corpus-tier",
+            "query corpus must contain deterministic-fixture and pinned-repository tiers",
+        ));
+    }
+
+    for case in &corpus.cases {
+        for (field, value) in [
+            ("repository", case.repository.as_str()),
+            ("revision", case.revision.as_str()),
+            ("query", case.query.as_str()),
+            ("source_ref", case.source_ref.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(EvalError::new(
+                    "atlas-query-corpus-field",
+                    format!("case {} has an empty {field}", case.id),
+                ));
+            }
+        }
+        validate_nonempty_unique_strings(&case.id, "expected_symbols", &case.expected_symbols)?;
+        validate_nonempty_unique_paths(&case.id, "expected_paths", &case.expected_paths)?;
+        validate_unique_strings(&case.id, "forbidden_symbols", &case.forbidden_symbols)?;
+        validate_unique_paths(&case.id, "forbidden_paths", &case.forbidden_paths)?;
+        validate_nonempty_unique_strings(&case.id, "required_evidence", &case.required_evidence)?;
+        validate_nonempty_unique_strings(&case.id, "rubric", &case.rubric)?;
+        validate_unique_diagnostics(&case.id, &case.required_diagnostics)?;
+        if case.allowed_ambiguity > QUERY_MAX_AMBIGUITY {
+            return Err(EvalError::new(
+                "atlas-query-corpus-ambiguity",
+                format!(
+                    "case {} allowed_ambiguity {} exceeds {}",
+                    case.id, case.allowed_ambiguity, QUERY_MAX_AMBIGUITY
+                ),
+            ));
+        }
+
+        let expected_symbols = case.expected_symbols.iter().collect::<BTreeSet<_>>();
+        if let Some(symbol) = case
+            .forbidden_symbols
+            .iter()
+            .find(|symbol| expected_symbols.contains(symbol))
+        {
+            return Err(EvalError::new(
+                "atlas-query-corpus-conflict",
+                format!("case {} both expects and forbids symbol {symbol}", case.id),
+            ));
+        }
+        let expected_paths = case
+            .expected_paths
+            .iter()
+            .map(|path| path_key(path))
+            .collect::<BTreeSet<_>>();
+        if case
+            .forbidden_paths
+            .iter()
+            .map(|path| path_key(path))
+            .any(|path| expected_paths.contains(&path))
+        {
+            return Err(EvalError::new(
+                "atlas-query-corpus-conflict",
+                format!("case {} both expects and forbids the same path", case.id),
+            ));
+        }
+
+        match case.tier {
+            QueryTier::DeterministicFixture => {
+                if !case.repository.starts_with("fixtures/") {
+                    return Err(EvalError::new(
+                        "atlas-query-corpus-fixture",
+                        format!(
+                            "fixture case {} repository must be under fixtures/",
+                            case.id
+                        ),
+                    ));
+                }
+            }
+            QueryTier::PinnedRepository => {
+                if case.repository.starts_with("fixtures/") {
+                    return Err(EvalError::new(
+                        "atlas-query-corpus-pinned-repository",
+                        format!(
+                            "pinned repository case {} must not use a fixtures/ repository",
+                            case.id
+                        ),
+                    ));
+                }
+                if !is_full_git_revision(&case.revision) {
+                    return Err(EvalError::new(
+                        "atlas-query-corpus-revision",
+                        format!(
+                            "pinned repository case {} must use a full 40-hex Git revision",
+                            case.id
+                        ),
+                    ));
+                }
+                let Some(paired) = case.paired_fixture.as_deref() else {
+                    return Err(EvalError::new(
+                        "atlas-query-corpus-pair",
+                        format!("pinned repository case {} has no paired_fixture", case.id),
+                    ));
+                };
+                if ids.get(paired) != Some(&QueryTier::DeterministicFixture) {
+                    return Err(EvalError::new(
+                        "atlas-query-corpus-pair",
+                        format!(
+                            "pinned repository case {} references non-fixture case {paired}",
+                            case.id
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn score_query_results(
+    corpus: &QueryCorpus,
+    results: &QueryResults,
+) -> Result<QueryRegressionReceipt, EvalError> {
+    validate_query_corpus(corpus)?;
+    validate_query_results(corpus, results)?;
+
+    let observations = results
+        .observations
+        .iter()
+        .map(|observation| (observation.case_id.as_str(), observation))
+        .collect::<BTreeMap<_, _>>();
+    let cases = corpus
+        .cases
+        .iter()
+        .map(|case| score_query_case(case, observations[case.id.as_str()]))
+        .collect::<Vec<_>>();
+    let aggregate = aggregate_query_scores(&cases);
+    let corpus_bytes = serde_json::to_vec(corpus).map_err(|error| {
+        EvalError::new(
+            "atlas-query-score",
+            format!("failed to fingerprint query corpus: {error}"),
+        )
+    })?;
+
+    Ok(QueryRegressionReceipt {
+        schema: QUERY_REGRESSION_SCHEMA.to_string(),
+        corpus_version: corpus.version.clone(),
+        corpus_fingerprint: blake3::hash(&corpus_bytes).to_hex().to_string(),
+        cases,
+        aggregate,
+    })
+}
+
+pub fn gate_query_regression(receipt: &QueryRegressionReceipt) -> Result<(), EvalError> {
+    if receipt.aggregate.failed == 0 {
+        Ok(())
+    } else {
+        Err(EvalError::new(
+            "atlas-query-regression",
+            format!(
+                "{} of {} query cases failed correctness",
+                receipt.aggregate.failed, receipt.aggregate.cases
+            ),
+        ))
+    }
+}
+
+fn validate_query_results(corpus: &QueryCorpus, results: &QueryResults) -> Result<(), EvalError> {
+    if results.schema != QUERY_RESULTS_SCHEMA {
+        return Err(EvalError::new(
+            "atlas-query-results-schema",
+            format!(
+                "expected schema {QUERY_RESULTS_SCHEMA}, found {}",
+                results.schema
+            ),
+        ));
+    }
+    if results.corpus_version != corpus.version {
+        return Err(EvalError::new(
+            "atlas-query-results-version",
+            format!(
+                "results target corpus version {}, expected {}",
+                results.corpus_version, corpus.version
+            ),
+        ));
+    }
+
+    let corpus_ids = corpus
+        .cases
+        .iter()
+        .map(|case| case.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut observed_ids = BTreeSet::new();
+    for observation in &results.observations {
+        if !observed_ids.insert(observation.case_id.as_str()) {
+            return Err(EvalError::new(
+                "atlas-query-results-duplicate",
+                format!("duplicate observation for case {}", observation.case_id),
+            ));
+        }
+        if !corpus_ids.contains(observation.case_id.as_str()) {
+            return Err(EvalError::new(
+                "atlas-query-results-unknown",
+                format!(
+                    "observation references unknown case {}",
+                    observation.case_id
+                ),
+            ));
+        }
+        validate_observation_strings(
+            &observation.case_id,
+            "ranked_symbols",
+            &observation.ranked_symbols,
+        )?;
+        validate_observation_paths(&observation.case_id, "paths", &observation.paths)?;
+        validate_observation_strings(&observation.case_id, "evidence", &observation.evidence)?;
+        let mut diagnostics = BTreeSet::new();
+        for diagnostic in &observation.diagnostics {
+            if diagnostic.code.trim().is_empty()
+                || !diagnostics.insert((diagnostic.kind, diagnostic.code.as_str()))
+            {
+                return Err(EvalError::new(
+                    "atlas-query-results-observation",
+                    format!(
+                        "case {} has an empty or duplicate diagnostic",
+                        observation.case_id
+                    ),
+                ));
+            }
+        }
+    }
+
+    let missing = corpus_ids
+        .difference(&observed_ids)
+        .copied()
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        return Err(EvalError::new(
+            "atlas-query-results-missing",
+            format!("missing observations for cases: {}", missing.join(", ")),
+        ));
+    }
+    Ok(())
+}
+
+fn score_query_case(case: &QueryCase, observation: &QueryObservation) -> QueryCaseScore {
+    let expected_symbols = case
+        .expected_symbols
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let forbidden_symbols = case
+        .forbidden_symbols
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let observed_symbols = observation
+        .ranked_symbols
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let symbol_matches = expected_symbols.intersection(&observed_symbols).count();
+    let symbol_recall = ratio(symbol_matches, expected_symbols.len());
+    let reciprocal_rank = observation
+        .ranked_symbols
+        .iter()
+        .position(|symbol| expected_symbols.contains(symbol.as_str()))
+        .map_or(0.0, |index| 1.0 / (index + 1) as f64);
+
+    let expected_paths = case
+        .expected_paths
+        .iter()
+        .map(|path| path_key(path))
+        .collect::<BTreeSet<_>>();
+    let forbidden_paths = case
+        .forbidden_paths
+        .iter()
+        .map(|path| path_key(path))
+        .collect::<BTreeSet<_>>();
+    let observed_paths = observation
+        .paths
+        .iter()
+        .map(|path| path_key(path))
+        .collect::<BTreeSet<_>>();
+    let path_matches = expected_paths.intersection(&observed_paths).count();
+    let path_precision = precision(
+        path_matches,
+        observed_paths.len(),
+        expected_paths.is_empty(),
+    );
+    let path_recall = ratio(path_matches, expected_paths.len());
+
+    let forbidden_hits = observation
+        .ranked_symbols
+        .iter()
+        .filter(|symbol| forbidden_symbols.contains(symbol.as_str()))
+        .count()
+        + observed_paths.intersection(&forbidden_paths).count();
+    let unexpected_items = observed_symbols.difference(&expected_symbols).count()
+        + observed_paths.difference(&expected_paths).count();
+
+    let observed_evidence = observation
+        .evidence
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let missing_evidence = case
+        .required_evidence
+        .iter()
+        .filter(|evidence| !observed_evidence.contains(evidence.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    let evidence_recall = ratio(
+        case.required_evidence.len() - missing_evidence.len(),
+        case.required_evidence.len(),
+    );
+
+    let observed_diagnostics = observation
+        .diagnostics
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let missing_diagnostics = case
+        .required_diagnostics
+        .iter()
+        .filter(|diagnostic| !observed_diagnostics.contains(*diagnostic))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    let mut failure_reasons = Vec::new();
+    if symbol_matches != expected_symbols.len() {
+        failure_reasons.push("missing-expected-symbol".to_string());
+    }
+    if path_matches != expected_paths.len() {
+        failure_reasons.push("missing-expected-path".to_string());
+    }
+    if forbidden_hits != 0 {
+        failure_reasons.push("forbidden-hit".to_string());
+    }
+    if !missing_evidence.is_empty() {
+        failure_reasons.push("missing-evidence".to_string());
+    }
+    if !missing_diagnostics.is_empty() {
+        failure_reasons.push("missing-required-diagnostic".to_string());
+    }
+    if unexpected_items > case.allowed_ambiguity {
+        failure_reasons.push("ambiguity-exceeded".to_string());
+    }
+
+    QueryCaseScore {
+        case_id: case.id.clone(),
+        tier: case.tier,
+        passed: failure_reasons.is_empty(),
+        symbol_recall,
+        reciprocal_rank,
+        path_precision,
+        path_recall,
+        forbidden_hits,
+        unexpected_items,
+        evidence_recall,
+        missing_evidence,
+        missing_diagnostics,
+        diagnostics: observation.diagnostics.clone(),
+        failure_reasons,
+        returned_items: observed_symbols.len() + observed_paths.len(),
+        response_bytes: observation.response_bytes,
+        duration_ms: observation.duration_ms,
+        read_back_calls: observation.read_back_calls,
+        follow_up_queries: observation.follow_up_queries,
+        capability_diagnostics: observation
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.kind == QueryDiagnosticKind::Capability)
+            .count(),
+        stale_diagnostics: observation
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.kind == QueryDiagnosticKind::Stale)
+            .count(),
+    }
+}
+
+fn aggregate_query_scores(cases: &[QueryCaseScore]) -> QueryAggregateScore {
+    let case_count = cases.len();
+    let passed = cases.iter().filter(|case| case.passed).count();
+    let forbidden_hits = cases.iter().map(|case| case.forbidden_hits).sum::<usize>();
+    let returned_items = cases.iter().map(|case| case.returned_items).sum::<usize>();
+    QueryAggregateScore {
+        cases: case_count,
+        passed,
+        failed: case_count - passed,
+        symbol_recall: mean(cases.iter().map(|case| case.symbol_recall)),
+        mean_reciprocal_rank: mean(cases.iter().map(|case| case.reciprocal_rank)),
+        path_precision: mean(cases.iter().map(|case| case.path_precision)),
+        path_recall: mean(cases.iter().map(|case| case.path_recall)),
+        forbidden_hit_rate: if returned_items == 0 {
+            0.0
+        } else {
+            forbidden_hits as f64 / returned_items as f64
+        },
+        evidence_recall: mean(cases.iter().map(|case| case.evidence_recall)),
+        response_bytes: metric(cases.iter().map(|case| case.response_bytes as f64)),
+        duration_ms: metric(cases.iter().map(|case| case.duration_ms as f64)),
+        read_back_calls: metric(cases.iter().map(|case| case.read_back_calls as f64)),
+        follow_up_queries: metric(cases.iter().map(|case| case.follow_up_queries as f64)),
+        capability_diagnostics: cases.iter().map(|case| case.capability_diagnostics).sum(),
+        stale_diagnostics: cases.iter().map(|case| case.stale_diagnostics).sum(),
+    }
+}
+
+fn validate_nonempty_unique_strings(
+    case_id: &str,
+    field: &str,
+    values: &[String],
+) -> Result<(), EvalError> {
+    if values.is_empty() {
+        return Err(EvalError::new(
+            "atlas-query-corpus-field",
+            format!("case {case_id} has no {field}"),
+        ));
+    }
+    validate_unique_strings(case_id, field, values)
+}
+
+fn validate_unique_strings(case_id: &str, field: &str, values: &[String]) -> Result<(), EvalError> {
+    let mut unique = BTreeSet::new();
+    for value in values {
+        if value.trim().is_empty() || !unique.insert(value.as_str()) {
+            return Err(EvalError::new(
+                "atlas-query-corpus-field",
+                format!("case {case_id} has an empty or duplicate {field} item"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_nonempty_unique_paths(
+    case_id: &str,
+    field: &str,
+    paths: &[Vec<String>],
+) -> Result<(), EvalError> {
+    if paths.is_empty() {
+        return Err(EvalError::new(
+            "atlas-query-corpus-field",
+            format!("case {case_id} has no {field}"),
+        ));
+    }
+    validate_unique_paths(case_id, field, paths)
+}
+
+fn validate_unique_paths(
+    case_id: &str,
+    field: &str,
+    paths: &[Vec<String>],
+) -> Result<(), EvalError> {
+    let mut unique = BTreeSet::new();
+    for path in paths {
+        if path.is_empty()
+            || path.iter().any(|segment| segment.trim().is_empty())
+            || !unique.insert(path_key(path))
+        {
+            return Err(EvalError::new(
+                "atlas-query-corpus-field",
+                format!("case {case_id} has an empty or duplicate {field} item"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_unique_diagnostics(
+    case_id: &str,
+    diagnostics: &[QueryDiagnostic],
+) -> Result<(), EvalError> {
+    let mut unique = BTreeSet::new();
+    for diagnostic in diagnostics {
+        if diagnostic.code.trim().is_empty() || !unique.insert(diagnostic) {
+            return Err(EvalError::new(
+                "atlas-query-corpus-field",
+                format!("case {case_id} has an empty or duplicate required_diagnostics item"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_observation_strings(
+    case_id: &str,
+    field: &str,
+    values: &[String],
+) -> Result<(), EvalError> {
+    let mut unique = BTreeSet::new();
+    for value in values {
+        if value.trim().is_empty() || !unique.insert(value.as_str()) {
+            return Err(EvalError::new(
+                "atlas-query-results-observation",
+                format!("case {case_id} has an empty or duplicate {field} item"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_observation_paths(
+    case_id: &str,
+    field: &str,
+    paths: &[Vec<String>],
+) -> Result<(), EvalError> {
+    let mut unique = BTreeSet::new();
+    for path in paths {
+        if path.is_empty()
+            || path.iter().any(|segment| segment.trim().is_empty())
+            || !unique.insert(path_key(path))
+        {
+            return Err(EvalError::new(
+                "atlas-query-results-observation",
+                format!("case {case_id} has an empty or duplicate {field} item"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn path_key(path: &[String]) -> String {
+    path.join("\u{1f}")
+}
+
+fn is_full_git_revision(revision: &str) -> bool {
+    revision.len() == 40 && revision.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn ratio(numerator: usize, denominator: usize) -> f64 {
+    if denominator == 0 {
+        1.0
+    } else {
+        numerator as f64 / denominator as f64
+    }
+}
+
+fn precision(matches: usize, returned: usize, expected_empty: bool) -> f64 {
+    if returned == 0 {
+        f64::from(expected_empty)
+    } else {
+        matches as f64 / returned as f64
+    }
+}
+
+fn mean(values: impl Iterator<Item = f64>) -> f64 {
+    let values = values.collect::<Vec<_>>();
+    if values.is_empty() {
+        0.0
+    } else {
+        values.iter().sum::<f64>() / values.len() as f64
+    }
 }
 
 pub fn compile_plan(corpus: &Corpus) -> Result<RunPlan, EvalError> {
@@ -744,6 +1511,506 @@ mod tests {
                 cache_condition: CacheCondition::Cold,
             }],
         }
+    }
+
+    fn valid_query_corpus() -> QueryCorpus {
+        QueryCorpus {
+            schema: QUERY_CORPUS_SCHEMA.to_string(),
+            version: "test-v1".to_string(),
+            cases: vec![
+                QueryCase {
+                    id: "fixture-flow".to_string(),
+                    tier: QueryTier::DeterministicFixture,
+                    task_class: TaskClass::Flow,
+                    repository: "fixtures/atlas/basic".to_string(),
+                    revision: "fixture-v1".to_string(),
+                    query: "Trace service run to store get.".to_string(),
+                    expected_symbols: vec![
+                        "atlas_basic::service::run".to_string(),
+                        "atlas_basic::store::Store::get".to_string(),
+                    ],
+                    expected_paths: vec![vec![
+                        "atlas_basic::service::run".to_string(),
+                        "atlas_basic::store::Store::get".to_string(),
+                    ]],
+                    forbidden_symbols: vec!["atlas_basic::open_default".to_string()],
+                    forbidden_paths: vec![vec![
+                        "atlas_basic::service::run".to_string(),
+                        "atlas_basic::open_default".to_string(),
+                    ]],
+                    required_evidence: vec!["fixtures/atlas/basic/src/service.rs".to_string()],
+                    required_diagnostics: vec![QueryDiagnostic {
+                        kind: QueryDiagnosticKind::Stale,
+                        code: "atlas-stale-syn".to_string(),
+                    }],
+                    allowed_ambiguity: 0,
+                    rubric: vec!["Returns the complete evidence-backed path.".to_string()],
+                    source_ref: "test-fixture".to_string(),
+                    paired_fixture: None,
+                },
+                QueryCase {
+                    id: "pinned-flow".to_string(),
+                    tier: QueryTier::PinnedRepository,
+                    task_class: TaskClass::Flow,
+                    repository: "https://github.com/example/project".to_string(),
+                    revision: "0123456789abcdef0123456789abcdef01234567".to_string(),
+                    query: "Trace command dispatch to scoring.".to_string(),
+                    expected_symbols: vec!["example::score".to_string()],
+                    expected_paths: vec![vec![
+                        "example::dispatch".to_string(),
+                        "example::score".to_string(),
+                    ]],
+                    forbidden_symbols: vec!["example::legacy_score".to_string()],
+                    forbidden_paths: vec![vec![
+                        "example::dispatch".to_string(),
+                        "example::legacy_score".to_string(),
+                    ]],
+                    required_evidence: vec!["src/eval.rs".to_string()],
+                    required_diagnostics: vec![QueryDiagnostic {
+                        kind: QueryDiagnosticKind::Capability,
+                        code: "atlas-capability-mir-unavailable".to_string(),
+                    }],
+                    allowed_ambiguity: 1,
+                    rubric: vec!["Uses the current scoring entry point.".to_string()],
+                    source_ref: "test-pinned".to_string(),
+                    paired_fixture: Some("fixture-flow".to_string()),
+                },
+            ],
+        }
+    }
+
+    fn matching_query_results() -> QueryResults {
+        QueryResults {
+            schema: QUERY_RESULTS_SCHEMA.to_string(),
+            corpus_version: "test-v1".to_string(),
+            observations: vec![
+                QueryObservation {
+                    case_id: "fixture-flow".to_string(),
+                    ranked_symbols: vec![
+                        "atlas_basic::service::run".to_string(),
+                        "atlas_basic::store::Store::get".to_string(),
+                    ],
+                    paths: vec![vec![
+                        "atlas_basic::service::run".to_string(),
+                        "atlas_basic::store::Store::get".to_string(),
+                    ]],
+                    evidence: vec!["fixtures/atlas/basic/src/service.rs".to_string()],
+                    diagnostics: vec![QueryDiagnostic {
+                        kind: QueryDiagnosticKind::Stale,
+                        code: "atlas-stale-syn".to_string(),
+                    }],
+                    response_bytes: 1_200,
+                    duration_ms: 25,
+                    read_back_calls: 1,
+                    follow_up_queries: 2,
+                },
+                QueryObservation {
+                    case_id: "pinned-flow".to_string(),
+                    ranked_symbols: vec![
+                        "example::unresolved_candidate".to_string(),
+                        "example::score".to_string(),
+                    ],
+                    paths: vec![vec![
+                        "example::dispatch".to_string(),
+                        "example::score".to_string(),
+                    ]],
+                    evidence: vec!["src/eval.rs".to_string()],
+                    diagnostics: vec![QueryDiagnostic {
+                        kind: QueryDiagnosticKind::Capability,
+                        code: "atlas-capability-mir-unavailable".to_string(),
+                    }],
+                    response_bytes: 2_400,
+                    duration_ms: 75,
+                    read_back_calls: 0,
+                    follow_up_queries: 1,
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn test_atlas_query_checked_in_corpus_has_fixture_and_pinned_repository_tiers() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("benchmarks/atlas/query-corpus.json");
+        let corpus = load_query_corpus(&path).expect("checked-in query corpus loads");
+
+        assert!(
+            corpus
+                .cases
+                .iter()
+                .any(|case| case.tier == QueryTier::DeterministicFixture)
+        );
+        assert!(
+            corpus
+                .cases
+                .iter()
+                .any(|case| case.tier == QueryTier::PinnedRepository)
+        );
+        for case in corpus
+            .cases
+            .iter()
+            .filter(|case| case.tier == QueryTier::PinnedRepository)
+        {
+            assert_eq!(case.revision.len(), 40);
+            assert!(case.revision.bytes().all(|byte| byte.is_ascii_hexdigit()));
+            let paired = case.paired_fixture.as_deref().expect("paired fixture");
+            assert!(corpus.cases.iter().any(|candidate| {
+                candidate.id == paired && candidate.tier == QueryTier::DeterministicFixture
+            }));
+        }
+    }
+
+    #[test]
+    fn test_atlas_query_checked_in_regression_receipt_is_passing() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let corpus = load_query_corpus(&root.join("benchmarks/atlas/query-corpus.json"))
+            .expect("checked-in query corpus loads");
+        let results = load_query_results(&root.join("benchmarks/atlas/query-results.json"))
+            .expect("checked-in query results load");
+
+        let receipt = score_query_results(&corpus, &results).expect("checked-in results score");
+
+        assert_eq!(receipt.aggregate.cases, corpus.cases.len());
+        assert_eq!(receipt.aggregate.passed, corpus.cases.len());
+        assert_eq!(receipt.aggregate.failed, 0);
+        assert_eq!(receipt.aggregate.forbidden_hit_rate, 0.0);
+    }
+
+    #[test]
+    fn test_atlas_query_live_fixture_probe_scores_current_search_and_flow() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let code = root.join("fixtures/atlas/basic");
+        let graph = temp_dir("atlas-query-live-probe").join("graph");
+        rust_atlas::build(
+            &code,
+            &graph,
+            &rust_atlas::BuildOptions {
+                full: true,
+                scip_index: Some(root.join("fixtures/atlas/scip/index.scip")),
+                dynamic_dispatch: false,
+            },
+        )
+        .expect("fixture graph builds offline");
+
+        let corpus = load_query_corpus(&root.join("benchmarks/atlas/query-corpus.json"))
+            .expect("checked-in query corpus loads");
+        let mut results = load_query_results(&root.join("benchmarks/atlas/query-results.json"))
+            .expect("checked-in query results load");
+        let flow_options = rust_atlas::FlowOptions {
+            frozen: true,
+            ..Default::default()
+        };
+
+        let search = rust_atlas::search(
+            &code,
+            &graph,
+            "MemStore",
+            &rust_atlas::SearchOptions {
+                limit: 1,
+                frozen: true,
+            },
+        )
+        .expect("fixture search runs");
+        let symbol_flow = rust_atlas::flow(
+            &code,
+            &graph,
+            rust_atlas::FlowQuery::Between {
+                from: "atlas_basic::open_default".to_string(),
+                to: "atlas_basic::store::MemStore".to_string(),
+            },
+            &flow_options,
+        )
+        .expect("fixture symbol path runs");
+        replace_live_observation(
+            &corpus,
+            &mut results,
+            "fixture-symbol-mem-store",
+            search
+                .matches
+                .iter()
+                .map(|hit| hit.node.symbol.clone())
+                .collect(),
+            &symbol_flow,
+            serde_json::to_vec(&search).unwrap().len()
+                + serde_json::to_vec(&symbol_flow).unwrap().len(),
+        );
+
+        let call_flow = rust_atlas::flow(
+            &code,
+            &graph,
+            rust_atlas::FlowQuery::Between {
+                from: "atlas_basic::service::run".to_string(),
+                to: "atlas_basic::store::Store::get".to_string(),
+            },
+            &flow_options,
+        )
+        .expect("fixture call path runs");
+        let call_symbols = call_flow
+            .shortest
+            .as_ref()
+            .expect("fixture call path exists")
+            .nodes
+            .iter()
+            .map(|node| node.symbol.clone())
+            .collect();
+        replace_live_observation(
+            &corpus,
+            &mut results,
+            "fixture-flow-store-get",
+            call_symbols,
+            &call_flow,
+            serde_json::to_vec(&call_flow).unwrap().len(),
+        );
+
+        let receipt = score_query_results(&corpus, &results).expect("live fixture results score");
+        for case_id in ["fixture-symbol-mem-store", "fixture-flow-store-get"] {
+            let score = receipt
+                .cases
+                .iter()
+                .find(|score| score.case_id == case_id)
+                .expect("live fixture score exists");
+            assert!(score.passed, "{case_id}: {:?}", score.failure_reasons);
+            assert!(score.response_bytes > 0);
+        }
+
+        std::fs::remove_dir_all(graph.parent().unwrap()).ok();
+    }
+
+    fn replace_live_observation(
+        corpus: &QueryCorpus,
+        results: &mut QueryResults,
+        case_id: &str,
+        ranked_symbols: Vec<String>,
+        flow: &rust_atlas::FlowResult,
+        response_bytes: usize,
+    ) {
+        let case = corpus
+            .cases
+            .iter()
+            .find(|case| case.id == case_id)
+            .expect("live fixture case exists");
+        let path = flow
+            .shortest
+            .as_ref()
+            .expect("live fixture path exists")
+            .nodes
+            .iter()
+            .map(|node| node.symbol.clone())
+            .collect::<Vec<_>>();
+        let evidence = flow
+            .shortest
+            .as_ref()
+            .expect("live fixture path exists")
+            .nodes
+            .iter()
+            .map(|node| format!("{}/{}", case.repository, node.file))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let observation = results
+            .observations
+            .iter_mut()
+            .find(|observation| observation.case_id == case_id)
+            .expect("live fixture observation exists");
+        observation.ranked_symbols = ranked_symbols;
+        observation.paths = vec![path];
+        observation.evidence = evidence;
+        observation.diagnostics.clear();
+        observation.response_bytes = response_bytes as u64;
+        observation.duration_ms = 0;
+        observation.read_back_calls = 0;
+        observation.follow_up_queries = 0;
+    }
+
+    #[test]
+    fn test_atlas_query_score_computes_recall_mrr_paths_and_costs() {
+        let receipt = score_query_results(&valid_query_corpus(), &matching_query_results())
+            .expect("valid query observations score");
+
+        assert_eq!(receipt.schema, QUERY_REGRESSION_SCHEMA);
+        assert_eq!(receipt.corpus_version, "test-v1");
+        assert_eq!(receipt.corpus_fingerprint.len(), 64);
+        assert_eq!(receipt.aggregate.cases, 2);
+        assert_eq!(receipt.aggregate.passed, 2);
+        assert_eq!(receipt.aggregate.failed, 0);
+        assert_eq!(receipt.aggregate.symbol_recall, 1.0);
+        assert_eq!(receipt.aggregate.mean_reciprocal_rank, 0.75);
+        assert_eq!(receipt.aggregate.path_precision, 1.0);
+        assert_eq!(receipt.aggregate.path_recall, 1.0);
+        assert_eq!(receipt.aggregate.forbidden_hit_rate, 0.0);
+        assert_eq!(receipt.aggregate.evidence_recall, 1.0);
+        assert_metric(&receipt.aggregate.response_bytes, 1_800.0, 600.0, 2);
+        assert_metric(&receipt.aggregate.duration_ms, 50.0, 25.0, 2);
+        assert_metric(&receipt.aggregate.read_back_calls, 0.5, 0.5, 2);
+        assert_metric(&receipt.aggregate.follow_up_queries, 1.5, 0.5, 2);
+        assert_eq!(receipt.aggregate.capability_diagnostics, 1);
+        assert_eq!(receipt.aggregate.stale_diagnostics, 1);
+        assert_eq!(receipt.cases[0].diagnostics[0].code, "atlas-stale-syn");
+    }
+
+    #[test]
+    fn test_atlas_query_score_rejects_wrong_paths_forbidden_hits_and_missing_evidence() {
+        let corpus = valid_query_corpus();
+        let mut results = matching_query_results();
+        let observation = &mut results.observations[0];
+        observation.paths = vec![vec![
+            "atlas_basic::service::run".to_string(),
+            "atlas_basic::open_default".to_string(),
+        ]];
+        observation
+            .ranked_symbols
+            .push("atlas_basic::open_default".to_string());
+        observation.evidence.clear();
+
+        let receipt = score_query_results(&corpus, &results).expect("invalid answer still scores");
+        let score = &receipt.cases[0];
+        assert!(!score.passed);
+        assert_eq!(score.symbol_recall, 1.0);
+        assert_eq!(score.path_recall, 0.0);
+        assert_eq!(score.path_precision, 0.0);
+        assert_eq!(score.forbidden_hits, 2);
+        assert_eq!(score.evidence_recall, 0.0);
+        assert_eq!(
+            score.missing_evidence,
+            ["fixtures/atlas/basic/src/service.rs"]
+        );
+        assert!(
+            score
+                .failure_reasons
+                .contains(&"missing-expected-path".to_string())
+        );
+        assert!(score.failure_reasons.contains(&"forbidden-hit".to_string()));
+        assert!(
+            score
+                .failure_reasons
+                .contains(&"missing-evidence".to_string())
+        );
+    }
+
+    #[test]
+    fn test_atlas_query_score_requires_declared_stale_diagnostic() {
+        let corpus = valid_query_corpus();
+        let mut results = matching_query_results();
+        results.observations[0].diagnostics[0].code = "atlas-stale-other-layer".to_string();
+
+        let receipt = score_query_results(&corpus, &results).expect("missing diagnostic scores");
+        let score = &receipt.cases[0];
+        assert!(!score.passed);
+        assert_eq!(
+            score.missing_diagnostics,
+            [QueryDiagnostic {
+                kind: QueryDiagnosticKind::Stale,
+                code: "atlas-stale-syn".to_string(),
+            }]
+        );
+        assert!(
+            score
+                .failure_reasons
+                .contains(&"missing-required-diagnostic".to_string())
+        );
+    }
+
+    #[test]
+    fn test_atlas_query_score_rejects_duplicate_missing_and_unknown_observations() {
+        let corpus = valid_query_corpus();
+
+        let mut duplicate = matching_query_results();
+        duplicate
+            .observations
+            .push(duplicate.observations[0].clone());
+        assert_eq!(
+            score_query_results(&corpus, &duplicate).unwrap_err().code(),
+            "atlas-query-results-duplicate"
+        );
+
+        let mut missing = matching_query_results();
+        missing.observations.pop();
+        assert_eq!(
+            score_query_results(&corpus, &missing).unwrap_err().code(),
+            "atlas-query-results-missing"
+        );
+
+        let mut unknown = matching_query_results();
+        unknown.observations[0].case_id = "unknown-case".to_string();
+        assert_eq!(
+            score_query_results(&corpus, &unknown).unwrap_err().code(),
+            "atlas-query-results-unknown"
+        );
+
+        let mut wrong_version = matching_query_results();
+        wrong_version.corpus_version = "other-version".to_string();
+        assert_eq!(
+            score_query_results(&corpus, &wrong_version)
+                .unwrap_err()
+                .code(),
+            "atlas-query-results-version"
+        );
+
+        let mut duplicate_diagnostic = matching_query_results();
+        let repeated_diagnostic = duplicate_diagnostic.observations[0].diagnostics[0].clone();
+        duplicate_diagnostic.observations[0]
+            .diagnostics
+            .push(repeated_diagnostic);
+        assert_eq!(
+            score_query_results(&corpus, &duplicate_diagnostic)
+                .unwrap_err()
+                .code(),
+            "atlas-query-results-observation"
+        );
+    }
+
+    #[test]
+    fn test_atlas_query_corpus_rejects_mutable_pinned_revision() {
+        let mut corpus = valid_query_corpus();
+        corpus.cases[1].revision = "main".to_string();
+        assert_eq!(
+            validate_query_corpus(&corpus).unwrap_err().code(),
+            "atlas-query-corpus-revision"
+        );
+    }
+
+    #[test]
+    fn test_atlas_query_corpus_rejects_fixture_path_as_pinned_repository() {
+        let mut corpus = valid_query_corpus();
+        corpus.cases[1].repository = "fixtures/atlas/basic".to_string();
+        assert_eq!(
+            validate_query_corpus(&corpus).unwrap_err().code(),
+            "atlas-query-corpus-pinned-repository"
+        );
+    }
+
+    #[test]
+    fn test_atlas_query_corpus_rejects_unbounded_ambiguity() {
+        let mut corpus = valid_query_corpus();
+        corpus.cases[0].allowed_ambiguity = QUERY_MAX_AMBIGUITY + 1;
+        assert_eq!(
+            validate_query_corpus(&corpus).unwrap_err().code(),
+            "atlas-query-corpus-ambiguity"
+        );
+    }
+
+    #[test]
+    fn test_atlas_query_corpus_and_results_reject_nested_unknown_fields() {
+        let dir = temp_dir("atlas-query-unknown-fields");
+        let corpus_path = dir.join("corpus.json");
+        let results_path = dir.join("results.json");
+        let mut corpus = serde_json::to_value(valid_query_corpus()).unwrap();
+        corpus["cases"][0]["required_diagnostics"][0]["unexpected"] = serde_json::json!(true);
+        std::fs::write(&corpus_path, serde_json::to_vec(&corpus).unwrap()).unwrap();
+        assert_eq!(
+            load_query_corpus(&corpus_path).unwrap_err().code(),
+            "atlas-query-corpus-parse"
+        );
+
+        let mut results = serde_json::to_value(matching_query_results()).unwrap();
+        results["observations"][0]["diagnostics"][0]["unexpected"] = serde_json::json!(true);
+        std::fs::write(&results_path, serde_json::to_vec(&results).unwrap()).unwrap();
+        assert_eq!(
+            load_query_results(&results_path).unwrap_err().code(),
+            "atlas-query-results-parse"
+        );
+
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

@@ -640,17 +640,23 @@ agent-spec wiki meta update --code . --wiki .agent-spec/wiki
 
 ## Atlas Evaluation
 
-Atlas includes an offline, correctness-first evaluation baseline that compiles
-paired Atlas and baseline runs from a pinned corpus. It does not invoke models
-or the network unless the separate runner is explicitly configured. See
-[Atlas Evaluation Baseline](docs/atlas-evaluation.md) for the corpus, run-plan,
-receipt, summary, and opt-in runner contracts.
+Atlas includes an offline, correctness-first evaluation baseline plus a
+deterministic query-quality regression gate. It does not invoke models or the
+network unless an external runner is explicitly configured. See
+[Atlas Evaluation And Query Regression](docs/atlas-evaluation.md) for the
+corpus, run-plan, score receipt, summary, and opt-in runner contracts.
 
 ```bash
 cargo run -- atlas benchmark validate --corpus benchmarks/atlas/corpus.json
 cargo run -- atlas benchmark plan --corpus benchmarks/atlas/corpus.json --out plan.json
 cargo run -- atlas benchmark summarize --receipts receipts.ndjson --out summary.json
+cargo run -- atlas benchmark score --corpus benchmarks/atlas/query-corpus.json --results benchmarks/atlas/query-results.json --out query-regression.json
 ```
+
+The `score` command gates ranked symbols, paths, evidence, forbidden hits,
+query costs, and stale/capability diagnostics. Pinned-repository cases identify
+immutable revisions but are not fetched or executed by scoring or default tests.
+Failed cases are written into the receipt before `score` exits non-zero.
 
 Wiki pages are maintained agent working memory, not KLL truth and not published
 human docs. Track `.agent-spec/wiki/**` in git, but keep `.agent-spec/runs`,
