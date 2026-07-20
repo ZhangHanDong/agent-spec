@@ -346,25 +346,26 @@ git commit -m "feat(atlas): isolate daemon query and sync work"
 **Files:**
 - Modify: `src/main.rs`
 - Modify: `src/atlas_daemon.rs`
+- Modify: `src/atlas_query_service.rs`
 - Test: `src/main.rs`
 
 **Interfaces:**
 - Produces: daemon worker config flags, `atlas daemon service-status`, `atlas context --execution worker`, `--fallback-direct`.
 - Preserves: existing direct `atlas context` JSON bytes and exit behavior.
 
-- [ ] **Step 1: Write failing clap and direct/worker parity tests**
+- [x] **Step 1: Write failing clap and direct/worker parity tests**
 
 Add `test_atlas_query_service_worker_matches_frozen_direct_result` and a clap test that covers every
 daemon numeric flag, direct/worker values, fallback-with-direct rejection and invalid ranges.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```bash
 cargo test test_atlas_query_service_worker_matches_frozen_direct_result -- --nocapture
 cargo test test_atlas_concurrent_query_cli_parse_contract -- --nocapture
 ```
 
-- [ ] **Step 3: Implement CLI surfaces**
+- [x] **Step 3: Implement CLI surfaces**
 
 `atlas daemon start|serve` accept `--query-workers`, `--query-queue-capacity`,
 `--query-queue-timeout-ms`, `--query-deadline-ms`, `--query-memory-budget-bytes` and
@@ -376,19 +377,19 @@ execution and emits `agent-spec/atlas-query-service-response-v1`. `--fallback-di
 direct mode; in worker mode it may handle busy/degraded/unavailable only after cancelling or proving
 the worker job was not running.
 
-- [ ] **Step 4: Preserve generation-honest fallback**
+- [x] **Step 4: Preserve generation-honest fallback**
 
 Add `test_atlas_query_worker_fallback_records_distinct_complete_generation`. The wrapper records
 `worker_generation`, `worker_outcome`, `fallback_generation`, `fallback_graph_fingerprint` and one
 digest of the complete fallback context. It never retains a partial worker context.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 ```bash
 cargo test test_atlas_concurrent_query_cli_parse_contract -- --nocapture
 cargo test test_atlas_query_service_worker_matches_frozen_direct_result -- --nocapture
 cargo test test_atlas_query_worker_fallback_records_distinct_complete_generation -- --nocapture
-git add src/main.rs src/atlas_daemon.rs
+git add src/main.rs src/atlas_daemon.rs src/atlas_query_service.rs
 git commit -m "feat(atlas): expose opt-in worker context queries"
 ```
 

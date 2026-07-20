@@ -599,7 +599,11 @@ impl DaemonIdentity {
     }
 }
 
-pub(crate) fn serve(code: &Path, graph: &Path) -> Result<(), DaemonError> {
+pub(crate) fn serve(
+    code: &Path,
+    graph: &Path,
+    query_config: crate::atlas_query_service::QueryServiceConfig,
+) -> Result<(), DaemonError> {
     serve_with_options(
         code,
         graph,
@@ -607,7 +611,7 @@ pub(crate) fn serve(code: &Path, graph: &Path) -> Result<(), DaemonError> {
             auto_sync: true,
             watch: true,
             poll_interval: Duration::from_millis(25),
-            query_config: crate::atlas_query_service::QueryServiceConfig::default(),
+            query_config,
         },
         None,
     )
@@ -630,6 +634,10 @@ fn serve_with_runners(
     query_runner: Option<Arc<dyn crate::atlas_query_service::QueryRunner>>,
     maintenance_runner: Option<Arc<dyn MaintenanceRunner>>,
 ) -> Result<(), DaemonError> {
+    options
+        .query_config
+        .validate()
+        .map_err(|error| DaemonError::Protocol(error.to_string()))?;
     let daemon_lease = DaemonLease::try_acquire(graph)?;
     let code = fs::canonicalize(code).map_err(io_error)?;
     let graph = fs::canonicalize(graph).map_err(io_error)?;
@@ -1318,11 +1326,19 @@ impl DaemonResponse {
     }
 }
 
-pub(crate) fn start(code: &Path, graph: &Path) -> Result<LiveRuntimeStatus, DaemonError> {
+pub(crate) fn start(
+    code: &Path,
+    graph: &Path,
+    query_config: crate::atlas_query_service::QueryServiceConfig,
+) -> Result<LiveRuntimeStatus, DaemonError> {
+    query_config
+        .validate()
+        .map_err(|error| DaemonError::Protocol(error.to_string()))?;
     fs::create_dir_all(graph).map_err(io_error)?;
     let code = fs::canonicalize(code).map_err(io_error)?;
     let graph = fs::canonicalize(graph).map_err(io_error)?;
     if let Ok(status) = live_daemon_status(&code, &graph) {
+        ensure_query_config(&code, &graph, query_config)?;
         return Ok(status);
     }
     let lease = match DaemonLease::try_acquire(&graph) {
@@ -1334,6 +1350,7 @@ pub(crate) fn start(code: &Path, graph: &Path) -> Result<LiveRuntimeStatus, Daem
         let deadline = Instant::now() + START_TIMEOUT;
         while Instant::now() < deadline {
             if let Ok(status) = live_daemon_status(&code, &graph) {
+                ensure_query_config(&code, &graph, query_config)?;
                 return Ok(status);
             }
             std::thread::sleep(Duration::from_millis(25));
@@ -1350,6 +1367,7 @@ pub(crate) fn start(code: &Path, graph: &Path) -> Result<LiveRuntimeStatus, Daem
         .arg(&code)
         .arg("--graph")
         .arg(&graph)
+        .args(query_config_args(query_config))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -1358,6 +1376,7 @@ pub(crate) fn start(code: &Path, graph: &Path) -> Result<LiveRuntimeStatus, Daem
     let deadline = Instant::now() + START_TIMEOUT;
     while Instant::now() < deadline {
         if let Ok(status) = live_daemon_status(&code, &graph) {
+            ensure_query_config(&code, &graph, query_config)?;
             return Ok(status);
         }
         std::thread::sleep(Duration::from_millis(25));
@@ -1365,6 +1384,38 @@ pub(crate) fn start(code: &Path, graph: &Path) -> Result<LiveRuntimeStatus, Daem
     Err(DaemonError::Unavailable(
         "daemon did not complete a verified handshake within 5 seconds".to_string(),
     ))
+}
+
+fn query_config_args(config: crate::atlas_query_service::QueryServiceConfig) -> [String; 12] {
+    [
+        "--query-workers".to_string(),
+        config.workers.to_string(),
+        "--query-queue-capacity".to_string(),
+        config.queue_capacity.to_string(),
+        "--query-queue-timeout-ms".to_string(),
+        config.queue_timeout_ms.to_string(),
+        "--query-deadline-ms".to_string(),
+        config.deadline_ms.to_string(),
+        "--query-memory-budget-bytes".to_string(),
+        config.memory_budget_bytes.to_string(),
+        "--query-retry-after-ms".to_string(),
+        config.retry_after_ms.to_string(),
+    ]
+}
+
+fn ensure_query_config(
+    code: &Path,
+    graph: &Path,
+    expected: crate::atlas_query_service::QueryServiceConfig,
+) -> Result<(), DaemonError> {
+    let actual = service_status(code, graph)?;
+    if expected.matches_status(&actual) {
+        Ok(())
+    } else {
+        Err(identity_error(
+            "active daemon query configuration does not match the requested values",
+        ))
+    }
 }
 
 fn detached_command(executable: &Path) -> Command {
@@ -1412,6 +1463,45 @@ fn live_daemon_status(code: &Path, graph: &Path) -> Result<LiveRuntimeStatus, Da
 
 pub(crate) fn sync(code: &Path, graph: &Path) -> Result<DaemonResponse, DaemonError> {
     send_command(code, graph, DaemonCommand::Sync)
+}
+
+pub(crate) fn service_status(
+    code: &Path,
+    graph: &Path,
+) -> Result<crate::atlas_query_service::QueryServiceStatus, DaemonError> {
+    send_command(code, graph, DaemonCommand::ServiceStatus)?
+        .service
+        .ok_or_else(|| DaemonError::Protocol("service-status omitted query service".to_string()))
+}
+
+pub(crate) fn context(
+    code: &Path,
+    graph: &Path,
+    request_id: &str,
+    query: &str,
+    options: &rust_atlas::ContextOptions,
+) -> Result<crate::atlas_query_service::QueryServiceWireReply, DaemonError> {
+    let identity = read_registry(graph)?;
+    let request = DaemonRequest {
+        schema_id: PROTOCOL_SCHEMA.to_string(),
+        schema_version: PROTOCOL_VERSION,
+        identity: identity.clone(),
+        command: DaemonCommand::Context,
+        context: Some(DaemonContextRequest {
+            request_id: request_id.to_string(),
+            query: query.to_string(),
+            profile: options.profile,
+            max_serialized_bytes: options.max_serialized_bytes,
+            min_score: options.min_score,
+            after: options.after.clone(),
+            expected_graph_fingerprint: options.expected_graph_fingerprint.clone(),
+            failure_evidence: options.failure_evidence.clone(),
+        }),
+        cancel: None,
+    };
+    send_request_to_identity(&identity, code, graph, request)?
+        .query
+        .ok_or_else(|| DaemonError::Protocol("context response omitted query result".to_string()))
 }
 
 pub(crate) fn stop(code: &Path, graph: &Path) -> Result<DaemonResponse, DaemonError> {
@@ -1884,6 +1974,36 @@ mod tests {
         assert!(command_allows_transient_retry(DaemonCommand::Status));
         assert!(command_allows_transient_retry(DaemonCommand::Stop));
         assert!(!command_allows_transient_retry(DaemonCommand::Sync));
+    }
+
+    #[test]
+    fn test_atlas_daemon_query_config_forwarding_is_exact() {
+        let config = crate::atlas_query_service::QueryServiceConfig {
+            workers: 3,
+            queue_capacity: 17,
+            queue_timeout_ms: 1_234,
+            deadline_ms: 4_321,
+            memory_budget_bytes: 33_554_432,
+            retry_after_ms: 77,
+        };
+        assert_eq!(
+            query_config_args(config),
+            [
+                "--query-workers",
+                "3",
+                "--query-queue-capacity",
+                "17",
+                "--query-queue-timeout-ms",
+                "1234",
+                "--query-deadline-ms",
+                "4321",
+                "--query-memory-budget-bytes",
+                "33554432",
+                "--query-retry-after-ms",
+                "77",
+            ]
+            .map(str::to_string)
+        );
     }
 
     #[test]

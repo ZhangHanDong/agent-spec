@@ -71,6 +71,16 @@ impl QueryServiceConfig {
         validate_range("retry_after_ms", self.retry_after_ms, 1, 10_000)?;
         Ok(())
     }
+
+    pub(crate) fn matches_status(self, status: &QueryServiceStatus) -> bool {
+        status.enabled == (self.workers > 0)
+            && status.workers == self.workers
+            && status.queue_capacity == self.queue_capacity
+            && status.queue_timeout_ms == self.queue_timeout_ms
+            && status.deadline_ms == self.deadline_ms
+            && status.memory_budget_bytes == self.memory_budget_bytes
+            && status.retry_after_ms == self.retry_after_ms
+    }
 }
 
 fn validate_range(
@@ -111,6 +121,7 @@ pub(crate) struct QueryServiceRequest {
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum QueryServingMode {
     Worker,
+    FallbackDirect,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -142,7 +153,8 @@ pub(crate) struct QueryServiceReceipt {
     pub schema: String,
     pub request_id: String,
     pub serving_mode: QueryServingMode,
-    pub limits: QueryServiceLimits,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limits: Option<QueryServiceLimits>,
     pub reservation_bytes: u64,
     pub enqueued_at_ms: u64,
     pub started_at_ms: Option<u64>,
@@ -156,7 +168,13 @@ pub(crate) struct QueryServiceReceipt {
     pub load_profile: Option<rust_atlas::QueryLoadProfile>,
     pub response_digest: Option<String>,
     pub fallback_used: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worker_outcome: Option<QueryOutcome>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worker_generation: Option<String>,
     pub fallback_generation: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback_graph_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -219,6 +237,80 @@ impl QueryServiceWireReply {
         }
     }
 
+    pub(crate) fn unavailable_attempt(request_id: String, diagnostic: String) -> Self {
+        let outcome = QueryOutcome::Unavailable;
+        Self {
+            schema: RESPONSE_SCHEMA.to_string(),
+            outcome,
+            context: None,
+            receipt: QueryServiceReceipt {
+                schema: RECEIPT_SCHEMA.to_string(),
+                request_id,
+                serving_mode: QueryServingMode::Worker,
+                limits: None,
+                reservation_bytes: 0,
+                enqueued_at_ms: 0,
+                started_at_ms: None,
+                completed_at_ms: 0,
+                queue_wait_ms: None,
+                execution_ms: None,
+                attempts: 0,
+                outcome,
+                generation: None,
+                graph_fingerprint: String::new(),
+                load_profile: None,
+                response_digest: None,
+                fallback_used: false,
+                worker_outcome: None,
+                worker_generation: None,
+                fallback_generation: None,
+                fallback_graph_fingerprint: None,
+            },
+            diagnostic: Some(diagnostic),
+            retry_after_ms: None,
+        }
+    }
+
+    pub(crate) fn with_fallback(
+        mut self,
+        context: rust_atlas::ContextResult,
+    ) -> Result<Self, &'static str> {
+        self.validate_shape()?;
+        if !matches!(
+            self.outcome,
+            QueryOutcome::Busy | QueryOutcome::Degraded | QueryOutcome::Unavailable
+        ) {
+            return Err("query outcome is not eligible for direct fallback");
+        }
+        let worker_outcome = self.outcome;
+        let worker_generation = self.receipt.generation.clone();
+        let fallback_generation = context.status.generation.clone();
+        let fallback_graph_fingerprint = context.receipt.graph_fingerprint.clone();
+        let load_profile = context.receipt.load_profile;
+        let context = serde_json::to_value(context).map_err(|_| "fallback context is invalid")?;
+        let response_digest = serde_json::to_vec(&context)
+            .map(|bytes| blake3::hash(&bytes).to_hex().to_string())
+            .map_err(|_| "fallback context digest failed")?;
+
+        self.outcome = QueryOutcome::Success;
+        self.context = Some(context);
+        self.receipt.serving_mode = QueryServingMode::FallbackDirect;
+        self.receipt.outcome = QueryOutcome::Success;
+        self.receipt.generation = fallback_generation.clone();
+        self.receipt.graph_fingerprint = fallback_graph_fingerprint.clone();
+        self.receipt.load_profile = Some(load_profile);
+        self.receipt.response_digest = Some(response_digest);
+        self.receipt.fallback_used = true;
+        self.receipt.worker_outcome = Some(worker_outcome);
+        self.receipt.worker_generation = worker_generation;
+        self.receipt.fallback_generation = fallback_generation;
+        self.receipt.fallback_graph_fingerprint = Some(fallback_graph_fingerprint);
+        self.diagnostic = None;
+        self.retry_after_ms = None;
+        self.validate_shape()?;
+        Ok(self)
+    }
+
     pub(crate) fn validate_shape(&self) -> Result<(), &'static str> {
         if self.schema != RESPONSE_SCHEMA {
             return Err("query response schema is unsupported");
@@ -228,6 +320,32 @@ impl QueryServiceWireReply {
         }
         if self.outcome != self.receipt.outcome {
             return Err("query wire reply and receipt outcomes differ");
+        }
+        if self.receipt.fallback_used {
+            if self.receipt.serving_mode != QueryServingMode::FallbackDirect
+                || self.outcome != QueryOutcome::Success
+                || !matches!(
+                    self.receipt.worker_outcome,
+                    Some(QueryOutcome::Busy | QueryOutcome::Degraded | QueryOutcome::Unavailable)
+                )
+                || self.receipt.fallback_generation != self.receipt.generation
+                || self.receipt.fallback_graph_fingerprint.as_deref()
+                    != Some(self.receipt.graph_fingerprint.as_str())
+                || self.receipt.response_digest.is_none()
+            {
+                return Err("query fallback receipt is inconsistent");
+            }
+        } else if self.receipt.serving_mode != QueryServingMode::Worker
+            || self.receipt.worker_outcome.is_some()
+            || self.receipt.worker_generation.is_some()
+            || self.receipt.fallback_generation.is_some()
+            || self.receipt.fallback_graph_fingerprint.is_some()
+            || (self.receipt.limits.is_none()
+                && !(self.outcome == QueryOutcome::Unavailable
+                    && self.receipt.attempts == 0
+                    && self.receipt.generation.is_none()))
+        {
+            return Err("query worker receipt is inconsistent");
         }
         match self.outcome {
             QueryOutcome::Success
@@ -367,11 +485,14 @@ pub(crate) struct QueryServiceStatus {
     pub enabled: bool,
     pub workers: usize,
     pub queue_capacity: usize,
+    pub queue_timeout_ms: u64,
+    pub deadline_ms: u64,
     pub queued: usize,
     pub active: usize,
     pub outstanding: usize,
     pub reserved_bytes: u64,
     pub memory_budget_bytes: u64,
+    pub retry_after_ms: u64,
     pub circuit_open: bool,
     pub shutting_down: bool,
     pub accepted: u64,
@@ -739,11 +860,14 @@ impl QueryService {
             enabled: self.sender.is_some(),
             workers: self.config.workers,
             queue_capacity: self.config.queue_capacity,
+            queue_timeout_ms: self.config.queue_timeout_ms,
+            deadline_ms: self.config.deadline_ms,
             queued: state.queued,
             active: state.active,
             outstanding: state.outstanding,
             reserved_bytes: state.reserved_bytes,
             memory_budget_bytes: self.config.memory_budget_bytes,
+            retry_after_ms: self.config.retry_after_ms,
             circuit_open: state.circuit_open,
             shutting_down: state.shutting_down,
             accepted: state.accepted,
@@ -787,7 +911,7 @@ impl QueryService {
                 schema: RECEIPT_SCHEMA.to_string(),
                 request_id,
                 serving_mode: QueryServingMode::Worker,
-                limits: self.config.into(),
+                limits: Some(self.config.into()),
                 reservation_bytes: 0,
                 enqueued_at_ms: now_ms,
                 started_at_ms: None,
@@ -801,7 +925,10 @@ impl QueryService {
                 load_profile: None,
                 response_digest: None,
                 fallback_used: false,
+                worker_outcome: None,
+                worker_generation: None,
                 fallback_generation: None,
+                fallback_graph_fingerprint: None,
             },
             diagnostic: Some(diagnostic),
             retry_after_ms,
@@ -996,7 +1123,7 @@ fn finish_job(
         schema: RECEIPT_SCHEMA.into(),
         request_id: request_id.clone(),
         serving_mode: QueryServingMode::Worker,
-        limits: config.into(),
+        limits: Some(config.into()),
         reservation_bytes: job.reservation_bytes,
         enqueued_at_ms: job.enqueued_at_ms,
         started_at_ms,
@@ -1010,7 +1137,10 @@ fn finish_job(
         load_profile,
         response_digest,
         fallback_used: false,
+        worker_outcome: None,
+        worker_generation: None,
         fallback_generation: None,
+        fallback_graph_fingerprint: None,
     };
     let reply = QueryServiceReply {
         outcome,
@@ -1099,7 +1229,7 @@ fn rejected_reply(
             schema: RECEIPT_SCHEMA.into(),
             request_id: request.request_id.clone(),
             serving_mode: QueryServingMode::Worker,
-            limits: config.into(),
+            limits: Some(config.into()),
             reservation_bytes,
             enqueued_at_ms: now_ms,
             started_at_ms: None,
@@ -1113,7 +1243,10 @@ fn rejected_reply(
             load_profile: None,
             response_digest: None,
             fallback_used: false,
+            worker_outcome: None,
+            worker_generation: None,
             fallback_generation: None,
+            fallback_graph_fingerprint: None,
         },
         diagnostic: Some(diagnostic.into()),
         retry_after_ms,
@@ -1652,6 +1785,31 @@ mod tests {
         assert_eq!(rejection.outcome, QueryOutcome::Degraded);
         assert_eq!(rejection.retry_after_ms, Some(100));
         assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+        let fallback_context = rust_atlas::compile_context(
+            &code,
+            &graph,
+            "entry",
+            &rust_atlas::ContextOptions {
+                frozen: true,
+                ..rust_atlas::ContextOptions::default()
+            },
+        )
+        .unwrap();
+        let fallback = QueryServiceWireReply::from_reply(&rejection)
+            .unwrap()
+            .with_fallback(fallback_context)
+            .unwrap();
+        assert_eq!(fallback.outcome, QueryOutcome::Success);
+        assert_eq!(
+            fallback.receipt.worker_outcome,
+            Some(QueryOutcome::Degraded)
+        );
+        assert_eq!(
+            fallback.receipt.worker_generation,
+            rejection.receipt.generation
+        );
+        fallback.validate_shape().unwrap();
 
         drop(reply);
         drop(rejection);

@@ -19,7 +19,7 @@ mod spec_knowledge;
 mod spec_mcp;
 mod vcs;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::io::{Read, Write};
@@ -524,6 +524,10 @@ enum AtlasCommands {
     /// Compile a deterministic, bounded evidence context for an agent query
     Context {
         query: String,
+        #[arg(long, value_enum, default_value_t = AtlasContextExecution::Direct)]
+        execution: AtlasContextExecution,
+        #[arg(long)]
+        fallback_direct: bool,
         #[arg(
             long,
             default_value = "symbol",
@@ -663,6 +667,89 @@ enum AtlasCommands {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum AtlasContextExecution {
+    Direct,
+    Worker,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::Args)]
+struct AtlasQueryServiceArgs {
+    #[arg(long, default_value_t = 0, value_parser = parse_query_workers)]
+    query_workers: usize,
+    #[arg(long, default_value_t = 4, value_parser = parse_query_queue_capacity)]
+    query_queue_capacity: usize,
+    #[arg(long, default_value_t = 2_000, value_parser = parse_query_queue_timeout)]
+    query_queue_timeout_ms: u64,
+    #[arg(long, default_value_t = 20_000, value_parser = parse_query_deadline)]
+    query_deadline_ms: u64,
+    #[arg(
+        long,
+        default_value_t = 268_435_456,
+        value_parser = parse_query_memory_budget
+    )]
+    query_memory_budget_bytes: u64,
+    #[arg(long, default_value_t = 100, value_parser = parse_query_retry_after)]
+    query_retry_after_ms: u64,
+}
+
+fn parse_bounded_u64(value: &str, field: &str, minimum: u64, maximum: u64) -> Result<u64, String> {
+    let parsed = value
+        .parse::<u64>()
+        .map_err(|error| format!("{field} must be an integer: {error}"))?;
+    if (minimum..=maximum).contains(&parsed) {
+        Ok(parsed)
+    } else {
+        Err(format!("{field}={parsed} is outside {minimum}..={maximum}"))
+    }
+}
+
+fn parse_query_workers(value: &str) -> Result<usize, String> {
+    parse_bounded_u64(value, "query-workers", 0, 4).map(|value| value as usize)
+}
+
+fn parse_query_queue_capacity(value: &str) -> Result<usize, String> {
+    parse_bounded_u64(value, "query-queue-capacity", 1, 64).map(|value| value as usize)
+}
+
+fn parse_query_queue_timeout(value: &str) -> Result<u64, String> {
+    parse_bounded_u64(value, "query-queue-timeout-ms", 10, 30_000)
+}
+
+fn parse_query_deadline(value: &str) -> Result<u64, String> {
+    parse_bounded_u64(value, "query-deadline-ms", 100, 60_000)
+}
+
+fn parse_query_memory_budget(value: &str) -> Result<u64, String> {
+    parse_bounded_u64(
+        value,
+        "query-memory-budget-bytes",
+        16_777_216,
+        2_147_483_648,
+    )
+}
+
+fn parse_query_retry_after(value: &str) -> Result<u64, String> {
+    parse_bounded_u64(value, "query-retry-after-ms", 1, 10_000)
+}
+
+impl AtlasQueryServiceArgs {
+    fn into_config(
+        self,
+    ) -> Result<crate::atlas_query_service::QueryServiceConfig, Box<dyn std::error::Error>> {
+        let config = crate::atlas_query_service::QueryServiceConfig {
+            workers: self.query_workers,
+            queue_capacity: self.query_queue_capacity,
+            queue_timeout_ms: self.query_queue_timeout_ms,
+            deadline_ms: self.query_deadline_ms,
+            memory_budget_bytes: self.query_memory_budget_bytes,
+            retry_after_ms: self.query_retry_after_ms,
+        };
+        config.validate()?;
+        Ok(config)
+    }
+}
+
 #[derive(Subcommand)]
 enum AtlasDaemonCommands {
     /// Start a detached daemon or attach to the verified existing owner
@@ -671,6 +758,8 @@ enum AtlasDaemonCommands {
         code: PathBuf,
         #[arg(long, default_value = ".agent-spec/graph")]
         graph: PathBuf,
+        #[command(flatten)]
+        query: AtlasQueryServiceArgs,
     },
     /// Run the daemon in the foreground for process supervision
     Serve {
@@ -678,9 +767,18 @@ enum AtlasDaemonCommands {
         code: PathBuf,
         #[arg(long, default_value = ".agent-spec/graph")]
         graph: PathBuf,
+        #[command(flatten)]
+        query: AtlasQueryServiceArgs,
     },
     /// Read verified daemon runtime status without querying graph facts
     Status {
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+    },
+    /// Read worker limits, queue counters and circuit state
+    ServiceStatus {
         #[arg(long, default_value = ".")]
         code: PathBuf,
         #[arg(long, default_value = ".agent-spec/graph")]
@@ -3970,6 +4068,8 @@ fn cmd_atlas(action: AtlasCommands) -> Result<(), Box<dyn std::error::Error>> {
         }
         AtlasCommands::Context {
             query,
+            execution,
+            fallback_direct,
             profile,
             after,
             expect_graph,
@@ -3980,22 +4080,40 @@ fn cmd_atlas(action: AtlasCommands) -> Result<(), Box<dyn std::error::Error>> {
             graph,
             frozen,
         } => {
+            validate_atlas_context_execution(execution, fallback_direct)?;
+            let options = rust_atlas::ContextOptions {
+                profile: parse_context_profile(&profile)?,
+                frozen,
+                max_serialized_bytes: max_bytes,
+                min_score,
+                after,
+                expected_graph_fingerprint: expect_graph,
+                failure_evidence,
+            };
             let stdout = std::io::stdout();
-            cmd_atlas_context_with_writer(
-                &code,
-                &graph,
-                &query,
-                &rust_atlas::ContextOptions {
-                    profile: parse_context_profile(&profile)?,
-                    frozen,
-                    max_serialized_bytes: max_bytes,
-                    min_score,
-                    after,
-                    expected_graph_fingerprint: expect_graph,
-                    failure_evidence,
-                },
-                &mut stdout.lock(),
-            )
+            match execution {
+                AtlasContextExecution::Direct => cmd_atlas_context_with_writer(
+                    &code,
+                    &graph,
+                    &query,
+                    &options,
+                    &mut stdout.lock(),
+                ),
+                AtlasContextExecution::Worker => {
+                    let reply = execute_atlas_context_worker(
+                        &code,
+                        &graph,
+                        &next_atlas_context_request_id(),
+                        &query,
+                        &options,
+                        fallback_direct,
+                    )?;
+                    let mut stdout = stdout.lock();
+                    serde_json::to_writer(&mut stdout, &reply)?;
+                    stdout.write_all(b"\n")?;
+                    Ok(())
+                }
+            }
         }
         AtlasCommands::Flow {
             from,
@@ -4126,15 +4244,19 @@ fn cmd_atlas(action: AtlasCommands) -> Result<(), Box<dyn std::error::Error>> {
 
 fn cmd_atlas_daemon(action: AtlasDaemonCommands) -> Result<(), Box<dyn std::error::Error>> {
     match action {
-        AtlasDaemonCommands::Start { code, graph } => {
-            let status = crate::atlas_daemon::start(&code, &graph)?;
+        AtlasDaemonCommands::Start { code, graph, query } => {
+            let status = crate::atlas_daemon::start(&code, &graph, query.into_config()?)?;
             println!("{}", serde_json::to_string_pretty(&status)?);
         }
-        AtlasDaemonCommands::Serve { code, graph } => {
-            crate::atlas_daemon::serve(&code, &graph)?;
+        AtlasDaemonCommands::Serve { code, graph, query } => {
+            crate::atlas_daemon::serve(&code, &graph, query.into_config()?)?;
         }
         AtlasDaemonCommands::Status { code, graph } => {
             let status = crate::atlas_daemon::daemon_status(&code, &graph)?;
+            println!("{}", serde_json::to_string_pretty(&status)?);
+        }
+        AtlasDaemonCommands::ServiceStatus { code, graph } => {
+            let status = crate::atlas_daemon::service_status(&code, &graph)?;
             println!("{}", serde_json::to_string_pretty(&status)?);
         }
         AtlasDaemonCommands::Sync { code, graph } => {
@@ -4147,6 +4269,65 @@ fn cmd_atlas_daemon(action: AtlasDaemonCommands) -> Result<(), Box<dyn std::erro
         }
     }
     Ok(())
+}
+
+fn validate_atlas_context_execution(
+    execution: AtlasContextExecution,
+    fallback_direct: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if fallback_direct && execution != AtlasContextExecution::Worker {
+        return Err(std::io::Error::other(
+            "atlas-context-fallback: --fallback-direct requires --execution worker",
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn next_atlas_context_request_id() -> String {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    format!(
+        "atlas-cli-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    )
+}
+
+fn execute_atlas_context_worker(
+    code: &Path,
+    graph: &Path,
+    request_id: &str,
+    query: &str,
+    direct_options: &rust_atlas::ContextOptions,
+    fallback_direct: bool,
+) -> Result<crate::atlas_query_service::QueryServiceWireReply, Box<dyn std::error::Error>> {
+    let mut worker_options = direct_options.clone();
+    worker_options.frozen = true;
+    let attempt =
+        match crate::atlas_daemon::context(code, graph, request_id, query, &worker_options) {
+            Ok(reply) => reply,
+            Err(crate::atlas_daemon::DaemonError::Unavailable(error)) => {
+                crate::atlas_query_service::QueryServiceWireReply::unavailable_attempt(
+                    request_id.to_string(),
+                    format!("atlas-query-unavailable: {error}"),
+                )
+            }
+            Err(error) => return Err(error.into()),
+        };
+    if fallback_direct
+        && matches!(
+            attempt.outcome,
+            crate::atlas_query_service::QueryOutcome::Busy
+                | crate::atlas_query_service::QueryOutcome::Degraded
+                | crate::atlas_query_service::QueryOutcome::Unavailable
+        )
+    {
+        let context = rust_atlas::compile_context(code, graph, query, direct_options)?;
+        return attempt
+            .with_fallback(context)
+            .map_err(|error| std::io::Error::other(error).into());
+    }
+    Ok(attempt)
 }
 
 fn cmd_atlas_status_with_writer(
@@ -12264,7 +12445,7 @@ Scenario: pass
 
     #[test]
     fn test_atlas_daemon_cli_parses_nested_actions() {
-        for action in ["start", "serve", "status", "sync", "stop"] {
+        for action in ["start", "serve", "status", "service-status", "sync", "stop"] {
             let cli = super::Cli::try_parse_from([
                 "agent-spec",
                 "atlas",
@@ -12283,15 +12464,104 @@ Scenario: pass
                 panic!("expected atlas daemon {action}");
             };
             let (code, graph) = match parsed {
-                super::AtlasDaemonCommands::Start { code, graph }
-                | super::AtlasDaemonCommands::Serve { code, graph }
+                super::AtlasDaemonCommands::Start { code, graph, .. }
+                | super::AtlasDaemonCommands::Serve { code, graph, .. }
                 | super::AtlasDaemonCommands::Status { code, graph }
+                | super::AtlasDaemonCommands::ServiceStatus { code, graph }
                 | super::AtlasDaemonCommands::Sync { code, graph }
                 | super::AtlasDaemonCommands::Stop { code, graph } => (code, graph),
             };
             assert_eq!(code, PathBuf::from("worktree"));
             assert_eq!(graph, PathBuf::from("graph"));
         }
+    }
+
+    #[test]
+    fn test_atlas_concurrent_query_cli_parse_contract() {
+        let cli = super::Cli::try_parse_from([
+            "agent-spec",
+            "atlas",
+            "daemon",
+            "start",
+            "--code",
+            "worktree",
+            "--graph",
+            "graph",
+            "--query-workers",
+            "3",
+            "--query-queue-capacity",
+            "17",
+            "--query-queue-timeout-ms",
+            "1234",
+            "--query-deadline-ms",
+            "4321",
+            "--query-memory-budget-bytes",
+            "33554432",
+            "--query-retry-after-ms",
+            "77",
+        ])
+        .unwrap();
+        let super::Commands::Atlas {
+            action:
+                super::AtlasCommands::Daemon {
+                    action: super::AtlasDaemonCommands::Start { query, .. },
+                },
+        } = cli.command
+        else {
+            panic!("expected atlas daemon start");
+        };
+        assert_eq!(
+            query.into_config().unwrap(),
+            crate::atlas_query_service::QueryServiceConfig {
+                workers: 3,
+                queue_capacity: 17,
+                queue_timeout_ms: 1234,
+                deadline_ms: 4321,
+                memory_budget_bytes: 33_554_432,
+                retry_after_ms: 77,
+            }
+        );
+
+        for (flag, value) in [
+            ("--query-workers", "5"),
+            ("--query-queue-capacity", "0"),
+            ("--query-queue-timeout-ms", "9"),
+            ("--query-deadline-ms", "99"),
+            ("--query-memory-budget-bytes", "16777215"),
+            ("--query-retry-after-ms", "0"),
+        ] {
+            assert!(
+                super::Cli::try_parse_from(
+                    ["agent-spec", "atlas", "daemon", "serve", flag, value,]
+                )
+                .is_err(),
+                "{flag}={value} must fail during CLI parsing"
+            );
+        }
+
+        let direct_fallback = super::Cli::try_parse_from([
+            "agent-spec",
+            "atlas",
+            "context",
+            "value",
+            "--fallback-direct",
+        ])
+        .unwrap();
+        let super::Commands::Atlas {
+            action:
+                super::AtlasCommands::Context {
+                    execution,
+                    fallback_direct,
+                    ..
+                },
+        } = direct_fallback.command
+        else {
+            panic!("expected atlas context");
+        };
+        assert!(
+            super::validate_atlas_context_execution(execution, fallback_direct).is_err(),
+            "fallback-direct must be rejected in direct mode"
+        );
     }
 
     fn run_atlas_benchmark_cli(
@@ -13134,6 +13404,123 @@ Scenario: pass
             .clone();
         super::Cli::try_parse_from(continuation)
             .expect("continuation argv parses in a new process");
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_query_service_worker_matches_frozen_direct_result() {
+        let (code, graph) = atlas_fixture_copy("atlas-context-worker-parity");
+        rust_atlas::build(&code, &graph, &rust_atlas::BuildOptions::default()).unwrap();
+        let config = crate::atlas_query_service::QueryServiceConfig::worker_profile();
+        let server_code = code.clone();
+        let server_graph = graph.clone();
+        let server = std::thread::spawn(move || {
+            crate::atlas_daemon::serve(&server_code, &server_graph, config).unwrap();
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !(crate::atlas_daemon::service_status(&code, &graph).is_ok()
+            && crate::atlas_daemon::daemon_status(&code, &graph)
+                .is_ok_and(|status| status.state == rust_atlas::live::LiveRuntimeState::Healthy))
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "worker daemon did not become ready"
+            );
+            std::thread::yield_now();
+        }
+        let service_status = crate::atlas_daemon::service_status(&code, &graph).unwrap();
+        assert!(config.matches_status(&service_status));
+        let mismatch = crate::atlas_daemon::start(
+            &code,
+            &graph,
+            crate::atlas_query_service::QueryServiceConfig {
+                workers: 1,
+                ..config
+            },
+        )
+        .unwrap_err();
+        assert!(
+            mismatch
+                .to_string()
+                .contains("configuration does not match")
+        );
+
+        for profile in [
+            rust_atlas::ContextProfile::Symbol,
+            rust_atlas::ContextProfile::Flow,
+            rust_atlas::ContextProfile::Architecture,
+            rust_atlas::ContextProfile::Impact,
+        ] {
+            let options = rust_atlas::ContextOptions {
+                profile,
+                frozen: true,
+                ..rust_atlas::ContextOptions::default()
+            };
+            let direct = rust_atlas::compile_context(&code, &graph, "MemStore", &options).unwrap();
+            let worker = crate::atlas_daemon::context(
+                &code,
+                &graph,
+                &format!("parity-{profile:?}"),
+                "MemStore",
+                &options,
+            )
+            .unwrap();
+            assert_eq!(
+                worker.outcome,
+                crate::atlas_query_service::QueryOutcome::Success
+            );
+            assert_eq!(worker.context, Some(serde_json::to_value(&direct).unwrap()));
+            assert_eq!(
+                worker.receipt.graph_fingerprint,
+                direct.receipt.graph_fingerprint
+            );
+        }
+
+        crate::atlas_daemon::stop(&code, &graph).unwrap();
+        server.join().unwrap();
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_query_worker_fallback_records_distinct_complete_generation() {
+        let (code, graph) = atlas_fixture_copy("atlas-context-worker-fallback");
+        rust_atlas::build(&code, &graph, &rust_atlas::BuildOptions::default()).unwrap();
+        let options = rust_atlas::ContextOptions {
+            profile: rust_atlas::ContextProfile::Symbol,
+            frozen: true,
+            ..rust_atlas::ContextOptions::default()
+        };
+        let reply = super::execute_atlas_context_worker(
+            &code,
+            &graph,
+            "fallback-unavailable",
+            "MemStore",
+            &options,
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            reply.outcome,
+            crate::atlas_query_service::QueryOutcome::Success
+        );
+        assert!(reply.receipt.fallback_used);
+        assert_eq!(
+            reply.receipt.worker_outcome,
+            Some(crate::atlas_query_service::QueryOutcome::Unavailable)
+        );
+        assert!(reply.receipt.worker_generation.is_none());
+        assert_eq!(reply.receipt.generation, reply.receipt.fallback_generation);
+        assert_eq!(
+            reply.receipt.graph_fingerprint,
+            reply.receipt.fallback_graph_fingerprint.clone().unwrap()
+        );
+        reply.validate_shape().unwrap();
+        let context = reply.context.unwrap();
+        let digest = blake3::hash(&serde_json::to_vec(&context).unwrap())
+            .to_hex()
+            .to_string();
+        assert_eq!(reply.receipt.response_digest, Some(digest));
+        assert!(reply.diagnostic.is_none());
         fs::remove_dir_all(code.parent().unwrap()).ok();
     }
 

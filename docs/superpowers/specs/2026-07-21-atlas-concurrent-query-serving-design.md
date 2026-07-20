@@ -144,7 +144,9 @@ shape.
 
 `atlas daemon start|serve` gain explicit query worker settings. `atlas daemon service-status`
 shows queue, active jobs, limits, counters and circuit state without changing the existing runtime
-status shape.
+status shape. Detached start forwards every validated setting to serve and refuses to attach when an
+existing daemon's service status does not match the requested settings or reports the configured
+worker pool as disabled.
 
 The `atlas_context` MCP tool is hidden unless `AGENT_SPEC_MCP_ATLAS_CONTEXT=1`. Worker routing and
 the concurrent MCP dispatcher additionally require `AGENT_SPEC_MCP_ATLAS_QUERY_MODE=worker`.
