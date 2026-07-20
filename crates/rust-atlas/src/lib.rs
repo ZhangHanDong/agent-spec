@@ -19,10 +19,12 @@ use serde::{Deserialize, Serialize};
 
 mod index;
 mod status;
+mod traversal;
 
 use index::write_json_atomic;
 pub use index::{QueryIndex, canonical_graph_fingerprint, load_query_index, rebuild_query_index};
 pub use status::{AtlasStatus, GraphIdentity, LayerState, LayerStatus, require_authority, status};
+pub use traversal::{FlowState, GraphPath, PathConfidence, PathHop, TraversalLimits};
 
 pub const SCHEMA_VERSION: u32 = 6;
 
@@ -72,6 +74,8 @@ pub enum AtlasError {
     QueryIndexCorrupt { detail: String },
     #[error("atlas-search-limit: {limit} is outside the supported range 1..=200")]
     SearchLimit { limit: usize },
+    #[error("atlas-traversal-limit: {detail}")]
+    TraversalLimit { detail: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

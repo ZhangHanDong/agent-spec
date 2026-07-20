@@ -1,0 +1,705 @@
+use std::collections::VecDeque;
+
+use serde::{Deserialize, Serialize};
+
+use crate::{AtlasError, Edge, EdgeConfidence, EdgeResolution, Node, QueryIndex};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PathConfidence {
+    Exact,
+    BoundedCandidates,
+    Heuristic,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PathHop {
+    pub edge: Edge,
+    pub chosen_target: String,
+    pub candidate: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphPath {
+    pub nodes: Vec<Node>,
+    pub hops: Vec<PathHop>,
+    pub confidence: PathConfidence,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FlowState {
+    Found,
+    NoPath,
+    CapabilityUnavailable,
+    AmbiguousEndpoint,
+    UnknownEndpoint,
+    Truncated,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TraversalLimits {
+    pub max_depth: usize,
+    pub max_expansions: usize,
+    pub max_paths: usize,
+}
+
+impl TraversalLimits {
+    pub fn flow_default() -> Self {
+        Self {
+            max_depth: 8,
+            max_expansions: 2_000,
+            max_paths: 8,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum EndpointResolution {
+    Found(Node),
+    Unknown,
+    Ambiguous(Vec<Node>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PathEnumeration {
+    pub paths: Vec<GraphPath>,
+    pub expansions: usize,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone)]
+struct PartialPath {
+    nodes: Vec<Node>,
+    hops: Vec<PathHop>,
+}
+
+pub(crate) fn resolve_endpoint(index: &QueryIndex, value: &str) -> EndpointResolution {
+    let exact = canonical_nodes(index.matching_nodes(value));
+    if !exact.is_empty() {
+        return endpoint_resolution(exact);
+    }
+    endpoint_resolution(canonical_nodes(index.nodes_with_symbol_suffix(value)))
+}
+
+pub(crate) fn enumerate_paths(
+    index: &QueryIndex,
+    start: &str,
+    end: Option<&str>,
+    limits: TraversalLimits,
+) -> Result<PathEnumeration, AtlasError> {
+    validate_limits(limits)?;
+    let EndpointResolution::Found(start) = resolve_endpoint(index, start) else {
+        return Ok(empty_enumeration());
+    };
+    let end = match end {
+        Some(value) => match resolve_endpoint(index, value) {
+            EndpointResolution::Found(node) => Some(node.id),
+            EndpointResolution::Unknown | EndpointResolution::Ambiguous(_) => {
+                return Ok(empty_enumeration());
+            }
+        },
+        None => None,
+    };
+
+    let mut queue = VecDeque::from([PartialPath {
+        nodes: vec![start],
+        hops: Vec::new(),
+    }]);
+    let mut paths = Vec::new();
+    let mut expansions = 0;
+    let mut truncated = false;
+
+    while let Some(path) = queue.pop_front() {
+        if expansions == limits.max_expansions {
+            truncated = true;
+            break;
+        }
+        expansions += 1;
+
+        let Some(current) = path.nodes.last() else {
+            return Err(AtlasError::Invariant(
+                "traversal queue contained a path without a start node".into(),
+            ));
+        };
+        let complete = match end.as_deref() {
+            Some(end) => current.id == end,
+            None => !path.hops.is_empty(),
+        };
+        if complete {
+            paths.push(complete_path(&path));
+            if end.is_some() {
+                continue;
+            }
+        }
+
+        let neighbors = path_neighbors(index, &path);
+        if path.hops.len() == limits.max_depth {
+            truncated |= !neighbors.is_empty();
+            continue;
+        }
+        for (node, hop) in neighbors {
+            let mut next = path.clone();
+            next.nodes.push(node);
+            next.hops.push(hop);
+            queue.push_back(next);
+        }
+    }
+
+    paths.sort_by_cached_key(|path| {
+        (
+            path.hops.len(),
+            path.hops
+                .iter()
+                .map(|hop| confidence_cost(&hop.edge, hop.candidate))
+                .sum::<usize>(),
+            canonical_path_signature(path),
+        )
+    });
+    if paths.len() > limits.max_paths {
+        paths.truncate(limits.max_paths);
+        truncated = true;
+    }
+    Ok(PathEnumeration {
+        paths,
+        expansions,
+        truncated,
+    })
+}
+
+pub(crate) fn confidence_cost(edge: &Edge, candidate: bool) -> usize {
+    match edge.confidence {
+        Some(EdgeConfidence::Heuristic) => 100,
+        Some(EdgeConfidence::BoundedCandidates) => 10,
+        None if edge.resolution == EdgeResolution::Unresolved => 100,
+        _ if candidate => 10,
+        Some(EdgeConfidence::Exact) => 0,
+        None if edge.resolution == EdgeResolution::Resolved => 0,
+        None => 100,
+    }
+}
+
+fn validate_limits(limits: TraversalLimits) -> Result<(), AtlasError> {
+    if !(1..=32).contains(&limits.max_depth) {
+        return Err(AtlasError::TraversalLimit {
+            detail: format!(
+                "max_depth {} is outside the supported range 1..=32",
+                limits.max_depth
+            ),
+        });
+    }
+    if limits.max_expansions == 0 {
+        return Err(AtlasError::TraversalLimit {
+            detail: "max_expansions must be greater than zero".into(),
+        });
+    }
+    if limits.max_paths == 0 {
+        return Err(AtlasError::TraversalLimit {
+            detail: "max_paths must be greater than zero".into(),
+        });
+    }
+    Ok(())
+}
+
+fn empty_enumeration() -> PathEnumeration {
+    PathEnumeration {
+        paths: Vec::new(),
+        expansions: 0,
+        truncated: false,
+    }
+}
+
+fn endpoint_resolution(nodes: Vec<Node>) -> EndpointResolution {
+    match nodes.as_slice() {
+        [] => EndpointResolution::Unknown,
+        [node] => EndpointResolution::Found(node.clone()),
+        _ => EndpointResolution::Ambiguous(nodes),
+    }
+}
+
+fn canonical_nodes(nodes: Vec<&Node>) -> Vec<Node> {
+    let mut nodes: Vec<Node> = nodes.into_iter().cloned().collect();
+    nodes.sort_by(|left, right| {
+        left.id
+            .cmp(&right.id)
+            .then_with(|| left.symbol.cmp(&right.symbol))
+            .then_with(|| left.file.cmp(&right.file))
+            .then_with(|| left.line_start.cmp(&right.line_start))
+            .then_with(|| left.line_end.cmp(&right.line_end))
+    });
+    nodes.dedup_by(|left, right| left.id == right.id);
+    nodes
+}
+
+fn path_neighbors(index: &QueryIndex, path: &PartialPath) -> Vec<(Node, PathHop)> {
+    let Some(current) = path.nodes.last() else {
+        return Vec::new();
+    };
+    let mut neighbors = Vec::new();
+    for edge in index.outgoing_edges([current.id.as_str()]) {
+        match edge.resolution {
+            EdgeResolution::Resolved => {
+                add_target_neighbors(index, path, edge, &edge.to, false, &mut neighbors);
+            }
+            EdgeResolution::Unresolved if edge.candidates.is_empty() => {
+                add_target_neighbors(index, path, edge, &edge.to, true, &mut neighbors);
+            }
+            EdgeResolution::Unresolved => {
+                let mut candidates = edge.candidates.clone();
+                candidates.sort();
+                candidates.dedup();
+                for candidate in candidates {
+                    add_target_neighbors(index, path, edge, &candidate, true, &mut neighbors);
+                }
+            }
+            EdgeResolution::External => {}
+        }
+    }
+    neighbors.sort_by(|(left_node, left_hop), (right_node, right_hop)| {
+        left_node
+            .id
+            .cmp(&right_node.id)
+            .then_with(|| left_hop.edge.cmp(&right_hop.edge))
+            .then_with(|| left_hop.chosen_target.cmp(&right_hop.chosen_target))
+            .then_with(|| left_hop.candidate.cmp(&right_hop.candidate))
+    });
+    neighbors.dedup_by(|(left_node, left_hop), (right_node, right_hop)| {
+        left_node.id == right_node.id && left_hop == right_hop
+    });
+    neighbors
+}
+
+fn add_target_neighbors(
+    index: &QueryIndex,
+    path: &PartialPath,
+    edge: &Edge,
+    target: &str,
+    candidate: bool,
+    neighbors: &mut Vec<(Node, PathHop)>,
+) {
+    for node in resolution_nodes(resolve_endpoint(index, target)) {
+        if path.nodes.iter().any(|visited| visited.id == node.id) {
+            continue;
+        }
+        neighbors.push((
+            node.clone(),
+            PathHop {
+                edge: edge.clone(),
+                chosen_target: node.id,
+                candidate,
+            },
+        ));
+    }
+}
+
+fn resolution_nodes(resolution: EndpointResolution) -> Vec<Node> {
+    match resolution {
+        EndpointResolution::Found(node) => vec![node],
+        EndpointResolution::Ambiguous(nodes) => nodes,
+        EndpointResolution::Unknown => Vec::new(),
+    }
+}
+
+fn complete_path(path: &PartialPath) -> GraphPath {
+    let confidence = path
+        .hops
+        .iter()
+        .map(|hop| confidence_cost(&hop.edge, hop.candidate))
+        .max()
+        .map_or(PathConfidence::Exact, |cost| match cost {
+            0 => PathConfidence::Exact,
+            10 => PathConfidence::BoundedCandidates,
+            _ => PathConfidence::Heuristic,
+        });
+    GraphPath {
+        nodes: path.nodes.clone(),
+        hops: path.hops.clone(),
+        confidence,
+    }
+}
+
+fn canonical_path_signature(path: &GraphPath) -> Vec<u8> {
+    serde_json::to_vec(&(path.nodes.as_slice(), path.hops.as_slice())).unwrap_or_default()
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::*;
+    use crate::{
+        AtlasError, Edge, EdgeConfidence, EdgeKind, EdgeResolution, Node, NodeKind, Provenance,
+        QueryIndex, SCHEMA_VERSION,
+    };
+
+    fn node(id: &str) -> Node {
+        named_node(id, id)
+    }
+
+    fn named_node(id: &str, symbol: &str) -> Node {
+        Node {
+            id: id.into(),
+            symbol: symbol.into(),
+            kind: NodeKind::Fn,
+            file: format!("{id}.rs"),
+            line_start: 1,
+            line_end: 1,
+            visibility: "pub".into(),
+            signature: format!("fn {id}()"),
+            doc: None,
+        }
+    }
+
+    fn edge(from: &str, to: &str, confidence: EdgeConfidence) -> Edge {
+        Edge {
+            from: from.into(),
+            to: to.into(),
+            target_text: None,
+            resolution: EdgeResolution::Resolved,
+            kind: EdgeKind::Calls,
+            provenance: Provenance::Scip,
+            site: None,
+            extractor: None,
+            dispatch: None,
+            confidence: Some(confidence),
+            candidates: Vec::new(),
+            evidence: None,
+        }
+    }
+
+    fn index(nodes: &[Node], edges: &[Edge]) -> QueryIndex {
+        let nodes = nodes.to_vec();
+        let edges = edges.to_vec();
+        let mut id = BTreeMap::<String, Vec<usize>>::new();
+        let mut symbol = BTreeMap::<String, Vec<usize>>::new();
+        let mut file = BTreeMap::<String, Vec<usize>>::new();
+        let mut incoming = BTreeMap::<String, Vec<usize>>::new();
+        let mut outgoing = BTreeMap::<String, Vec<usize>>::new();
+        for (position, node) in nodes.iter().enumerate() {
+            id.entry(node.id.clone()).or_default().push(position);
+            symbol
+                .entry(node.symbol.clone())
+                .or_default()
+                .push(position);
+            file.entry(node.file.clone()).or_default().push(position);
+        }
+        for (position, edge) in edges.iter().enumerate() {
+            incoming.entry(edge.to.clone()).or_default().push(position);
+            outgoing
+                .entry(edge.from.clone())
+                .or_default()
+                .push(position);
+        }
+        QueryIndex {
+            schema_version: SCHEMA_VERSION,
+            graph_fingerprint: "test-graph".into(),
+            nodes,
+            edges,
+            id,
+            symbol,
+            file,
+            incoming,
+            outgoing,
+        }
+    }
+
+    #[test]
+    fn test_atlas_query_surfaces_share_traversal_contract() {
+        let hop = PathHop {
+            edge: edge("a", "b", EdgeConfidence::Exact),
+            chosen_target: "b".into(),
+            candidate: false,
+        };
+        let path = GraphPath {
+            nodes: vec![node("a"), node("b")],
+            hops: vec![hop],
+            confidence: PathConfidence::Exact,
+        };
+        let value = serde_json::to_value(path).unwrap();
+        assert_eq!(value["hops"][0]["chosen_target"], "b");
+        assert_eq!(value["confidence"], "exact");
+        assert_eq!(TraversalLimits::flow_default().max_expansions, 2_000);
+    }
+
+    #[test]
+    fn candidate_neighbors_keep_original_edge_and_sorted_targets() {
+        let mut candidate = edge("a", "unresolved", EdgeConfidence::BoundedCandidates);
+        candidate.resolution = EdgeResolution::Unresolved;
+        candidate.candidates = vec!["c".into(), "b".into()];
+        let graph = index(&[node("a"), node("b"), node("c")], &[candidate]);
+        let paths =
+            enumerate_paths(&graph, "a", Some("c"), TraversalLimits::flow_default()).unwrap();
+        assert_eq!(paths.paths[0].hops[0].chosen_target, "c");
+        assert!(paths.paths[0].hops[0].candidate);
+        assert_eq!(
+            paths.paths[0].hops[0].edge.resolution,
+            EdgeResolution::Unresolved
+        );
+    }
+
+    #[test]
+    fn endpoint_resolution_prefers_exact_and_sorts_suffix_candidates() {
+        let exact_graph = index(
+            &[
+                named_node("suffix-b", "crate::b::run"),
+                named_node("exact", "run"),
+                named_node("suffix-a", "crate::a::run"),
+            ],
+            &[],
+        );
+        assert_eq!(
+            resolve_endpoint(&exact_graph, "run"),
+            EndpointResolution::Found(named_node("exact", "run"))
+        );
+
+        let suffix_graph = index(
+            &[
+                named_node("crate::b::run", "crate::b::run"),
+                named_node("crate::a::run", "crate::a::run"),
+            ],
+            &[],
+        );
+        let EndpointResolution::Ambiguous(candidates) = resolve_endpoint(&suffix_graph, "run")
+        else {
+            panic!("suffix resolution should be ambiguous");
+        };
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|candidate| candidate.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["crate::a::run", "crate::b::run"]
+        );
+    }
+
+    #[test]
+    fn path_enumeration_terminates_cycles() {
+        let graph = index(
+            &[node("a"), node("b"), node("c")],
+            &[
+                edge("b", "a", EdgeConfidence::Exact),
+                edge("a", "b", EdgeConfidence::Exact),
+                edge("b", "c", EdgeConfidence::Exact),
+            ],
+        );
+        let enumeration =
+            enumerate_paths(&graph, "a", Some("c"), TraversalLimits::flow_default()).unwrap();
+        assert_eq!(enumeration.paths.len(), 1);
+        assert_eq!(
+            enumeration.paths[0]
+                .nodes
+                .iter()
+                .map(|node| node.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a", "b", "c"]
+        );
+        assert!(!enumeration.truncated);
+    }
+
+    #[test]
+    fn complete_paths_use_canonical_tie_ordering() {
+        let graph = index(
+            &[node("d"), node("c"), node("b"), node("a")],
+            &[
+                edge("c", "d", EdgeConfidence::Exact),
+                edge("a", "c", EdgeConfidence::Exact),
+                edge("b", "d", EdgeConfidence::Exact),
+                edge("a", "b", EdgeConfidence::Exact),
+            ],
+        );
+        let enumeration =
+            enumerate_paths(&graph, "a", Some("d"), TraversalLimits::flow_default()).unwrap();
+        let node_ids = enumeration
+            .paths
+            .iter()
+            .map(|path| {
+                path.nodes
+                    .iter()
+                    .map(|node| node.id.as_str())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(node_ids, vec![vec!["a", "b", "d"], vec!["a", "c", "d"]]);
+    }
+
+    #[test]
+    fn max_paths_is_applied_after_confidence_ranking() {
+        let graph = index(
+            &[node("a"), node("b"), node("c"), node("z")],
+            &[
+                edge("a", "b", EdgeConfidence::BoundedCandidates),
+                edge("b", "z", EdgeConfidence::Exact),
+                edge("a", "c", EdgeConfidence::Exact),
+                edge("c", "z", EdgeConfidence::Exact),
+            ],
+        );
+        let enumeration = enumerate_paths(
+            &graph,
+            "a",
+            Some("z"),
+            TraversalLimits {
+                max_paths: 1,
+                ..TraversalLimits::flow_default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(enumeration.paths.len(), 1);
+        assert_eq!(enumeration.paths[0].confidence, PathConfidence::Exact);
+        assert_eq!(
+            enumeration.paths[0]
+                .nodes
+                .iter()
+                .map(|node| node.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a", "c", "z"]
+        );
+        assert!(enumeration.truncated);
+    }
+
+    #[test]
+    fn confidence_costs_are_exact_bounded_and_heuristic() {
+        let exact = edge("a", "b", EdgeConfidence::Exact);
+        let mut implicit = exact.clone();
+        implicit.confidence = None;
+        let bounded = edge("a", "b", EdgeConfidence::BoundedCandidates);
+        let heuristic = edge("a", "b", EdgeConfidence::Heuristic);
+        let mut unresolved = implicit.clone();
+        unresolved.resolution = EdgeResolution::Unresolved;
+
+        assert_eq!(confidence_cost(&exact, false), 0);
+        assert_eq!(confidence_cost(&implicit, false), 0);
+        assert_eq!(confidence_cost(&exact, true), 10);
+        assert_eq!(confidence_cost(&bounded, false), 10);
+        assert_eq!(confidence_cost(&heuristic, false), 100);
+        assert_eq!(confidence_cost(&unresolved, false), 100);
+    }
+
+    #[test]
+    fn unresolved_heuristics_are_marked_and_external_edges_do_not_reenter() {
+        let mut heuristic = edge("a", "run", EdgeConfidence::Exact);
+        heuristic.resolution = EdgeResolution::Unresolved;
+        heuristic.confidence = None;
+        let heuristic_graph = index(
+            &[node("a"), named_node("crate::run", "crate::run")],
+            &[heuristic],
+        );
+        let enumeration = enumerate_paths(
+            &heuristic_graph,
+            "a",
+            Some("crate::run"),
+            TraversalLimits::flow_default(),
+        )
+        .unwrap();
+        assert_eq!(enumeration.paths[0].confidence, PathConfidence::Heuristic);
+        assert!(enumeration.paths[0].hops[0].candidate);
+
+        let mut external = edge("a", "run", EdgeConfidence::Exact);
+        external.resolution = EdgeResolution::External;
+        let external_graph = index(
+            &[node("a"), named_node("crate::run", "crate::run")],
+            &[external],
+        );
+        assert!(
+            enumerate_paths(
+                &external_graph,
+                "a",
+                Some("crate::run"),
+                TraversalLimits::flow_default(),
+            )
+            .unwrap()
+            .paths
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn path_confidence_is_the_worst_hop_class() {
+        let graph = index(
+            &[node("a"), node("b"), node("c")],
+            &[
+                edge("a", "b", EdgeConfidence::BoundedCandidates),
+                edge("b", "c", EdgeConfidence::Heuristic),
+            ],
+        );
+        let enumeration =
+            enumerate_paths(&graph, "a", Some("c"), TraversalLimits::flow_default()).unwrap();
+        assert_eq!(enumeration.paths[0].confidence, PathConfidence::Heuristic);
+    }
+
+    #[test]
+    fn traversal_limits_reject_invalid_values_and_stop_without_overshoot() {
+        let graph = index(
+            &[node("a"), node("b"), node("c")],
+            &[
+                edge("a", "c", EdgeConfidence::Exact),
+                edge("a", "b", EdgeConfidence::Exact),
+            ],
+        );
+        for limits in [
+            TraversalLimits {
+                max_depth: 0,
+                max_expansions: 1,
+                max_paths: 1,
+            },
+            TraversalLimits {
+                max_depth: 33,
+                max_expansions: 1,
+                max_paths: 1,
+            },
+            TraversalLimits {
+                max_depth: 1,
+                max_expansions: 0,
+                max_paths: 1,
+            },
+            TraversalLimits {
+                max_depth: 1,
+                max_expansions: 1,
+                max_paths: 0,
+            },
+        ] {
+            assert!(matches!(
+                enumerate_paths(&graph, "a", None, limits),
+                Err(AtlasError::TraversalLimit { .. })
+            ));
+        }
+
+        let enumeration = enumerate_paths(
+            &graph,
+            "a",
+            None,
+            TraversalLimits {
+                max_depth: 1,
+                max_expansions: 2,
+                max_paths: 1,
+            },
+        )
+        .unwrap();
+        assert_eq!(enumeration.paths.len(), 1);
+        assert_eq!(enumeration.expansions, 2);
+        assert!(enumeration.truncated);
+
+        let depth_limited = index(
+            &[node("a"), node("b"), node("c"), node("d")],
+            &[
+                edge("a", "b", EdgeConfidence::Exact),
+                edge("b", "d", EdgeConfidence::Exact),
+                edge("a", "c", EdgeConfidence::Exact),
+            ],
+        );
+        let enumeration = enumerate_paths(
+            &depth_limited,
+            "a",
+            Some("c"),
+            TraversalLimits {
+                max_depth: 1,
+                max_expansions: 4,
+                max_paths: 1,
+            },
+        )
+        .unwrap();
+        assert_eq!(enumeration.paths.len(), 1);
+        assert!(enumeration.truncated);
+    }
+}
