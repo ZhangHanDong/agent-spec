@@ -193,12 +193,56 @@ pub(crate) fn source_fingerprint(files: &BTreeMap<String, String>) -> Result<Str
 
 fn scip_status(meta: &Meta, current_source_fingerprint: &str) -> LayerStatus {
     let capability = &meta.capability;
+    let authority = [
+        ("scip_index", capability.scip_index.as_ref()),
+        ("scip_fingerprint", capability.scip_fingerprint.as_ref()),
+        (
+            "scip_source_fingerprint",
+            capability.scip_source_fingerprint.as_ref(),
+        ),
+    ];
+    if !capability.scip {
+        let diagnostics = authority
+            .iter()
+            .filter_map(|(field, value)| {
+                value.as_ref().map(|_| {
+                    format!("SCIP capability is false but authority field is present: {field}")
+                })
+            })
+            .collect::<Vec<_>>();
+        if diagnostics.is_empty() {
+            return unavailable("SCIP layer is unavailable: no explicit SCIP overlay");
+        }
+        return LayerStatus {
+            state: LayerState::Stale,
+            recorded_fingerprint: capability.scip_fingerprint.clone(),
+            current_fingerprint: None,
+            stale_files: Vec::new(),
+            diagnostics,
+        };
+    }
+
+    let missing = authority
+        .iter()
+        .filter(|(_, value)| value.is_none())
+        .map(|(field, _)| format!("SCIP authority missing field: {field}"))
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        return LayerStatus {
+            state: LayerState::Stale,
+            recorded_fingerprint: capability.scip_fingerprint.clone(),
+            current_fingerprint: None,
+            stale_files: Vec::new(),
+            diagnostics: missing,
+        };
+    }
+
     let (Some(recorded_index), Some(recorded_sources), Some(index_path)) = (
         capability.scip_fingerprint.as_ref(),
         capability.scip_source_fingerprint.as_ref(),
         capability.scip_index.as_ref(),
     ) else {
-        return unavailable("SCIP layer is unavailable: no explicit SCIP overlay");
+        unreachable!("complete SCIP authority was validated above");
     };
 
     let current_index = std::fs::read(index_path)
@@ -634,6 +678,84 @@ mod tests {
 
         let report = crate::status(&code, &graph).unwrap();
         assert_eq!(report.scip.state, LayerState::Unavailable);
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_partial_scip_authority_fails_closed() {
+        #[derive(Clone, Copy)]
+        enum Case {
+            Missing(&'static str),
+            DisabledWithLeftover(&'static str),
+        }
+
+        let (code, graph) = fixture("atlas-status-partial-scip-authority");
+        let index = copied_scip_index(&code);
+        build(
+            &code,
+            &graph,
+            &BuildOptions {
+                full: false,
+                scip_index: Some(index),
+            },
+        )
+        .unwrap();
+        let meta_path = graph.join("meta.json");
+        let original: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&meta_path).unwrap()).unwrap();
+        let authority_fields = ["scip_index", "scip_fingerprint", "scip_source_fingerprint"];
+        let cases = authority_fields.iter().copied().map(Case::Missing).chain(
+            authority_fields
+                .iter()
+                .copied()
+                .map(Case::DisabledWithLeftover),
+        );
+
+        for case in cases {
+            let mut meta = original.clone();
+            let (label, field) = match case {
+                Case::Missing(field) => {
+                    meta["capability"][field] = serde_json::Value::Null;
+                    ("missing", field)
+                }
+                Case::DisabledWithLeftover(field) => {
+                    meta["capability"]["scip"] = serde_json::json!(false);
+                    meta["capability"]["scip_tool"] = serde_json::Value::Null;
+                    for authority_field in authority_fields {
+                        meta["capability"][authority_field] = serde_json::Value::Null;
+                    }
+                    meta["capability"][field] = original["capability"][field].clone();
+                    ("leftover", field)
+                }
+            };
+            fs::write(&meta_path, serde_json::to_vec_pretty(&meta).unwrap()).unwrap();
+
+            let report = crate::status(&code, &graph).unwrap();
+            assert_eq!(report.scip.state, LayerState::Stale, "{label} {field}");
+            assert!(
+                report
+                    .scip
+                    .diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.contains(field)),
+                "{label} {field}: {:?}",
+                report.scip.diagnostics
+            );
+            let error = crate::require_authority(&report).unwrap_err().to_string();
+            assert!(error.contains("atlas-stale"), "{label} {field}: {error}");
+            assert!(error.contains(field), "{label} {field}: {error}");
+        }
+
+        let mut absent = original;
+        absent["capability"]["scip"] = serde_json::json!(false);
+        absent["capability"]["scip_tool"] = serde_json::Value::Null;
+        for authority_field in authority_fields {
+            absent["capability"][authority_field] = serde_json::Value::Null;
+        }
+        fs::write(&meta_path, serde_json::to_vec_pretty(&absent).unwrap()).unwrap();
+        let report = crate::status(&code, &graph).unwrap();
+        assert_eq!(report.scip.state, LayerState::Unavailable);
+        crate::require_authority(&report).unwrap();
         fs::remove_dir_all(code.parent().unwrap()).ok();
     }
 

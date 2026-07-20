@@ -426,20 +426,17 @@ fn build_with_meta(
 
     let mut capability = Capability::default();
     if let Some(index_path) = &opts.scip_index {
-        let tool = overlay_scip(&shards_dir, index_path, &files)?;
+        let (tool, overlaid_scip_fingerprint) = overlay_scip(&shards_dir, index_path, &files)?;
         capability.scip = true;
         capability.scip_tool = tool;
         // Record the index (absolute) + its fingerprint so `refresh` can
         // re-overlay after edits instead of silently dropping the semantic layer.
         let abs = std::fs::canonicalize(index_path).unwrap_or_else(|_| index_path.clone());
         capability.scip_index = Some(abs.to_string_lossy().into_owned());
-        let current_scip_fingerprint = std::fs::read(index_path)
-            .ok()
-            .map(|bytes| blake3::hash(&bytes).to_hex().to_string());
         capability.scip_fingerprint = if retain_scip_authority_fingerprints {
             retained_scip_fingerprint
         } else {
-            current_scip_fingerprint
+            Some(overlaid_scip_fingerprint)
         };
         capability.scip_source_fingerprint = if retain_scip_authority_fingerprints {
             retained_scip_source_fingerprint
@@ -1008,9 +1005,9 @@ fn indexed_query_state(
     opts: &QueryOptions,
 ) -> Result<(Meta, QueryIndex, AtlasStatus), AtlasError> {
     let persisted = read_persisted_meta(graph_dir)?;
-    let index = load_query_index(graph_dir, &persisted.meta)?;
     let status = status::status_with_meta(code_root, graph_dir, &persisted)?;
     status::require_worktree_match(&status)?;
+    let index = load_query_index(graph_dir, &persisted.meta)?;
     if status.syn.state == LayerState::Fresh {
         return Ok((persisted.meta, index, status));
     }
@@ -1018,9 +1015,9 @@ fn indexed_query_state(
         return Ok((persisted.meta, index, status));
     }
     let persisted = refresh_stale_graph(code_root, graph_dir, persisted.meta)?;
-    let index = load_query_index(graph_dir, &persisted.meta)?;
     let status = status::status_with_meta(code_root, graph_dir, &persisted)?;
     status::require_worktree_match(&status)?;
+    let index = load_query_index(graph_dir, &persisted.meta)?;
     Ok((persisted.meta, index, status))
 }
 
@@ -2349,9 +2346,20 @@ impl ScipOcc {
 /// Dispatch on content: a UTF-8 payload whose first non-space byte is `{` is the
 /// hand-authored JSON form; anything else is decoded as protobuf (the only shape
 /// `rust-analyzer scip` emits).
-fn load_scip(index_path: &Path) -> Result<ScipModel, AtlasError> {
+fn load_scip_with_fingerprint(index_path: &Path) -> Result<(ScipModel, String), AtlasError> {
     let bytes = std::fs::read(index_path)
         .map_err(|e| AtlasError::Scip(format!("cannot read {}: {e}", index_path.display())))?;
+    let fingerprint = blake3::hash(&bytes).to_hex().to_string();
+    let model = parse_scip(bytes)?;
+    Ok((model, fingerprint))
+}
+
+#[cfg(test)]
+fn load_scip(index_path: &Path) -> Result<ScipModel, AtlasError> {
+    load_scip_with_fingerprint(index_path).map(|(model, _)| model)
+}
+
+fn parse_scip(bytes: Vec<u8>) -> Result<ScipModel, AtlasError> {
     let looks_json = bytes.iter().find(|b| !b.is_ascii_whitespace()).copied() == Some(b'{');
     if looks_json {
         let text = String::from_utf8(bytes)
@@ -2520,7 +2528,7 @@ fn overlay_scip(
     shards_dir: &Path,
     index_path: &Path,
     files: &BTreeMap<String, String>,
-) -> Result<Option<String>, AtlasError> {
+) -> Result<(Option<String>, String), AtlasError> {
     fn push_edge(
         shards: &mut BTreeMap<String, Shard>,
         changed: &mut BTreeSet<String>,
@@ -2535,7 +2543,7 @@ fn overlay_scip(
         }
     }
 
-    let model = load_scip(index_path)?;
+    let (model, fingerprint) = load_scip_with_fingerprint(index_path)?;
 
     let mut shards: BTreeMap<String, Shard> = BTreeMap::new();
     for rel in files.keys() {
@@ -2729,7 +2737,7 @@ fn overlay_scip(
             write_shard(shards_dir, shard)?;
         }
     }
-    Ok(model.tool)
+    Ok((model.tool, fingerprint))
 }
 
 /// Generate a SCIP index by invoking `rust-analyzer scip`, writing it to
@@ -2809,6 +2817,7 @@ mod tests {
     type LowLevelQuery = fn(&Path, &Path, &QueryOptions) -> Result<(), AtlasError>;
     type QueryIndexSetup = fn(&Path);
     type QueryIndexCase = (&'static str, QueryIndexSetup, QueryIndexErrorMatcher);
+    type BorrowedQueryIndexCase = (&'static str, QueryIndexSetup);
 
     fn fixture_root() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/atlas/basic")
@@ -3801,6 +3810,44 @@ impl std::fmt::Display for Local {
     }
 
     #[test]
+    fn test_atlas_borrowed_worktree_mismatch_precedes_invalid_query_index() {
+        let cases: [BorrowedQueryIndexCase; 2] = [
+            ("missing", remove_query_index),
+            ("corrupt", corrupt_query_index),
+        ];
+
+        for (case, invalidate) in cases {
+            let (code, graph) = copy_fixture(&format!("atlas-borrowed-index-{case}"));
+            init_git_repository(&code);
+            let linked = code.parent().unwrap().join("linked");
+            let output = Command::new("git")
+                .args(["worktree", "add", "-b", "linked", &linked.to_string_lossy()])
+                .current_dir(&code)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "git worktree add: {output:?}");
+            build(&code, &graph, &BuildOptions::default()).unwrap();
+            invalidate(&graph.join("query-index.json"));
+            let graph_before = file_tree_snapshot(&graph);
+
+            let error = query(
+                &linked,
+                &graph,
+                "atlas_basic::store::MemStore",
+                &QueryOptions::default(),
+            )
+            .unwrap_err();
+            let AtlasError::WorktreeMismatch { recorded, current } = error else {
+                panic!("{case}: expected worktree mismatch, got {error}");
+            };
+            assert!(recorded.contains("code"), "{case}: {recorded}");
+            assert!(current.contains("linked"), "{case}: {current}");
+            assert_eq!(file_tree_snapshot(&graph), graph_before, "{case}");
+            fs::remove_dir_all(code.parent().unwrap()).ok();
+        }
+    }
+
+    #[test]
     fn test_atlas_read_results_share_status_and_stale_mirror() {
         let (code, graph) = copy_fixture("atlas-result-status");
         build(
@@ -3866,6 +3913,66 @@ impl std::fmt::Display for Local {
                 .iter()
                 .any(|diagnostic| diagnostic.contains("source-set fingerprint mismatch"))
         );
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_each_read_consumer_recomputes_status_after_refresh() {
+        let (code, graph) = copy_fixture("atlas-result-status-refresh-each");
+        build(
+            &code,
+            &graph,
+            &BuildOptions {
+                full: false,
+                scip_index: Some(scip_fixture()),
+            },
+        )
+        .unwrap();
+        let service = code.join("src/service.rs");
+        let mut edit = 0;
+        let mut make_stale = || {
+            edit += 1;
+            let mut source = fs::read_to_string(&service).unwrap();
+            source.push_str(&format!("\npub fn refresh_status_{edit}() {{}}\n"));
+            fs::write(&service, source).unwrap();
+        };
+        let assert_refreshed = |status: &AtlasStatus, stale: &[String], consumer: &str| {
+            assert_eq!(status.syn.state, LayerState::Fresh, "{consumer}");
+            assert_eq!(status.scip.state, LayerState::Stale, "{consumer}");
+            assert_eq!(stale, status.syn.stale_files, "{consumer}");
+        };
+
+        make_stale();
+        let result = tree(&code, &graph, &QueryOptions::default()).unwrap();
+        assert_refreshed(&result.status, &result.stale, "tree");
+
+        make_stale();
+        let result = query(
+            &code,
+            &graph,
+            "atlas_basic::store::MemStore",
+            &QueryOptions::default(),
+        )
+        .unwrap();
+        assert_refreshed(&result.status, &result.stale, "query");
+
+        make_stale();
+        let result = refs(
+            &code,
+            &graph,
+            "atlas_basic::store::MemStore",
+            &QueryOptions::default(),
+        )
+        .unwrap();
+        assert_refreshed(&result.status, &result.stale, "refs");
+
+        make_stale();
+        let result = impls(&code, &graph, "Store", &QueryOptions::default()).unwrap();
+        assert_refreshed(&result.status, &result.stale, "impls");
+
+        make_stale();
+        let result = search(&code, &graph, "MemStore", &SearchOptions::default()).unwrap();
+        assert_refreshed(&result.status, &result.stale, "search");
         fs::remove_dir_all(code.parent().unwrap()).ok();
     }
 

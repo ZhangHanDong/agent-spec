@@ -11101,6 +11101,66 @@ Scenario: pass
     }
 
     #[test]
+    fn test_atlas_requirements_bind_rejects_stale_semantic_authority_without_writing() {
+        let (code, graph) = atlas_fixture_copy("atlas-requirements-bind-stale-scip");
+        let base = code.parent().unwrap();
+        rust_atlas::build(
+            &code,
+            &graph,
+            &rust_atlas::BuildOptions {
+                full: false,
+                scip_index: Some(repo_root().join("fixtures/atlas/scip/index.json")),
+            },
+        )
+        .unwrap();
+        let service = code.join("src/service.rs");
+        let mut source = fs::read_to_string(&service).unwrap();
+        source.push_str("\npub fn refreshed_before_binding() {}\n");
+        fs::write(&service, source).unwrap();
+        rust_atlas::query(
+            &code,
+            &graph,
+            "atlas_basic::store::MemStore",
+            &rust_atlas::QueryOptions::default(),
+        )
+        .unwrap();
+        let status = rust_atlas::status(&code, &graph).unwrap();
+        assert_eq!(status.syn.state, rust_atlas::LayerState::Fresh);
+        assert_eq!(status.scip.state, rust_atlas::LayerState::Stale);
+
+        let knowledge = base.join("knowledge");
+        let specs = base.join("specs");
+        fs::create_dir_all(knowledge.join("requirements")).unwrap();
+        fs::create_dir_all(&specs).unwrap();
+        fs::write(
+            knowledge.join("requirements/req-bind.md"),
+            "---\nkind: requirement\nid: REQ-BIND-DEMO\ntitle: \"Bind Demo\"\nstatus: accepted\nliveness: auto\ntags: []\n---\n\n# Bind Demo\n\n## Problem\n\np\n\n## Requirements\n\n[REQ-BIND-DEMO-ONE] The system MUST reserve a slot exactly once.\n\n## Scenarios\n\nScenario: reserves\n  Given an available slot\n  When reserve runs\n  Then the slot is held\n",
+        )
+        .unwrap();
+        fs::write(
+            specs.join("task-bind.spec.md"),
+            "spec: task\nname: \"Bind Demo Contract\"\nsatisfies: [REQ-BIND-DEMO]\n---\n\n## Intent\n\nx\n\n## Boundaries\n\n### Allowed Changes\n- src/**\n\n### Symbols\n- rust-atlas: atlas_basic::store::MemStore\n\n## Completion Criteria\n\nScenario: reserves\n  Test: test_reserves\n  Given an available slot\n  When reserve runs\n  Then the slot is held\n",
+        )
+        .unwrap();
+        let out = base.join(".agent-spec/code-bindings.json");
+        fs::create_dir_all(out.parent().unwrap()).unwrap();
+        let sentinel = b"existing bindings sentinel\n";
+        fs::write(&out, sentinel).unwrap();
+
+        let error = super::cmd_requirements(super::RequirementCommands::Bind {
+            knowledge,
+            specs,
+            code: code.clone(),
+            graph,
+            out: out.clone(),
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("atlas-stale"), "{error}");
+        assert_eq!(fs::read(&out).unwrap(), sentinel);
+        fs::remove_dir_all(base).ok();
+    }
+
+    #[test]
     fn test_atlas_benchmark_cli_parses_nested_actions() {
         let cli = super::Cli::parse_from([
             "agent-spec",

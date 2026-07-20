@@ -44,14 +44,55 @@ pub struct AtlasProvider {
     pub graph_dir: PathBuf,
 }
 
-#[derive(Serialize)]
-struct AtlasAuthorityFingerprint<'a> {
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct AtlasRecordedGraphIdentity {
+    repository_root: String,
+    git_common_dir: Option<String>,
+    worktree_root: String,
+    graph_root: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct AtlasProviderFingerprintInput {
     schema_version: u32,
-    recorded_graph_identity: &'a rust_atlas::GraphIdentity,
-    toolchain_identity: &'a str,
-    recorded_source_set_fingerprint: Option<&'a str>,
-    graph_fingerprint: &'a str,
-    layer_recorded_fingerprints: BTreeMap<&'static str, Option<&'a str>>,
+    recorded_graph_identity: AtlasRecordedGraphIdentity,
+    toolchain_identity: String,
+    recorded_source_set_fingerprint: Option<String>,
+    graph_fingerprint: String,
+    layer_recorded_fingerprints: BTreeMap<String, Option<String>>,
+}
+
+fn atlas_provider_fingerprint_input(
+    status: &rust_atlas::AtlasStatus,
+) -> AtlasProviderFingerprintInput {
+    AtlasProviderFingerprintInput {
+        schema_version: rust_atlas::SCHEMA_VERSION,
+        recorded_graph_identity: AtlasRecordedGraphIdentity {
+            repository_root: status.recorded_identity.repository_root.clone(),
+            git_common_dir: status.recorded_identity.git_common_dir.clone(),
+            worktree_root: status.recorded_identity.worktree_root.clone(),
+            graph_root: status.recorded_identity.graph_root.clone(),
+        },
+        toolchain_identity: status.recorded_identity.toolchain.clone(),
+        recorded_source_set_fingerprint: status.syn.recorded_fingerprint.clone(),
+        graph_fingerprint: status.graph_fingerprint.clone(),
+        layer_recorded_fingerprints: BTreeMap::from([
+            ("mir".to_string(), status.mir.recorded_fingerprint.clone()),
+            ("scip".to_string(), status.scip.recorded_fingerprint.clone()),
+            ("syn".to_string(), status.syn.recorded_fingerprint.clone()),
+        ]),
+    }
+}
+
+fn canonical_atlas_provider_fingerprint(
+    input: &AtlasProviderFingerprintInput,
+) -> Result<String, String> {
+    let bytes = serde_json::to_vec(input).map_err(|error| error.to_string())?;
+    Ok(blake3_hex(&bytes))
+}
+
+fn atlas_provider_fingerprint(status: &rust_atlas::AtlasStatus) -> Result<String, String> {
+    canonical_atlas_provider_fingerprint(&atlas_provider_fingerprint_input(status))
 }
 
 impl AtlasProvider {
@@ -70,21 +111,7 @@ impl CodeGraphProvider for AtlasProvider {
 
     fn fingerprint(&self) -> Result<String, String> {
         let status = self.authoritative_status()?;
-        let layer_recorded_fingerprints = BTreeMap::from([
-            ("mir", status.mir.recorded_fingerprint.as_deref()),
-            ("scip", status.scip.recorded_fingerprint.as_deref()),
-            ("syn", status.syn.recorded_fingerprint.as_deref()),
-        ]);
-        let payload = AtlasAuthorityFingerprint {
-            schema_version: rust_atlas::SCHEMA_VERSION,
-            recorded_graph_identity: &status.recorded_identity,
-            toolchain_identity: &status.recorded_identity.toolchain,
-            recorded_source_set_fingerprint: status.syn.recorded_fingerprint.as_deref(),
-            graph_fingerprint: &status.graph_fingerprint,
-            layer_recorded_fingerprints,
-        };
-        let bytes = serde_json::to_vec(&payload).map_err(|error| error.to_string())?;
-        Ok(blake3_hex(&bytes))
+        atlas_provider_fingerprint(&status)
     }
 
     fn stale_files(&self) -> Result<Vec<String>, String> {
@@ -458,75 +485,91 @@ mod tests {
         assert_eq!(status.syn.state, rust_atlas::LayerState::Fresh);
         assert_eq!(status.scip.state, rust_atlas::LayerState::Stale);
 
-        let artifact = dir.join(".agent-spec/code-bindings.json");
         let error =
             build_code_bindings(&dir.join("knowledge"), &dir.join("specs"), &providers(&dir))
                 .unwrap_err();
         assert!(error.contains("atlas-stale"), "{error}");
-        assert!(!artifact.exists());
         fs::remove_dir_all(dir).ok();
     }
 
     #[test]
-    fn test_atlas_provider_fingerprint_is_stable_and_tracks_authority_inputs() {
-        let dir = make_tree("bind-fingerprint-authority");
-        let provider = AtlasProvider {
-            code_root: dir.join("code"),
-            graph_dir: dir.join("graph"),
+    fn test_atlas_provider_fingerprint_exact_inputs_and_exclusions() {
+        fn layer(recorded: Option<&str>) -> rust_atlas::LayerStatus {
+            rust_atlas::LayerStatus {
+                state: rust_atlas::LayerState::Fresh,
+                recorded_fingerprint: recorded.map(str::to_string),
+                current_fingerprint: Some("current".to_string()),
+                stale_files: vec!["z.rs".to_string(), "a.rs".to_string()],
+                diagnostics: vec!["z diagnostic".to_string(), "a diagnostic".to_string()],
+            }
+        }
+
+        let recorded_identity = rust_atlas::GraphIdentity {
+            repository_root: "/repo".to_string(),
+            git_common_dir: Some("/repo/.git".to_string()),
+            worktree_root: "/repo/worktree".to_string(),
+            graph_root: "/repo/worktree/.agent-spec/graph".to_string(),
+            toolchain: "rustc 1.92.0".to_string(),
         };
-        let first = provider.fingerprint().unwrap();
-        let second = provider.fingerprint().unwrap();
-        assert_eq!(first.as_bytes(), second.as_bytes());
-
-        let meta_path = dir.join("graph/meta.json");
-        let original_meta: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(&meta_path).unwrap()).unwrap();
-        let mut meta = original_meta.clone();
-        meta["graph_fingerprint"] = serde_json::json!("authority-input-changed");
-        fs::write(&meta_path, serde_json::to_vec_pretty(&meta).unwrap()).unwrap();
-        assert_ne!(provider.fingerprint().unwrap(), first);
-
-        let mut meta = original_meta.clone();
-        meta["identity"]["toolchain"] = serde_json::json!("recorded-toolchain-changed");
-        fs::write(&meta_path, serde_json::to_vec_pretty(&meta).unwrap()).unwrap();
-        assert_ne!(provider.fingerprint().unwrap(), first);
-
-        let lib = dir.join("code/src/lib.rs");
-        let original_source = fs::read(&lib).unwrap();
-        let changed_source = [original_source.as_slice(), b"\n// source-set changed\n"].concat();
-        fs::write(&lib, &changed_source).unwrap();
-        let mut meta = original_meta.clone();
-        meta["files"]["src/lib.rs"] =
-            serde_json::json!(blake3::hash(&changed_source).to_hex().to_string());
-        fs::write(&meta_path, serde_json::to_vec_pretty(&meta).unwrap()).unwrap();
-        assert_ne!(provider.fingerprint().unwrap(), first);
-
-        fs::write(&lib, original_source).unwrap();
-        let index = dir.join("authority.scip");
-        fs::write(&index, b"recorded semantic layer").unwrap();
-        let mut meta = original_meta.clone();
-        fs::write(
-            &meta_path,
-            serde_json::to_vec_pretty(&original_meta).unwrap(),
-        )
-        .unwrap();
-        let recorded_sources = rust_atlas::status(&dir.join("code"), &dir.join("graph"))
-            .unwrap()
-            .syn
-            .recorded_fingerprint
-            .unwrap();
-        meta["capability"]["scip"] = serde_json::json!(true);
-        meta["capability"]["scip_index"] =
-            serde_json::json!(fs::canonicalize(&index).unwrap().to_string_lossy());
-        meta["capability"]["scip_fingerprint"] = serde_json::json!(
-            blake3::hash(b"recorded semantic layer")
-                .to_hex()
-                .to_string()
+        let status = rust_atlas::AtlasStatus {
+            graph_fingerprint: "graph-v1".to_string(),
+            recorded_identity: recorded_identity.clone(),
+            current_identity: recorded_identity,
+            worktree_mismatch: None,
+            syn: layer(Some("source-set-v1")),
+            scip: layer(Some("scip-v1")),
+            mir: layer(Some("mir-v1")),
+        };
+        let input = atlas_provider_fingerprint_input(&status);
+        let expected = canonical_atlas_provider_fingerprint(&input).unwrap();
+        assert_eq!(
+            expected,
+            "5b7597a4354fe3ae5750a56d57bae9138b9ca7513668568e86e241cd956c4147"
         );
-        meta["capability"]["scip_source_fingerprint"] = serde_json::json!(recorded_sources);
-        fs::write(&meta_path, serde_json::to_vec_pretty(&meta).unwrap()).unwrap();
-        assert_ne!(provider.fingerprint().unwrap(), first);
-        fs::remove_dir_all(dir).ok();
+        assert_eq!(atlas_provider_fingerprint(&status).unwrap(), expected);
+
+        let mut excluded = status.clone();
+        excluded.current_identity.worktree_root = "/other/worktree".to_string();
+        excluded.current_identity.toolchain = "other current toolchain".to_string();
+        excluded.worktree_mismatch = Some("different display diagnostic".to_string());
+        for layer in [&mut excluded.syn, &mut excluded.scip, &mut excluded.mir] {
+            layer.current_fingerprint = Some("other current fingerprint".to_string());
+            layer.stale_files.reverse();
+            layer.stale_files.push("new-display-file.rs".to_string());
+            layer.diagnostics.reverse();
+            layer.diagnostics.push("new display diagnostic".to_string());
+        }
+        assert_eq!(atlas_provider_fingerprint(&excluded).unwrap(), expected);
+
+        let assert_changes = |changed: AtlasProviderFingerprintInput, label: &str| {
+            assert_ne!(
+                canonical_atlas_provider_fingerprint(&changed).unwrap(),
+                expected,
+                "{label}"
+            );
+        };
+        let mut changed = input.clone();
+        changed.schema_version += 1;
+        assert_changes(changed, "schema version");
+        let mut changed = input.clone();
+        changed.recorded_graph_identity.worktree_root = "/other/recorded".to_string();
+        assert_changes(changed, "recorded graph identity");
+        let mut changed = input.clone();
+        changed.toolchain_identity = "rustc other".to_string();
+        assert_changes(changed, "toolchain identity");
+        let mut changed = input.clone();
+        changed.recorded_source_set_fingerprint = Some("source-set-v2".to_string());
+        assert_changes(changed, "recorded source-set fingerprint");
+        let mut changed = input.clone();
+        changed.graph_fingerprint = "graph-v2".to_string();
+        assert_changes(changed, "graph fingerprint");
+        for layer_name in ["syn", "scip", "mir"] {
+            let mut changed = input.clone();
+            changed
+                .layer_recorded_fingerprints
+                .insert(layer_name.to_string(), Some(format!("{layer_name}-v2")));
+            assert_changes(changed, layer_name);
+        }
     }
 
     #[test]
