@@ -6,6 +6,7 @@ use std::path::Path;
 pub const AGENT_EXPERIMENT_SCHEMA: &str = "agent-spec/atlas-eval/agent-experiment-v1";
 pub const AGENT_PLAN_SCHEMA: &str = "agent-spec/atlas-eval/agent-plan-v1";
 pub const AGENT_RECEIPTS_SCHEMA: &str = "agent-spec/atlas-eval/agent-receipts-v1";
+pub const AGENT_GATE_SCHEMA: &str = "agent-spec/atlas-eval/agent-gate-v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -164,6 +165,122 @@ pub struct AgentRunMetrics {
     pub truncated_queries: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentGateReceipt {
+    pub schema: String,
+    pub experiment_version: String,
+    pub plan_fingerprint: String,
+    pub receipts: usize,
+    pub failed_runs: Vec<FailedAgentRun>,
+    pub comparisons: std::collections::BTreeMap<PromotionCandidate, AgentPromotionComparison>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PromotionCandidate {
+    AtlasPrimitives,
+    AtlasContext,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum GateState {
+    Passed,
+    Blocked,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentPromotionComparison {
+    pub candidate: PromotionCandidate,
+    pub reference_arm: AgentArm,
+    pub candidate_arm: AgentArm,
+    pub state: GateState,
+    pub cases: Vec<AgentCaseComparison>,
+    pub diagnostics: Vec<GateDiagnostic>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CaseDecision {
+    Improved,
+    Tie,
+    Blocked,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MetricDecision {
+    Improved,
+    Tie,
+    Blocked,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentCaseComparison {
+    pub case_id: String,
+    pub size: WorkspaceSize,
+    pub task_class: TaskClass,
+    pub state: CaseDecision,
+    pub read_grep: MetricComparison,
+    pub round_trips: MetricComparison,
+    pub tool_calls: MetricComparison,
+    pub reference_metrics: AgentMetricAggregate,
+    pub candidate_metrics: AgentMetricAggregate,
+    pub diagnostics: Vec<GateDiagnostic>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetricComparison {
+    pub reference: MetricBand,
+    pub candidate: MetricBand,
+    pub decision: MetricDecision,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentMetricAggregate {
+    pub file_reads: MetricBand,
+    pub grep_calls: MetricBand,
+    pub graph_calls: MetricBand,
+    pub tool_calls: MetricBand,
+    pub round_trips: MetricBand,
+    pub duration_ms: MetricBand,
+    pub response_bytes: MetricBand,
+    pub context_bytes: MetricBand,
+    pub cost_usd: Option<MetricBand>,
+    pub read_back_calls: MetricBand,
+    pub follow_up_queries: MetricBand,
+    pub truncated_queries: MetricBand,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetricBand {
+    pub samples: usize,
+    pub median: f64,
+    pub mad: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GateDiagnostic {
+    pub code: String,
+    pub message: String,
+    pub run_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FailedAgentRun {
+    pub run_id: String,
+    pub outcome: AgentRunOutcome,
+    pub diagnostic: String,
+}
+
 #[derive(Debug, thiserror::Error)]
 #[error("{code}: {message}")]
 pub struct AgentEvalError {
@@ -286,6 +403,155 @@ pub fn load_agent_experiment(path: &Path) -> Result<AgentExperiment, AgentEvalEr
     Ok(experiment)
 }
 
+pub fn load_agent_plan(path: &Path) -> Result<AgentRunPlan, AgentEvalError> {
+    let bytes = std::fs::read(path).map_err(|error| {
+        AgentEvalError::new(
+            "atlas-agent-ab-load",
+            format!("failed to read {}: {error}", path.display()),
+        )
+    })?;
+    let plan = serde_json::from_slice(&bytes).map_err(|error| {
+        AgentEvalError::new(
+            "atlas-agent-ab-plan",
+            format!("failed to parse {}: {error}", path.display()),
+        )
+    })?;
+    validate_agent_plan(&plan)?;
+    Ok(plan)
+}
+
+pub fn validate_agent_plan(plan: &AgentRunPlan) -> Result<(), AgentEvalError> {
+    if plan.schema != AGENT_PLAN_SCHEMA
+        || plan.experiment_version.trim().is_empty()
+        || !is_lower_hex(&plan.corpus_fingerprint)
+        || !is_lower_hex(&plan.experiment_fingerprint)
+        || plan.runs.is_empty()
+    {
+        return Err(AgentEvalError::new(
+            "atlas-agent-ab-plan",
+            "Agent plan has an invalid schema, version, fingerprint, or empty run set",
+        ));
+    }
+    let mut run_ids = BTreeSet::new();
+    let mut groups = std::collections::BTreeMap::<(&str, u32), Vec<&AgentPlannedRun>>::new();
+    let mut trials = std::collections::BTreeMap::<&str, BTreeSet<u32>>::new();
+    for run in &plan.runs {
+        validate_planned_run(run)?;
+        if !run_ids.insert(run.run_id.as_str()) {
+            return Err(AgentEvalError::new(
+                "atlas-agent-ab-plan",
+                format!("duplicate planned run {}", run.run_id),
+            ));
+        }
+        groups
+            .entry((run.case_id.as_str(), run.trial))
+            .or_default()
+            .push(run);
+        trials
+            .entry(run.case_id.as_str())
+            .or_default()
+            .insert(run.trial);
+    }
+    for ((case_id, trial), runs) in groups {
+        if runs.len() != 3 {
+            return Err(AgentEvalError::new(
+                "atlas-agent-ab-plan",
+                format!("case {case_id} trial {trial} must have exactly three arms"),
+            ));
+        }
+        let by_arm = runs
+            .iter()
+            .map(|run| (run.arm, *run))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let Some(baseline) = by_arm.get(&AgentArm::Baseline) else {
+            return Err(AgentEvalError::new(
+                "atlas-agent-ab-plan",
+                format!("case {case_id} trial {trial} is missing baseline"),
+            ));
+        };
+        let Some(primitives) = by_arm.get(&AgentArm::AtlasPrimitives) else {
+            return Err(AgentEvalError::new(
+                "atlas-agent-ab-plan",
+                format!("case {case_id} trial {trial} is missing atlas-primitives"),
+            ));
+        };
+        let Some(context) = by_arm.get(&AgentArm::AtlasContext) else {
+            return Err(AgentEvalError::new(
+                "atlas-agent-ab-plan",
+                format!("case {case_id} trial {trial} is missing atlas-context"),
+            ));
+        };
+        if runs
+            .iter()
+            .any(|run| run.environment_fingerprint != baseline.environment_fingerprint)
+        {
+            return Err(AgentEvalError::new(
+                "atlas-agent-ab-environment",
+                format!("case {case_id} trial {trial} has asymmetric controls"),
+            ));
+        }
+        validate_surfaces(&AgentToolSurfaces {
+            baseline: baseline.tools.clone(),
+            atlas_primitives: primitives.tools.clone(),
+            atlas_context: context.tools.clone(),
+        })?;
+    }
+    for (case_id, case_trials) in trials {
+        let expected = (1..=case_trials.len() as u32).collect::<BTreeSet<_>>();
+        if case_trials.len() < 3 || case_trials != expected {
+            return Err(AgentEvalError::new(
+                "atlas-agent-ab-trials",
+                format!("case {case_id} must have at least three contiguous trials"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_planned_run(run: &AgentPlannedRun) -> Result<(), AgentEvalError> {
+    validate_controls(&run.controls)?;
+    let expected_surface = fingerprint(&run.tools)?;
+    let expected_rubric = fingerprint(&run.rubric)?;
+    let expected_environment = fingerprint(&(
+        &run.model,
+        &run.prompt,
+        &run.repository,
+        &run.revision,
+        run.permissions,
+        run.cache_condition,
+        &run.controls,
+        &run.session_store,
+    ))?;
+    let expected_run_id = fingerprint(&(
+        &run.case_id,
+        run.trial,
+        run.arm,
+        &run.environment_fingerprint,
+        &run.surface_fingerprint,
+    ))?;
+    if run.case_id.trim().is_empty()
+        || run.model.trim().is_empty()
+        || run.prompt.trim().is_empty()
+        || run.repository.trim().is_empty()
+        || run.revision.trim().is_empty()
+        || run.rubric.is_empty()
+        || run.rubric.iter().any(|item| item.trim().is_empty())
+        || run.trial == 0
+        || is_temporary_path(&run.session_store)
+        || expected_surface != run.surface_fingerprint
+        || expected_rubric != run.rubric_fingerprint
+        || expected_environment != run.environment_fingerprint
+        || expected_run_id != run.run_id
+    {
+        return Err(AgentEvalError::new(
+            "atlas-agent-ab-plan",
+            format!("planned run {} failed self-validation", run.run_id),
+        ));
+    }
+    tool_set("planned run", &run.tools)?;
+    Ok(())
+}
+
 pub fn parse_agent_receipts(bytes: &[u8]) -> Result<AgentReceiptBundle, AgentEvalError> {
     serde_json::from_slice(bytes).map_err(|error| {
         AgentEvalError::new(
@@ -354,6 +620,307 @@ pub fn validate_agent_receipts(
         validate_agent_run_receipt(run, receipt)?;
     }
     Ok(())
+}
+
+pub fn gate_agent_receipts(
+    plan: &AgentRunPlan,
+    bundle: &AgentReceiptBundle,
+) -> Result<AgentGateReceipt, AgentEvalError> {
+    validate_agent_receipts(plan, bundle)?;
+    let receipts = bundle
+        .runs
+        .iter()
+        .map(|receipt| (receipt.run_id.as_str(), receipt))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut comparisons = std::collections::BTreeMap::new();
+    for (candidate, reference_arm, candidate_arm) in [
+        (
+            PromotionCandidate::AtlasPrimitives,
+            AgentArm::Baseline,
+            AgentArm::AtlasPrimitives,
+        ),
+        (
+            PromotionCandidate::AtlasContext,
+            AgentArm::AtlasPrimitives,
+            AgentArm::AtlasContext,
+        ),
+    ] {
+        comparisons.insert(
+            candidate,
+            compare_agent_arms(plan, &receipts, candidate, reference_arm, candidate_arm),
+        );
+    }
+    let failed_runs = bundle
+        .runs
+        .iter()
+        .filter(|receipt| receipt.outcome != AgentRunOutcome::Completed)
+        .map(|receipt| FailedAgentRun {
+            run_id: receipt.run_id.clone(),
+            outcome: receipt.outcome,
+            diagnostic: receipt.diagnostic.clone().unwrap_or_default(),
+        })
+        .collect();
+
+    Ok(AgentGateReceipt {
+        schema: AGENT_GATE_SCHEMA.to_string(),
+        experiment_version: plan.experiment_version.clone(),
+        plan_fingerprint: fingerprint(plan)?,
+        receipts: bundle.runs.len(),
+        failed_runs,
+        comparisons,
+    })
+}
+
+pub fn enforce_agent_gate(gate: &AgentGateReceipt) -> Result<(), AgentEvalError> {
+    if gate
+        .comparisons
+        .values()
+        .any(|comparison| comparison.state == GateState::Blocked)
+    {
+        return Err(AgentEvalError::new(
+            "atlas-agent-ab-blocked",
+            "one or more Agent surface promotion candidates are blocked",
+        ));
+    }
+    Ok(())
+}
+
+fn compare_agent_arms(
+    plan: &AgentRunPlan,
+    receipts: &std::collections::BTreeMap<&str, &AgentRunReceipt>,
+    candidate: PromotionCandidate,
+    reference_arm: AgentArm,
+    candidate_arm: AgentArm,
+) -> AgentPromotionComparison {
+    let mut case_ids = Vec::new();
+    let mut seen = BTreeSet::new();
+    for run in &plan.runs {
+        if seen.insert(run.case_id.as_str()) {
+            case_ids.push(run.case_id.as_str());
+        }
+    }
+
+    let mut cases = Vec::new();
+    let mut diagnostics = Vec::new();
+    for case_id in case_ids {
+        let reference_runs = runs_for_case(plan, receipts, case_id, reference_arm);
+        let candidate_runs = runs_for_case(plan, receipts, case_id, candidate_arm);
+        let Some(exemplar) = plan.runs.iter().find(|run| run.case_id == case_id) else {
+            continue;
+        };
+        let mut case_diagnostics = candidate_run_diagnostics(&candidate_runs);
+        diagnostics.extend(case_diagnostics.iter().cloned());
+        let reference_metrics = aggregate_agent_metrics(&reference_runs);
+        let candidate_metrics = aggregate_agent_metrics(&candidate_runs);
+        let read_grep = metric_comparison(
+            exemplar.size,
+            metric_band(reference_runs.iter().map(|run| {
+                run.metrics
+                    .file_reads
+                    .saturating_add(run.metrics.grep_calls)
+            })),
+            metric_band(candidate_runs.iter().map(|run| {
+                run.metrics
+                    .file_reads
+                    .saturating_add(run.metrics.grep_calls)
+            })),
+        );
+        let round_trips = metric_comparison(
+            exemplar.size,
+            metric_band(reference_runs.iter().map(|run| run.metrics.round_trips)),
+            metric_band(candidate_runs.iter().map(|run| run.metrics.round_trips)),
+        );
+        let tool_calls = metric_comparison(
+            exemplar.size,
+            metric_band(reference_runs.iter().map(|run| run.metrics.tool_calls)),
+            metric_band(candidate_runs.iter().map(|run| run.metrics.tool_calls)),
+        );
+        let metric_decisions = [
+            read_grep.decision,
+            round_trips.decision,
+            tool_calls.decision,
+        ];
+        let state = if !case_diagnostics.is_empty()
+            || metric_decisions.contains(&MetricDecision::Blocked)
+        {
+            CaseDecision::Blocked
+        } else if metric_decisions
+            .iter()
+            .all(|decision| *decision == MetricDecision::Improved)
+        {
+            CaseDecision::Improved
+        } else {
+            CaseDecision::Tie
+        };
+        if state == CaseDecision::Blocked && case_diagnostics.is_empty() {
+            let run_ids = candidate_runs
+                .iter()
+                .map(|receipt| receipt.run_id.clone())
+                .collect();
+            let diagnostic = GateDiagnostic {
+                code: "atlas-agent-ab-efficiency".to_string(),
+                message: format!(
+                    "candidate {candidate_arm:?} did not clear the baseline MAD gate for {case_id}"
+                ),
+                run_ids,
+            };
+            case_diagnostics.push(diagnostic.clone());
+            diagnostics.push(diagnostic);
+        }
+        cases.push(AgentCaseComparison {
+            case_id: case_id.to_string(),
+            size: exemplar.size,
+            task_class: exemplar.task_class,
+            state,
+            read_grep,
+            round_trips,
+            tool_calls,
+            reference_metrics,
+            candidate_metrics,
+            diagnostics: case_diagnostics,
+        });
+    }
+    let state = if cases.iter().any(|case| case.state == CaseDecision::Blocked) {
+        GateState::Blocked
+    } else {
+        GateState::Passed
+    };
+    AgentPromotionComparison {
+        candidate,
+        reference_arm,
+        candidate_arm,
+        state,
+        cases,
+        diagnostics,
+    }
+}
+
+fn runs_for_case<'a>(
+    plan: &'a AgentRunPlan,
+    receipts: &std::collections::BTreeMap<&str, &'a AgentRunReceipt>,
+    case_id: &str,
+    arm: AgentArm,
+) -> Vec<&'a AgentRunReceipt> {
+    plan.runs
+        .iter()
+        .filter(|run| run.case_id == case_id && run.arm == arm)
+        .map(|run| receipts[run.run_id.as_str()])
+        .collect()
+}
+
+fn candidate_run_diagnostics(runs: &[&AgentRunReceipt]) -> Vec<GateDiagnostic> {
+    let mut diagnostics = Vec::new();
+    let failures = runs
+        .iter()
+        .filter(|run| run.outcome != AgentRunOutcome::Completed)
+        .map(|run| run.run_id.clone())
+        .collect::<Vec<_>>();
+    if !failures.is_empty() {
+        diagnostics.push(GateDiagnostic {
+            code: "atlas-agent-ab-run-failure".to_string(),
+            message: "candidate arm contains failed, timed out, or cancelled runs".to_string(),
+            run_ids: failures,
+        });
+    }
+    let incorrect = runs
+        .iter()
+        .filter(|run| !run.correctness.passed)
+        .map(|run| run.run_id.clone())
+        .collect::<Vec<_>>();
+    if !incorrect.is_empty() {
+        diagnostics.push(GateDiagnostic {
+            code: "atlas-agent-ab-correctness".to_string(),
+            message: "candidate arm contains an incorrect answer".to_string(),
+            run_ids: incorrect,
+        });
+    }
+    let stale = runs
+        .iter()
+        .filter(|run| run.stale_as_fresh)
+        .map(|run| run.run_id.clone())
+        .collect::<Vec<_>>();
+    if !stale.is_empty() {
+        diagnostics.push(GateDiagnostic {
+            code: "atlas-agent-ab-stale-as-fresh".to_string(),
+            message: "candidate arm presented stale evidence as fresh".to_string(),
+            run_ids: stale,
+        });
+    }
+    diagnostics
+}
+
+fn metric_comparison(
+    size: WorkspaceSize,
+    reference: MetricBand,
+    candidate: MetricBand,
+) -> MetricComparison {
+    let lower = (reference.median - reference.mad).max(0.0);
+    let upper = reference.median + reference.mad;
+    let decision = match size {
+        WorkspaceSize::Small if candidate.median < lower => MetricDecision::Improved,
+        WorkspaceSize::Small if candidate.median <= upper => MetricDecision::Tie,
+        WorkspaceSize::Small => MetricDecision::Blocked,
+        WorkspaceSize::Medium | WorkspaceSize::Large
+            if candidate.median + reference.mad < reference.median =>
+        {
+            MetricDecision::Improved
+        }
+        WorkspaceSize::Medium | WorkspaceSize::Large => MetricDecision::Blocked,
+    };
+    MetricComparison {
+        reference,
+        candidate,
+        decision,
+    }
+}
+
+fn aggregate_agent_metrics(runs: &[&AgentRunReceipt]) -> AgentMetricAggregate {
+    AgentMetricAggregate {
+        file_reads: metric_band(runs.iter().map(|run| run.metrics.file_reads)),
+        grep_calls: metric_band(runs.iter().map(|run| run.metrics.grep_calls)),
+        graph_calls: metric_band(runs.iter().map(|run| run.metrics.graph_calls)),
+        tool_calls: metric_band(runs.iter().map(|run| run.metrics.tool_calls)),
+        round_trips: metric_band(runs.iter().map(|run| run.metrics.round_trips)),
+        duration_ms: metric_band(runs.iter().map(|run| run.metrics.duration_ms)),
+        response_bytes: metric_band(runs.iter().map(|run| run.metrics.response_bytes)),
+        context_bytes: metric_band(runs.iter().map(|run| run.metrics.context_bytes)),
+        cost_usd: metric_band_f64(runs.iter().filter_map(|run| run.metrics.cost_usd)),
+        read_back_calls: metric_band(runs.iter().map(|run| run.metrics.read_back_calls)),
+        follow_up_queries: metric_band(runs.iter().map(|run| run.metrics.follow_up_queries)),
+        truncated_queries: metric_band(runs.iter().map(|run| run.metrics.truncated_queries)),
+    }
+}
+
+fn metric_band(values: impl Iterator<Item = u64>) -> MetricBand {
+    metric_band_values(values.map(|value| value as f64).collect())
+}
+
+fn metric_band_f64(values: impl Iterator<Item = f64>) -> Option<MetricBand> {
+    let values = values.collect::<Vec<_>>();
+    (!values.is_empty()).then(|| metric_band_values(values))
+}
+
+fn metric_band_values(mut values: Vec<f64>) -> MetricBand {
+    values.sort_by(f64::total_cmp);
+    let median = median_sorted(&values);
+    let mut deviations = values
+        .iter()
+        .map(|value| (value - median).abs())
+        .collect::<Vec<_>>();
+    deviations.sort_by(f64::total_cmp);
+    MetricBand {
+        samples: values.len(),
+        median,
+        mad: median_sorted(&deviations),
+    }
+}
+
+fn median_sorted(values: &[f64]) -> f64 {
+    match values.len() {
+        0 => 0.0,
+        len if len % 2 == 1 => values[len / 2],
+        len => (values[len / 2 - 1] + values[len / 2]) / 2.0,
+    }
 }
 
 fn validate_agent_run_receipt(
@@ -631,6 +1198,56 @@ mod tests {
         }
     }
 
+    fn set_arm_metrics(
+        plan: &AgentRunPlan,
+        bundle: &mut AgentReceiptBundle,
+        arm: AgentArm,
+        read_grep: [u64; 3],
+        round_trips: [u64; 3],
+        tool_calls: [u64; 3],
+    ) {
+        for (index, run) in plan.runs.iter().filter(|run| run.arm == arm).enumerate() {
+            let receipt = bundle
+                .runs
+                .iter_mut()
+                .find(|receipt| receipt.run_id == run.run_id)
+                .unwrap();
+            receipt.metrics.file_reads = read_grep[index];
+            receipt.metrics.grep_calls = 0;
+            receipt.metrics.round_trips = round_trips[index];
+            receipt.metrics.tool_calls = tool_calls[index];
+        }
+    }
+
+    fn passing_metric_bundle(plan: &AgentRunPlan) -> AgentReceiptBundle {
+        let mut bundle = receipt_bundle(plan);
+        set_arm_metrics(
+            plan,
+            &mut bundle,
+            AgentArm::Baseline,
+            [30, 40, 50],
+            [12, 15, 18],
+            [20, 25, 30],
+        );
+        set_arm_metrics(
+            plan,
+            &mut bundle,
+            AgentArm::AtlasPrimitives,
+            [10, 15, 20],
+            [5, 7, 8],
+            [8, 12, 15],
+        );
+        set_arm_metrics(
+            plan,
+            &mut bundle,
+            AgentArm::AtlasContext,
+            [2, 4, 6],
+            [1, 2, 3],
+            [2, 4, 6],
+        );
+        bundle
+    }
+
     #[test]
     fn test_agent_ab_plan_builds_three_symmetric_arms() {
         let plan = compile_agent_plan(&corpus(3), &experiment()).unwrap();
@@ -766,5 +1383,135 @@ mod tests {
         invalid_hash.runs[0].tool_trace_hash = "not-a-hash".to_string();
         let error = validate_agent_receipts(&plan, &invalid_hash).unwrap_err();
         assert_eq!(error.code(), "atlas-agent-ab-evidence");
+    }
+
+    #[test]
+    fn test_agent_ab_gate_blocks_correctness_and_stale_regression() {
+        let plan = agent_plan();
+        let mut incorrect = passing_metric_bundle(&plan);
+        let candidate = plan
+            .runs
+            .iter()
+            .find(|run| run.arm == AgentArm::AtlasPrimitives)
+            .unwrap();
+        let receipt = incorrect
+            .runs
+            .iter_mut()
+            .find(|receipt| receipt.run_id == candidate.run_id)
+            .unwrap();
+        receipt.correctness.passed = false;
+        receipt.correctness.rationale = "missed required symbol".to_string();
+        let gate = gate_agent_receipts(&plan, &incorrect).unwrap();
+        let comparison = gate
+            .comparisons
+            .get(&PromotionCandidate::AtlasPrimitives)
+            .unwrap();
+        assert_eq!(comparison.state, GateState::Blocked);
+        assert!(
+            comparison
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "atlas-agent-ab-correctness")
+        );
+
+        let mut stale = passing_metric_bundle(&plan);
+        let receipt = stale
+            .runs
+            .iter_mut()
+            .find(|receipt| receipt.run_id == candidate.run_id)
+            .unwrap();
+        receipt.stale_as_fresh = true;
+        let gate = gate_agent_receipts(&plan, &stale).unwrap();
+        assert_eq!(
+            gate.comparisons[&PromotionCandidate::AtlasPrimitives].state,
+            GateState::Blocked
+        );
+        assert!(
+            gate.comparisons[&PromotionCandidate::AtlasPrimitives]
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "atlas-agent-ab-stale-as-fresh")
+        );
+    }
+
+    #[test]
+    fn test_agent_ab_gate_derives_benefit_from_baseline_mad() {
+        let plan = agent_plan();
+        let gate = gate_agent_receipts(&plan, &passing_metric_bundle(&plan)).unwrap();
+        let comparison = &gate.comparisons[&PromotionCandidate::AtlasPrimitives];
+
+        assert_eq!(comparison.state, GateState::Passed);
+        assert_eq!(comparison.cases.len(), 1);
+        assert_eq!(comparison.cases[0].state, CaseDecision::Improved);
+        assert_eq!(comparison.cases[0].read_grep.reference.median, 40.0);
+        assert_eq!(comparison.cases[0].read_grep.reference.mad, 10.0);
+        assert_eq!(comparison.cases[0].read_grep.candidate.median, 15.0);
+        assert_eq!(
+            comparison.cases[0].read_grep.decision,
+            MetricDecision::Improved
+        );
+    }
+
+    #[test]
+    fn test_agent_ab_gate_keeps_small_tie_zone_visible() {
+        let mut small_corpus = corpus(3);
+        small_corpus.cases[0].size = WorkspaceSize::Small;
+        let plan = compile_agent_plan(&small_corpus, &experiment()).unwrap();
+        let mut tie = passing_metric_bundle(&plan);
+        set_arm_metrics(
+            &plan,
+            &mut tie,
+            AgentArm::AtlasPrimitives,
+            [40, 45, 50],
+            [15, 16, 17],
+            [25, 27, 29],
+        );
+        let gate = gate_agent_receipts(&plan, &tie).unwrap();
+        assert_eq!(
+            gate.comparisons[&PromotionCandidate::AtlasPrimitives].cases[0].state,
+            CaseDecision::Tie
+        );
+        assert_eq!(
+            gate.comparisons[&PromotionCandidate::AtlasPrimitives].state,
+            GateState::Passed
+        );
+
+        set_arm_metrics(
+            &plan,
+            &mut tie,
+            AgentArm::AtlasPrimitives,
+            [60, 65, 70],
+            [25, 26, 27],
+            [40, 42, 44],
+        );
+        let gate = gate_agent_receipts(&plan, &tie).unwrap();
+        assert_eq!(
+            gate.comparisons[&PromotionCandidate::AtlasPrimitives].cases[0].state,
+            CaseDecision::Blocked
+        );
+    }
+
+    #[test]
+    fn test_agent_ab_gate_scopes_surface_promotions() {
+        let plan = agent_plan();
+        let mut bundle = passing_metric_bundle(&plan);
+        set_arm_metrics(
+            &plan,
+            &mut bundle,
+            AgentArm::AtlasContext,
+            [20, 25, 30],
+            [9, 10, 11],
+            [16, 18, 20],
+        );
+        let gate = gate_agent_receipts(&plan, &bundle).unwrap();
+
+        assert_eq!(
+            gate.comparisons[&PromotionCandidate::AtlasPrimitives].state,
+            GateState::Passed
+        );
+        assert_eq!(
+            gate.comparisons[&PromotionCandidate::AtlasContext].state,
+            GateState::Blocked
+        );
     }
 }

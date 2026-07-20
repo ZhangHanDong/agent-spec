@@ -824,6 +824,15 @@ enum AtlasBenchmarkCommands {
         #[arg(long)]
         out: Option<PathBuf>,
     },
+    /// Gate complete real Agent receipts against a symmetric three-arm plan
+    AgentGate {
+        #[arg(long)]
+        plan: PathBuf,
+        #[arg(long)]
+        receipts: PathBuf,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
     /// Summarize JSON-array or NDJSON run receipts
     Summarize {
         #[arg(long)]
@@ -4402,6 +4411,18 @@ fn cmd_atlas_benchmark_with_writer(
             let experiment = crate::atlas_agent_eval::load_agent_experiment(&experiment)?;
             let plan = crate::atlas_agent_eval::compile_agent_plan(&corpus, &experiment)?;
             emit(&plan, out.as_deref(), stdout)
+        }
+        AtlasBenchmarkCommands::AgentGate {
+            plan,
+            receipts,
+            out,
+        } => {
+            let plan = crate::atlas_agent_eval::load_agent_plan(&plan)?;
+            let receipts = crate::atlas_agent_eval::load_agent_receipts(&receipts)?;
+            let gate = crate::atlas_agent_eval::gate_agent_receipts(&plan, &receipts)?;
+            emit(&gate, out.as_deref(), stdout)?;
+            crate::atlas_agent_eval::enforce_agent_gate(&gate)?;
+            Ok(())
         }
         AtlasBenchmarkCommands::Summarize { receipts, out } => {
             let receipts = crate::atlas_eval::load_receipts(&receipts)?;
@@ -12752,6 +12773,116 @@ Scenario: pass
                 .to_string_lossy()
                 .starts_with(".agent-plan.json.")
         }));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn test_atlas_benchmark_agent_gate_cli() {
+        let dir = make_temp_dir("atlas-agent-gate-cli");
+        let plan_path = repo_root().join("benchmarks/atlas/agent-ab-plan-v1.json");
+        let plan: crate::atlas_agent_eval::AgentRunPlan =
+            serde_json::from_slice(&fs::read(&plan_path).unwrap()).unwrap();
+        let receipts_path = dir.join("receipts.json");
+        let out = dir.join("gate.json");
+        let runs = plan
+            .runs
+            .iter()
+            .map(|run| crate::atlas_agent_eval::AgentRunReceipt {
+                run_id: run.run_id.clone(),
+                outcome: crate::atlas_agent_eval::AgentRunOutcome::Completed,
+                correctness: crate::atlas_agent_eval::AgentCorrectness {
+                    passed: true,
+                    rationale: "rubric satisfied".to_string(),
+                },
+                judge_version: run.controls.judge.version.clone(),
+                rubric_fingerprint: run.rubric_fingerprint.clone(),
+                raw_session: crate::atlas_agent_eval::EvidenceArtifact {
+                    path: format!("{}/{}.json", run.session_store, run.run_id),
+                    hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                        .to_string(),
+                },
+                answer_hash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                    .to_string(),
+                tool_trace_hash: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                    .to_string(),
+                query_metrics_schema: crate::atlas_eval::QUERY_METRICS_SCHEMA.to_string(),
+                stale_as_fresh: false,
+                metrics: crate::atlas_agent_eval::AgentRunMetrics {
+                    file_reads: 10,
+                    grep_calls: 5,
+                    graph_calls: u64::from(run.arm != crate::atlas_agent_eval::AgentArm::Baseline),
+                    tool_calls: 20,
+                    round_trips: 12,
+                    duration_ms: 100,
+                    response_bytes: 1000,
+                    context_bytes: 2000,
+                    cost_usd: None,
+                    read_back_calls: 1,
+                    follow_up_queries: 1,
+                    truncated_queries: 0,
+                },
+                diagnostic: None,
+            })
+            .collect();
+        let bundle = crate::atlas_agent_eval::AgentReceiptBundle {
+            schema: crate::atlas_agent_eval::AGENT_RECEIPTS_SCHEMA.to_string(),
+            experiment_version: plan.experiment_version.clone(),
+            plan_fingerprint: blake3::hash(&serde_json::to_vec(&plan).unwrap())
+                .to_hex()
+                .to_string(),
+            runs,
+        };
+        fs::write(&receipts_path, serde_json::to_vec_pretty(&bundle).unwrap()).unwrap();
+
+        let cli = super::Cli::try_parse_from([
+            "agent-spec",
+            "atlas",
+            "benchmark",
+            "agent-gate",
+            "--plan",
+            plan_path.to_str().unwrap(),
+            "--receipts",
+            receipts_path.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .unwrap();
+        let super::Commands::Atlas {
+            action:
+                super::AtlasCommands::Benchmark {
+                    action: super::AtlasBenchmarkCommands::AgentGate { .. },
+                },
+        } = cli.command
+        else {
+            panic!("expected agent-gate action");
+        };
+        let mut stdout = Vec::new();
+        let result = run_atlas_benchmark_cli(
+            &[
+                "agent-spec",
+                "atlas",
+                "benchmark",
+                "agent-gate",
+                "--plan",
+                plan_path.to_str().unwrap(),
+                "--receipts",
+                receipts_path.to_str().unwrap(),
+                "--out",
+                out.to_str().unwrap(),
+            ],
+            &mut stdout,
+        );
+        assert!(result.is_err(), "equal medium/large metrics must block");
+        assert!(stdout.is_empty());
+        let gate: crate::atlas_agent_eval::AgentGateReceipt =
+            serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+        assert_eq!(gate.schema, crate::atlas_agent_eval::AGENT_GATE_SCHEMA);
+        assert!(
+            gate.comparisons
+                .values()
+                .any(|comparison| comparison.state == crate::atlas_agent_eval::GateState::Blocked)
+        );
 
         fs::remove_dir_all(dir).unwrap();
     }

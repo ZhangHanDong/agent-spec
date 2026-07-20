@@ -189,7 +189,7 @@ git commit -m "feat(atlas): validate complete agent evaluation receipts"
 **Interfaces:**
 - Produces: `AgentGateReceipt`, `gate_agent_receipts`, and `atlas benchmark agent-gate`.
 
-- [ ] **Step 1: Write RED comparison tests**
+- [x] **Step 1: Write RED comparison tests**
 
 Add `test_agent_ab_gate_blocks_correctness_and_stale_regression`,
 `test_agent_ab_gate_derives_benefit_from_baseline_mad`,
@@ -197,7 +197,7 @@ Add `test_agent_ab_gate_blocks_correctness_and_stale_regression`,
 `test_agent_ab_gate_scopes_surface_promotions`. Use three distinct baseline values so median and MAD
 are observable; assert per-case diagnostics and independent B/A and C/B states.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```bash
 cargo test test_agent_ab_gate_blocks_correctness_and_stale_regression -- --nocapture
@@ -208,7 +208,7 @@ cargo test test_agent_ab_gate_scopes_surface_promotions -- --nocapture
 
 Expected: compile failure for missing gate APIs.
 
-- [ ] **Step 3: Implement median/MAD and scoped decisions**
+- [x] **Step 3: Implement median/MAD and scoped decisions**
 
 Compare matched case metrics only after all candidate runs pass correctness/freshness/evidence.
 Medium/large require candidate median plus baseline MAD to be lower than baseline median for
@@ -216,7 +216,7 @@ Read+Grep, round trips, and total tool calls. Small results are improved below t
 within the MAD band, and blocked above the upper bound. Preserve duration, bytes, context, cost,
 failures, question class, and size without using them as hidden gates.
 
-- [ ] **Step 4: Add Agent gate CLI**
+- [x] **Step 4: Add Agent gate CLI**
 
 Add:
 
@@ -228,7 +228,7 @@ It emits a strict `agent-gate-v1` receipt for valid complete evidence, including
 schema/completeness errors emit no normal JSON. A blocked gate writes the receipt first, then exits
 non-zero with `atlas-agent-ab-blocked`.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 ```bash
 cargo test agent_ab_gate -- --nocapture
