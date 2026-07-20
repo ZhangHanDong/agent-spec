@@ -17,12 +17,16 @@ use std::process::Command;
 use quote::ToTokens;
 use serde::{Deserialize, Serialize};
 
+mod affected;
 mod flow;
 mod impact;
 mod index;
 mod status;
 mod traversal;
 
+pub use affected::{
+    AffectedDiagnostic, AffectedOptions, AffectedResult, AffectedSeed, affected_paths,
+};
 pub use flow::{FlowDiagnostic, FlowEndpoint, FlowOptions, FlowQuery, FlowResult, flow};
 pub use impact::{ImpactDiagnostic, ImpactEntry, ImpactOptions, ImpactResult, impact};
 use index::write_json_atomic;
@@ -82,6 +86,8 @@ pub enum AtlasError {
     SearchLimit { limit: usize },
     #[error("atlas-traversal-limit: {detail}")]
     TraversalLimit { detail: String },
+    #[error("atlas-affected-path: `{path}`: {detail}")]
+    AffectedPath { path: String, detail: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

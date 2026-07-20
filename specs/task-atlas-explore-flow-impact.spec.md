@@ -43,8 +43,9 @@ truncation 与测试覆盖结论的诚实边界。
   并用 `PathDirection::Reverse` 明示 path 的遍历方向。
 - `atlas affected` 的 explicit paths、`--stdin`、`--staged`、`--worktree`、`--commit <range>`
   五种模式互斥；Git 使用 `Command` argv 调用并拒绝以 `-` 开头的 revision。
-- affected 只返回 code nodes、distance 与 evidence path；本任务不得按 `_test.rs`、`tests/`、
-  `#[test]` 名称或其他文件名模式生成 test selector。
+- affected 把所有 changed-file code nodes 作为一次 multi-source impact 的 seeds，使 max nodes 同时约束
+  聚合计算与输出；结果只返回 code nodes、distance 与 evidence path；本任务不得按 `_test.rs`、
+  `tests/`、`#[test]` 名称或其他文件名模式生成 test selector。
 - CLI 增加 `atlas explore|flow|impact|affected`；MCP 只增加由
   `AGENT_SPEC_MCP_ATLAS_EXPLORE=1` 开启的 frozen `atlas_explore`，默认 tools/list 不变。
 - `atlas explore <QUERY>` 的 `--profile` 仅接受 `compact|deep` 且默认 compact；flow 只接受完整

@@ -58,6 +58,13 @@ struct Candidate {
     path: GraphPath,
 }
 
+#[derive(Debug)]
+pub(crate) struct ImpactTraversal {
+    pub affected: Vec<ImpactEntry>,
+    pub truncated: bool,
+    pub diagnostics: Vec<ImpactDiagnostic>,
+}
+
 pub fn impact(
     code_root: &Path,
     graph_dir: &Path,
@@ -94,15 +101,38 @@ pub(crate) fn impact_index(
     options: &ImpactOptions,
     status: &AtlasStatus,
 ) -> Result<ImpactResult, AtlasError> {
+    let traversal = impact_many_index(index, std::slice::from_ref(seed), options)?;
+    Ok(ImpactResult {
+        schema: "agent-spec/rust-atlas/impact-v1".into(),
+        seed: seed.clone(),
+        affected: traversal.affected,
+        truncated: traversal.truncated,
+        diagnostics: traversal.diagnostics,
+        status: status.clone(),
+        stale: status.syn.stale_files.clone(),
+    })
+}
+
+pub(crate) fn impact_many_index(
+    index: &QueryIndex,
+    seeds: &[Node],
+    options: &ImpactOptions,
+) -> Result<ImpactTraversal, AtlasError> {
     validate_options(options)?;
-    let seed_path = graph_path(vec![seed.clone()], Vec::new());
-    let mut layer = BTreeMap::from([(
-        seed.id.clone(),
-        Candidate {
-            node: seed.clone(),
-            path: seed_path,
-        },
-    )]);
+    let seed_ids = seeds
+        .iter()
+        .map(|seed| seed.id.clone())
+        .collect::<BTreeSet<_>>();
+    let mut layer = BTreeMap::new();
+    for seed in seeds {
+        insert_best(
+            &mut layer,
+            Candidate {
+                node: seed.clone(),
+                path: graph_path(vec![seed.clone()], Vec::new()),
+            },
+        );
+    }
     let mut settled = BTreeSet::new();
     let mut affected = Vec::new();
     let mut truncated = false;
@@ -120,12 +150,12 @@ pub(crate) fn impact_index(
             if settled.contains(&candidate.node.id) {
                 continue;
             }
-            if candidate.node.id != seed.id && affected.len() == options.max_nodes {
+            if !seed_ids.contains(&candidate.node.id) && affected.len() == options.max_nodes {
                 truncated = true;
                 break 'distances;
             }
             settled.insert(candidate.node.id.clone());
-            if candidate.node.id != seed.id {
+            if !seed_ids.contains(&candidate.node.id) {
                 affected.push(ImpactEntry {
                     node: candidate.node.clone(),
                     distance,
@@ -182,14 +212,10 @@ pub(crate) fn impact_index(
         })
         .into_iter()
         .collect();
-    Ok(ImpactResult {
-        schema: "agent-spec/rust-atlas/impact-v1".into(),
-        seed: seed.clone(),
+    Ok(ImpactTraversal {
         affected,
         truncated,
         diagnostics,
-        status: status.clone(),
-        stale: status.syn.stale_files.clone(),
     })
 }
 
@@ -233,7 +259,7 @@ fn containment_closure(
     }
 }
 
-fn validate_options(options: &ImpactOptions) -> Result<(), AtlasError> {
+pub(crate) fn validate_options(options: &ImpactOptions) -> Result<(), AtlasError> {
     if !(1..=8).contains(&options.max_depth) {
         return Err(AtlasError::TraversalLimit {
             detail: format!(

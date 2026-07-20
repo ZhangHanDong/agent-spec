@@ -378,7 +378,7 @@ git commit -m "feat(atlas): add explainable flow queries"
 
 **Interfaces:**
 - Consumes: shared `PathHop`, `GraphPath`, `QueryIndex`, `indexed_query_state`.
-- Produces: `ImpactOptions`, `ImpactEntry`, `ImpactDiagnostic`, `ImpactResult`, `impact` and crate-private `impact_index`.
+- Produces: `ImpactOptions`, `ImpactEntry`, `ImpactDiagnostic`, `ImpactResult`, `impact` and crate-private `impact_index`, `impact_many_index`.
 
 - [ ] **Step 1: Write failing distance and containment tests**
 
@@ -466,7 +466,7 @@ git commit -m "feat(atlas): add explainable impact traversal"
 - Modify: `crates/rust-atlas/src/lib.rs`
 
 **Interfaces:**
-- Consumes: `QueryIndex.file`, `impact_index`, `ImpactOptions`, canonical code root.
+- Consumes: `QueryIndex.file`, `impact_many_index`, `ImpactOptions`, canonical code root.
 - Produces: `AffectedOptions`, `AffectedSeed`, `AffectedResult`, `affected_paths`, crate-private `normalize_affected_path`.
 
 - [ ] **Step 1: Write failing path-normalization test**
@@ -534,7 +534,7 @@ pub struct AffectedResult {
 }
 ```
 
-Use schema `agent-spec/rust-atlas/affected-v1`; merge duplicate impact entries by minimum `(distance, path signature)`.
+Use schema `agent-spec/rust-atlas/affected-v1`; feed all unique changed-file nodes into one multi-source impact traversal so `max_nodes` bounds aggregate work and output, then choose duplicate reachability by minimum `(distance, path signature)`.
 
 - [ ] **Step 4: Prove no test-name inference exists**
 
