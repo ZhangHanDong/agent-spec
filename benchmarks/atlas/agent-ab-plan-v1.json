@@ -2,10 +2,10 @@
   "schema": "agent-spec/atlas-eval/agent-plan-v1",
   "experiment_version": "atlas-e1-agent-ab-2026-07-21",
   "corpus_fingerprint": "69fb08a6a749ef3f103dbccf5bc54cce9b83b9e08a100e243995014f24fc39f0",
-  "experiment_fingerprint": "f1044f05aaa83fc4c38d06882c930b9377f6cf21dec4d93f0c96079c51025b07",
+  "experiment_fingerprint": "51644ed58e4ad92dbd8b2a58dc834a1274a674acbf09665ee98415419ce7ea18",
   "runs": [
     {
-      "run_id": "4d5bf2ca7c7116a6596a41fd05d5f9d6a14cad52f8de5b5303189dbcb0743e20",
+      "run_id": "dc2feba0dd94526f11fc095a5f0da5f5d81df44d9afbca67beb96dae93c7fb61",
       "case_id": "symbol-lookup",
       "arm": "baseline",
       "trial": 1,
@@ -40,16 +40,16 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "grep",
         "read"
       ],
       "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "eb1b97b1da58c8f803093f0ec232b5d9e0686fe4d0d32974743190cb0d310a7c",
+      "run_id": "be57ee1f644612eb553269862d4704a7f8a6093592de71f49d194badbe9c1861",
       "case_id": "symbol-lookup",
       "arm": "atlas-primitives",
       "trial": 1,
@@ -84,7 +84,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "atlas-explore",
         "atlas-flow",
@@ -99,10 +99,10 @@
         "read"
       ],
       "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "5444e7c1c2fbbf47bfd719a30304ea15f5099486237f5116e207f87946d0b760",
+      "run_id": "ffa0b2df767f365edf9e713f97db9ee8bddeb755662601901bc78764500f7c67",
       "case_id": "symbol-lookup",
       "arm": "atlas-context",
       "trial": 1,
@@ -137,7 +137,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "atlas-context",
         "atlas-explore",
@@ -153,10 +153,10 @@
         "read"
       ],
       "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "6b64924963fd94424678e5991023462efaaec7826fe28fce8d09b9e2d1186720",
+      "run_id": "b4fa9a4a54a7e92432298d1f8357983e5559b4663adfb54dc57331838cd5951a",
       "case_id": "symbol-lookup",
       "arm": "baseline",
       "trial": 2,
@@ -191,16 +191,16 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "grep",
         "read"
       ],
       "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "be346e6a972b5b87642ccab2b5d3b4e877ee9d78f280de4caad71277ce935321",
+      "run_id": "54b6da265f038d58be0f7571afd8fbb57397467415c906b779abef2d8b028efe",
       "case_id": "symbol-lookup",
       "arm": "atlas-primitives",
       "trial": 2,
@@ -235,7 +235,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "atlas-explore",
         "atlas-flow",
@@ -250,10 +250,10 @@
         "read"
       ],
       "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "0565654e8a13f4ab00689e0a34abc8e9c1af4bea8b700a7aa92914fed442fd0b",
+      "run_id": "3f155aacd2dd6fe920966cbea752a925a7d55750b1a0cd5756134e463aaa0612",
       "case_id": "symbol-lookup",
       "arm": "atlas-context",
       "trial": 2,
@@ -288,7 +288,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "atlas-context",
         "atlas-explore",
@@ -304,10 +304,10 @@
         "read"
       ],
       "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "b63d94d77d522864c49ecdcacaa2d7b313c5eeb03d78436104e9c1b4b15b83be",
+      "run_id": "731dd6c626e348f27c3f738bd69a13c7cb82b21b50a720d6fb631c328d0fab2c",
       "case_id": "symbol-lookup",
       "arm": "baseline",
       "trial": 3,
@@ -342,16 +342,16 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "grep",
         "read"
       ],
       "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "6e46e276fa86a9ab597b8161a6b257bb5634cb9f4cf9a6055b39b5180c57229f",
+      "run_id": "c8d3a56fc5ac6bc2a5d4b5572f6deeefb86425e9bd95927d260d8105abcc5f3d",
       "case_id": "symbol-lookup",
       "arm": "atlas-primitives",
       "trial": 3,
@@ -386,7 +386,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "atlas-explore",
         "atlas-flow",
@@ -401,10 +401,10 @@
         "read"
       ],
       "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "db692ba90bc4f2cc241d397ca3daeeddf7731a0f0567ae66212ccd2144f8d3cc",
+      "run_id": "7887e2358ba0d19b854806ca98c980f24423ccb8690cbcb25437fd3dbdb8cd5a",
       "case_id": "symbol-lookup",
       "arm": "atlas-context",
       "trial": 3,
@@ -439,7 +439,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "atlas-context",
         "atlas-explore",
@@ -455,10 +455,10 @@
         "read"
       ],
       "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "e9ef0af99a518a9720a20b99988f9b3aa1fe43426d9f63f8ba1ecf72a2d14dd0",
+      "run_id": "fb7b9fab945c754a2135a359a694df74f15ca29fffa1829979a04977751ab836",
       "case_id": "flow-trace",
       "arm": "baseline",
       "trial": 1,
@@ -495,16 +495,16 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "8a4cb7e99abaf333db009bdb85ec5b1561fccc3a51f4410d845e2d43dee64de8",
+      "environment_fingerprint": "d3928f016c7476bb318f73ecc7f6434a211fbe48d8bac6586f56cf4ba2ca2b67",
       "tools": [
         "grep",
         "read"
       ],
       "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "d7a6d04b9cb69c81389b5108953cf1e78cc5ecef3c837b0e525efadbd8a775f5",
+      "run_id": "3e78e0cf8c615abfd9bac8fcb89942f06c3c9755f939d6c918b52dfd849ba2a2",
       "case_id": "flow-trace",
       "arm": "atlas-primitives",
       "trial": 1,
@@ -541,7 +541,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "8a4cb7e99abaf333db009bdb85ec5b1561fccc3a51f4410d845e2d43dee64de8",
+      "environment_fingerprint": "d3928f016c7476bb318f73ecc7f6434a211fbe48d8bac6586f56cf4ba2ca2b67",
       "tools": [
         "atlas-explore",
         "atlas-flow",
@@ -556,10 +556,10 @@
         "read"
       ],
       "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "e3490c39aa7fb1db404c3d3d8c69e92657cfe188ea877992f8dad362919dda52",
+      "run_id": "d31ab6d1ae59aff56a7ee414540e27cf26a5e3f5c5b1941a35180e1274eae3f1",
       "case_id": "flow-trace",
       "arm": "atlas-context",
       "trial": 1,
@@ -596,7 +596,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "8a4cb7e99abaf333db009bdb85ec5b1561fccc3a51f4410d845e2d43dee64de8",
+      "environment_fingerprint": "d3928f016c7476bb318f73ecc7f6434a211fbe48d8bac6586f56cf4ba2ca2b67",
       "tools": [
         "atlas-context",
         "atlas-explore",
@@ -612,10 +612,10 @@
         "read"
       ],
       "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "a7ff9001bcee98674417deed0186410065f46b0d7791814ecd4317a861895830",
+      "run_id": "fb31667e0f4b90a96afad982d7c7d023211c39d59fedfa0d533ca91dd970c39e",
       "case_id": "flow-trace",
       "arm": "baseline",
       "trial": 2,
@@ -652,16 +652,16 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "8a4cb7e99abaf333db009bdb85ec5b1561fccc3a51f4410d845e2d43dee64de8",
+      "environment_fingerprint": "d3928f016c7476bb318f73ecc7f6434a211fbe48d8bac6586f56cf4ba2ca2b67",
       "tools": [
         "grep",
         "read"
       ],
       "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "eaa6f4421886ca904d8fbe1dfd15f142719d777b2dfc74c03401df2e2c70f504",
+      "run_id": "0f47058777fe62a80c106a82d978efbd0ce8dcd5098b99bd1d9eb53a05ba60de",
       "case_id": "flow-trace",
       "arm": "atlas-primitives",
       "trial": 2,
@@ -698,7 +698,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "8a4cb7e99abaf333db009bdb85ec5b1561fccc3a51f4410d845e2d43dee64de8",
+      "environment_fingerprint": "d3928f016c7476bb318f73ecc7f6434a211fbe48d8bac6586f56cf4ba2ca2b67",
       "tools": [
         "atlas-explore",
         "atlas-flow",
@@ -713,10 +713,10 @@
         "read"
       ],
       "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "5b2049dfdcdd7a1b3acd29d534f7bc5b71d292113fc31f6dc291d1ba37bfbba1",
+      "run_id": "e7a93f21251d2661f52162c9193b9c8a73f2205a99f6f0f05f06b72d15056b15",
       "case_id": "flow-trace",
       "arm": "atlas-context",
       "trial": 2,
@@ -753,7 +753,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "8a4cb7e99abaf333db009bdb85ec5b1561fccc3a51f4410d845e2d43dee64de8",
+      "environment_fingerprint": "d3928f016c7476bb318f73ecc7f6434a211fbe48d8bac6586f56cf4ba2ca2b67",
       "tools": [
         "atlas-context",
         "atlas-explore",
@@ -769,10 +769,10 @@
         "read"
       ],
       "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "e176af6b261e4c8eae9e1b1580bd46a7df674ec9a63e8dad69555cfdb6b82a16",
+      "run_id": "5a7fe9330767e4100df68aa12e0913b1b0defc1ab75731d8fcdb9133bb5b1281",
       "case_id": "flow-trace",
       "arm": "baseline",
       "trial": 3,
@@ -809,16 +809,16 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "8a4cb7e99abaf333db009bdb85ec5b1561fccc3a51f4410d845e2d43dee64de8",
+      "environment_fingerprint": "d3928f016c7476bb318f73ecc7f6434a211fbe48d8bac6586f56cf4ba2ca2b67",
       "tools": [
         "grep",
         "read"
       ],
       "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "74cc68fb1a01547f9454985426c6757ae9c71963dc25c8933e23974a0b271262",
+      "run_id": "8941db600b000cf7c90009581c76839c83b6999605e9e1679cb5da4378e3f553",
       "case_id": "flow-trace",
       "arm": "atlas-primitives",
       "trial": 3,
@@ -855,7 +855,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "8a4cb7e99abaf333db009bdb85ec5b1561fccc3a51f4410d845e2d43dee64de8",
+      "environment_fingerprint": "d3928f016c7476bb318f73ecc7f6434a211fbe48d8bac6586f56cf4ba2ca2b67",
       "tools": [
         "atlas-explore",
         "atlas-flow",
@@ -870,10 +870,10 @@
         "read"
       ],
       "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "eaf8d1c34954b7b611a2c1ffe46c4c18380b2534aeea0fa4bbefbd2f21e2cd1a",
+      "run_id": "0079ff901a2b241780f1f44b32f96ca742cfdf48375a620c5aa5583b9a1fe6dd",
       "case_id": "flow-trace",
       "arm": "atlas-context",
       "trial": 3,
@@ -910,7 +910,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "8a4cb7e99abaf333db009bdb85ec5b1561fccc3a51f4410d845e2d43dee64de8",
+      "environment_fingerprint": "d3928f016c7476bb318f73ecc7f6434a211fbe48d8bac6586f56cf4ba2ca2b67",
       "tools": [
         "atlas-context",
         "atlas-explore",
@@ -926,10 +926,10 @@
         "read"
       ],
       "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "d39a5eeff56d0aad1df49e7a3e514dd29e3ea5003361b0a80ea7cb85d17a4bfe",
+      "run_id": "313ac17f1a31d08859a253c6c58f90dc6dabe81fec3e3f3695fbfe0cf45daf10",
       "case_id": "impact-analysis",
       "arm": "baseline",
       "trial": 1,
@@ -966,16 +966,16 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "grep",
         "read"
       ],
       "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "0b40cbdaaea0e4d6be20ca8994bc715363f35f9e489422680b2ea0f613982aee",
+      "run_id": "2da7a482d86bab7aa91671b6aaaa185af72577f4513d566b26f552a054fc50de",
       "case_id": "impact-analysis",
       "arm": "atlas-primitives",
       "trial": 1,
@@ -1012,7 +1012,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "atlas-explore",
         "atlas-flow",
@@ -1027,10 +1027,10 @@
         "read"
       ],
       "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "1a589b0cb4f24b55dd80476d89a02f4c8bd8a4420b04b0e3228939d391dcd028",
+      "run_id": "e83f95615cfa4380e8beb7057b506a27359528cd46794bedb3e27a77d2039250",
       "case_id": "impact-analysis",
       "arm": "atlas-context",
       "trial": 1,
@@ -1067,7 +1067,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "atlas-context",
         "atlas-explore",
@@ -1083,10 +1083,10 @@
         "read"
       ],
       "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "d48a49b54f454add6e2412124f753ac42a7d1eb01f4ad87bd49c74767d134c4c",
+      "run_id": "cd830528ac24ba47954e48745d69abcd7f839f28250184f4ea6846ccca64f3a3",
       "case_id": "impact-analysis",
       "arm": "baseline",
       "trial": 2,
@@ -1123,16 +1123,16 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "grep",
         "read"
       ],
       "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "76b35cc19693517fb0d87c80082590003c724987befd9a35443be1cd1345aa97",
+      "run_id": "7517ced659cd716ef4cf589d7d8ffb45c6d7c17052abc0b680e7af1483a4e74d",
       "case_id": "impact-analysis",
       "arm": "atlas-primitives",
       "trial": 2,
@@ -1169,7 +1169,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "atlas-explore",
         "atlas-flow",
@@ -1184,10 +1184,10 @@
         "read"
       ],
       "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "1ca5bf5341c89bed181106a20a3d66b5ab9201ea467320cc070008c4869fc83f",
+      "run_id": "1f8ee804fbf6f776a5e3a8e30e554069bbcbd12f4fab17e7c6500892947a1ac3",
       "case_id": "impact-analysis",
       "arm": "atlas-context",
       "trial": 2,
@@ -1224,7 +1224,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "atlas-context",
         "atlas-explore",
@@ -1240,10 +1240,10 @@
         "read"
       ],
       "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "b5d3edd87484a9e7ec540f63488c57fcd33a06bdc24817393d0aad285c6b97a0",
+      "run_id": "470a5b88914b4fd901b87f24223a43df7683faa03d76c31fedb28d919884a3ec",
       "case_id": "impact-analysis",
       "arm": "baseline",
       "trial": 3,
@@ -1280,16 +1280,16 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "grep",
         "read"
       ],
       "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "b4a01a237dabd49feeaaf53753c186e65f7f3df82fa7dd66845e5475c0ea336c",
+      "run_id": "d7004230eb004465d625c137fb279c018715b54940935c9140f51459f4914242",
       "case_id": "impact-analysis",
       "arm": "atlas-primitives",
       "trial": 3,
@@ -1326,7 +1326,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "atlas-explore",
         "atlas-flow",
@@ -1341,10 +1341,10 @@
         "read"
       ],
       "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "8567333bed98b4d6ef4cd44a3bddda43de339fc948e3f3d25f36a7ceab70017a",
+      "run_id": "85d4ee62a6a2ecc8c8e4f4f5b6b9457baa8c1644d1428b773ff51b4f2853c1e2",
       "case_id": "impact-analysis",
       "arm": "atlas-context",
       "trial": 3,
@@ -1381,7 +1381,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "atlas-context",
         "atlas-explore",
@@ -1397,10 +1397,10 @@
         "read"
       ],
       "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "2ac3725b8460c1095800fa202b48863ec402f422f9d9f36d3c66f13b91f0b328",
+      "run_id": "685f5673b0f25e0794133b867e4a312a4ad997fc0dcfe05ae7b8d3e0ee524e3e",
       "case_id": "implementation-plan",
       "arm": "baseline",
       "trial": 1,
@@ -1435,16 +1435,16 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "0dfbb78e0a9a76de5ae1788894ec6c3aa02184745f24e7983753cd0c66ef7dcb",
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
       "tools": [
         "grep",
         "read"
       ],
       "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "9affaaccf4eeab4855376fadc95d8c6754f25d6df95777543ff8b5ceb30db210",
+      "run_id": "766237014cf048114557d04a1b248a9ab497ed1fa9a6cca2088271a68b62ed16",
       "case_id": "implementation-plan",
       "arm": "atlas-primitives",
       "trial": 1,
@@ -1479,7 +1479,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "0dfbb78e0a9a76de5ae1788894ec6c3aa02184745f24e7983753cd0c66ef7dcb",
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
       "tools": [
         "atlas-explore",
         "atlas-flow",
@@ -1494,10 +1494,10 @@
         "read"
       ],
       "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "36e9c2222ff0d5862659dc94d94629ed682ad3d6090c90297daa40afb1000077",
+      "run_id": "280437542bfeba2be4bae40c9056b9fff347e851605788c15426a2d44ef8e6d0",
       "case_id": "implementation-plan",
       "arm": "atlas-context",
       "trial": 1,
@@ -1532,7 +1532,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "0dfbb78e0a9a76de5ae1788894ec6c3aa02184745f24e7983753cd0c66ef7dcb",
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
       "tools": [
         "atlas-context",
         "atlas-explore",
@@ -1548,10 +1548,10 @@
         "read"
       ],
       "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "e5b1f775c352f5b7cd5a2f2553ec7d7c32c7031bc1026a30be0a4e757ddad258",
+      "run_id": "eb605861c72b2642a58a34deca1174d4db9e0bcf8a6f067753d539391c886988",
       "case_id": "implementation-plan",
       "arm": "baseline",
       "trial": 2,
@@ -1586,16 +1586,16 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "0dfbb78e0a9a76de5ae1788894ec6c3aa02184745f24e7983753cd0c66ef7dcb",
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
       "tools": [
         "grep",
         "read"
       ],
       "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "eb11aa654e05ac4ecef681c119b8f3801c73a32acab60e952fc1b94d5e072971",
+      "run_id": "59f29b12d42d4c3cb475428ce0ff9e6045430a49ef9142ac2cafed343ad1ae17",
       "case_id": "implementation-plan",
       "arm": "atlas-primitives",
       "trial": 2,
@@ -1630,7 +1630,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "0dfbb78e0a9a76de5ae1788894ec6c3aa02184745f24e7983753cd0c66ef7dcb",
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
       "tools": [
         "atlas-explore",
         "atlas-flow",
@@ -1645,10 +1645,10 @@
         "read"
       ],
       "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "ef559a59264b05fbbc4887d6b19d564d7585fd7ad89057759a478eef89e82a29",
+      "run_id": "93c4e2e5164ba592a34100defaa745c260ac989ce84f2a6e7bdd1f2c1cfaed71",
       "case_id": "implementation-plan",
       "arm": "atlas-context",
       "trial": 2,
@@ -1683,7 +1683,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "0dfbb78e0a9a76de5ae1788894ec6c3aa02184745f24e7983753cd0c66ef7dcb",
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
       "tools": [
         "atlas-context",
         "atlas-explore",
@@ -1699,10 +1699,10 @@
         "read"
       ],
       "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "b101226a075e0c33b739554674b8eb2117a5159f5c4751da4972b8e3daedbc5c",
+      "run_id": "101270678f6b35343a90f10a4475642b734ad7c096e6ee7b1a1d9c65bd7822eb",
       "case_id": "implementation-plan",
       "arm": "baseline",
       "trial": 3,
@@ -1737,16 +1737,16 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "0dfbb78e0a9a76de5ae1788894ec6c3aa02184745f24e7983753cd0c66ef7dcb",
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
       "tools": [
         "grep",
         "read"
       ],
       "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "e357ba15dbe74cd6bffd469251e7b9263a8c7dc7b3bfdce83ee587abdab33c69",
+      "run_id": "a140547eb4035c831fa25a9a091c50135351b97c47e9427081abc3b88664c79b",
       "case_id": "implementation-plan",
       "arm": "atlas-primitives",
       "trial": 3,
@@ -1781,7 +1781,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "0dfbb78e0a9a76de5ae1788894ec6c3aa02184745f24e7983753cd0c66ef7dcb",
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
       "tools": [
         "atlas-explore",
         "atlas-flow",
@@ -1796,10 +1796,10 @@
         "read"
       ],
       "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "15d011b68ea164bea9f34f6d68e63097b6d1662794f2f683f02092c4d19c29c1",
+      "run_id": "6961fe88f32d1bd99b57dbdfbd474c887c4a83fee40e96b7dada23079ece237a",
       "case_id": "implementation-plan",
       "arm": "atlas-context",
       "trial": 3,
@@ -1834,7 +1834,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "0dfbb78e0a9a76de5ae1788894ec6c3aa02184745f24e7983753cd0c66ef7dcb",
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
       "tools": [
         "atlas-context",
         "atlas-explore",
@@ -1850,10 +1850,10 @@
         "read"
       ],
       "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "25326bcbabfb4283c5f69e5e9daf3db63f14098640dec19435945bcbda0de56f",
+      "run_id": "f1c65ee68836f90d081ddc625b149c8a57fa74f6f030a576c2f8d65c69b27f4f",
       "case_id": "stale-graph-diagnosis",
       "arm": "baseline",
       "trial": 1,
@@ -1888,16 +1888,16 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "grep",
         "read"
       ],
       "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "8793e72844b5a3dd1209e0a2ad95ba0d046d3fcd4cb8d09d35b55a9f5fc390c9",
+      "run_id": "6854e49448e98658220f1aaaf5dc620109e39c5cf1d3030b2c475faee216464d",
       "case_id": "stale-graph-diagnosis",
       "arm": "atlas-primitives",
       "trial": 1,
@@ -1932,7 +1932,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "atlas-explore",
         "atlas-flow",
@@ -1947,10 +1947,10 @@
         "read"
       ],
       "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "b367397fa6f27120dba03f6820134dea780fbd30e33463c992f6d582e1a10799",
+      "run_id": "fb70e7ad1d2d60f9e7cea4090ca3a4f6e005c4c9e98c04e645e68d7ec8dbb03e",
       "case_id": "stale-graph-diagnosis",
       "arm": "atlas-context",
       "trial": 1,
@@ -1985,7 +1985,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "atlas-context",
         "atlas-explore",
@@ -2001,10 +2001,10 @@
         "read"
       ],
       "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "f8cd216d4794703ada3782fcfdd2e776ed1144c028385ca8b1414a92ba26546f",
+      "run_id": "9d003f24124d760a87e4a88646aac693d852b2e0976205828367a172fd5aded8",
       "case_id": "stale-graph-diagnosis",
       "arm": "baseline",
       "trial": 2,
@@ -2039,16 +2039,16 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "grep",
         "read"
       ],
       "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "2b25badc7e8eee60355c5138c3173713a81aaf45d3c10370253e5bcf74055efe",
+      "run_id": "c84ef97f4eee986131bc39ced752030d5ca669cea7e0e4bf74814bb9bbf8888f",
       "case_id": "stale-graph-diagnosis",
       "arm": "atlas-primitives",
       "trial": 2,
@@ -2083,7 +2083,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "atlas-explore",
         "atlas-flow",
@@ -2098,10 +2098,10 @@
         "read"
       ],
       "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "cf580859ee2e2acad4d91e29e45afb03d287147393160173d17c9279157a4324",
+      "run_id": "380a619c1dc821f76df6dfa590585e7dbc741c59945d1ecffabf7590e5b605d6",
       "case_id": "stale-graph-diagnosis",
       "arm": "atlas-context",
       "trial": 2,
@@ -2136,7 +2136,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "atlas-context",
         "atlas-explore",
@@ -2152,10 +2152,10 @@
         "read"
       ],
       "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "adda4e21d9835a4517f0624f39812b16bee6fae30b164b607f8503c2cb1d8f99",
+      "run_id": "85ab9fe34a445273d4e69b249d8f2e753f63e545ab9769cd670401a54a8e957b",
       "case_id": "stale-graph-diagnosis",
       "arm": "baseline",
       "trial": 3,
@@ -2190,16 +2190,16 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "grep",
         "read"
       ],
       "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "5ac8be6a5f4e88e14a8d1444e0f278dd57b6ecfc6ccbbe35ef4cf81438aee2ac",
+      "run_id": "d3c17b1d60ad071b9c363a594023bc59aa6b9b4822cca71c33a47c923f839168",
       "case_id": "stale-graph-diagnosis",
       "arm": "atlas-primitives",
       "trial": 3,
@@ -2234,7 +2234,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "atlas-explore",
         "atlas-flow",
@@ -2249,10 +2249,10 @@
         "read"
       ],
       "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "763380d1825dd60ce4267a4a97d29abe9759461d35b30eb5bd3203474d796059",
+      "run_id": "ce3e611b8d66f3490e5fde0b60c4e03fcec932b284792885d6cef7c16b446b5a",
       "case_id": "stale-graph-diagnosis",
       "arm": "atlas-context",
       "trial": 3,
@@ -2287,7 +2287,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "atlas-context",
         "atlas-explore",
@@ -2303,10 +2303,10 @@
         "read"
       ],
       "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "a69ab1068a29cdd873ea24f6466c0cb80640beb91dc174bb8de08d69153b4142",
+      "run_id": "dc0b984ef9efe421b10972cec12d40bf18c81353430846bf769ba172dc618056",
       "case_id": "scip-unavailable-fallback",
       "arm": "baseline",
       "trial": 1,
@@ -2341,16 +2341,16 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "grep",
         "read"
       ],
       "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "e82332204c24428b38170657db87e8a550692ebb21a94d166bf8f52df081c15d",
+      "run_id": "76b65da255fded3612e0d4faa0726fd5b13884620990b69ce31d4a8b4a0d441c",
       "case_id": "scip-unavailable-fallback",
       "arm": "atlas-primitives",
       "trial": 1,
@@ -2385,7 +2385,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "atlas-explore",
         "atlas-flow",
@@ -2400,10 +2400,10 @@
         "read"
       ],
       "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "3fda6f6b20be590068fea84aa267d0ff1704561d568e5b82a44f57c7c3dbc076",
+      "run_id": "f6042510c02c0f6a0ae8eb01c328716a7ffc1e07e304046fb3841383b6c5e876",
       "case_id": "scip-unavailable-fallback",
       "arm": "atlas-context",
       "trial": 1,
@@ -2438,7 +2438,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "atlas-context",
         "atlas-explore",
@@ -2454,10 +2454,10 @@
         "read"
       ],
       "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "4a26d4b346e2c7ababac55e7405135b26ae4ed0d6614f04f27be290cd8515b34",
+      "run_id": "9a22fdd277de1701abd1584eb59df131d250b224c7071a4e7455fef5c03ed04d",
       "case_id": "scip-unavailable-fallback",
       "arm": "baseline",
       "trial": 2,
@@ -2492,16 +2492,16 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "grep",
         "read"
       ],
       "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "41c42d9883683c533af1a71fd56162ef1c77081810be2512269458d4eaf73edc",
+      "run_id": "355ddf260dfc2a003bf35dd9376f89e145b2a8a33315d6d6252623c48cc88fdd",
       "case_id": "scip-unavailable-fallback",
       "arm": "atlas-primitives",
       "trial": 2,
@@ -2536,7 +2536,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "atlas-explore",
         "atlas-flow",
@@ -2551,10 +2551,10 @@
         "read"
       ],
       "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "7d5dda85ba8ff0a157874ced1352eaf16109b1deaa134cf32e8c14249fd46db0",
+      "run_id": "ac38f050f77c422ea6f0357d55ace92b9b1f52ef11e64020ac712cbff3df3e64",
       "case_id": "scip-unavailable-fallback",
       "arm": "atlas-context",
       "trial": 2,
@@ -2589,7 +2589,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "atlas-context",
         "atlas-explore",
@@ -2605,10 +2605,10 @@
         "read"
       ],
       "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "8298059a0c2c6f8db6d0ad8421e3d0ba51935759a445e81a54912536902bf405",
+      "run_id": "7979ecd7a294ee0fba8bec9a5dd8c7c92a3c1c3734b00735c9b258f7240f004c",
       "case_id": "scip-unavailable-fallback",
       "arm": "baseline",
       "trial": 3,
@@ -2643,16 +2643,16 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "grep",
         "read"
       ],
       "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "e0dac81475e5ce11502819a90374105e660779486adef36ec8152922d1847e60",
+      "run_id": "51542cc07e37f20758db95d679cb08f5c4a1971a5ef3b1d087a8b8094f08d3e4",
       "case_id": "scip-unavailable-fallback",
       "arm": "atlas-primitives",
       "trial": 3,
@@ -2687,7 +2687,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "atlas-explore",
         "atlas-flow",
@@ -2702,10 +2702,10 @@
         "read"
       ],
       "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "9e91e751509a5c1526c6c748cedd2870a9f6e52644d7c333c192c83b0698e4f4",
+      "run_id": "e4f86cd38f14abcd983f56fe61da0a0fe0954a30b36a2fd014410decc3de6270",
       "case_id": "scip-unavailable-fallback",
       "arm": "atlas-context",
       "trial": 3,
@@ -2740,7 +2740,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "303c9166e56175062d1b71a479de3875cedeea6377a744b171864813324b0592",
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
       "tools": [
         "atlas-context",
         "atlas-explore",
@@ -2756,10 +2756,10 @@
         "read"
       ],
       "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "34c464c586c8c6572a37c3bf9dd7323ef99d1a0f33fc936b0e3c4e89f509ca7c",
+      "run_id": "975599faa598fa7139002f0a510aa501fa7c5e0012aafa0e81fc5f9003ce50ec",
       "case_id": "compile-failing-workspace",
       "arm": "baseline",
       "trial": 1,
@@ -2794,16 +2794,16 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "5a9b3888bba0dbbbe719705a3bbd5e9448d3d952b351a3e9f20f0e0a60939288",
+      "environment_fingerprint": "94383aeafa116d7dd244168f1920973edfd03d3f3c7a57e1b2562399bd1fc5e7",
       "tools": [
         "grep",
         "read"
       ],
       "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "47a021e9af405299f4b4ebfb7dc980751952d9ef87b9d72486a706c7aa17344c",
+      "run_id": "c8053763394d5fe48ace73dd69c716dda73338053d8fce0b1d1ce109c71606bd",
       "case_id": "compile-failing-workspace",
       "arm": "atlas-primitives",
       "trial": 1,
@@ -2838,7 +2838,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "5a9b3888bba0dbbbe719705a3bbd5e9448d3d952b351a3e9f20f0e0a60939288",
+      "environment_fingerprint": "94383aeafa116d7dd244168f1920973edfd03d3f3c7a57e1b2562399bd1fc5e7",
       "tools": [
         "atlas-explore",
         "atlas-flow",
@@ -2853,10 +2853,10 @@
         "read"
       ],
       "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "72eac90a5f6aa4e46a3862741583ed666f59c0e633983167ddbfb4c50e36e955",
+      "run_id": "2e7f52284855af99bbdb3db5c3e38c639b8a589e55fd92534ceea17552e18197",
       "case_id": "compile-failing-workspace",
       "arm": "atlas-context",
       "trial": 1,
@@ -2891,7 +2891,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "5a9b3888bba0dbbbe719705a3bbd5e9448d3d952b351a3e9f20f0e0a60939288",
+      "environment_fingerprint": "94383aeafa116d7dd244168f1920973edfd03d3f3c7a57e1b2562399bd1fc5e7",
       "tools": [
         "atlas-context",
         "atlas-explore",
@@ -2907,10 +2907,10 @@
         "read"
       ],
       "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "1ec11a6b44f64dba33764d61f0ad1daa7c44badfd6a257f4830e5ca72b3126e3",
+      "run_id": "79403608d68926fc16e2691feef2b4fdd9ac7f759feea82052461c316a6c3db0",
       "case_id": "compile-failing-workspace",
       "arm": "baseline",
       "trial": 2,
@@ -2945,16 +2945,16 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "5a9b3888bba0dbbbe719705a3bbd5e9448d3d952b351a3e9f20f0e0a60939288",
+      "environment_fingerprint": "94383aeafa116d7dd244168f1920973edfd03d3f3c7a57e1b2562399bd1fc5e7",
       "tools": [
         "grep",
         "read"
       ],
       "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "ca2bdb969916a8cb52e9179c9e5c78bfcf16dd3e3c129ed511024134776e3d1c",
+      "run_id": "c483a4734e6ec5cfeaea0e7254ec413e396f3bf5eb1418f645a469d5ff872d35",
       "case_id": "compile-failing-workspace",
       "arm": "atlas-primitives",
       "trial": 2,
@@ -2989,7 +2989,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "5a9b3888bba0dbbbe719705a3bbd5e9448d3d952b351a3e9f20f0e0a60939288",
+      "environment_fingerprint": "94383aeafa116d7dd244168f1920973edfd03d3f3c7a57e1b2562399bd1fc5e7",
       "tools": [
         "atlas-explore",
         "atlas-flow",
@@ -3004,10 +3004,10 @@
         "read"
       ],
       "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "69fb687f7d0693be86a22bf3f2e814d4935c40a92b5b05785e2ee82d95e0bcc4",
+      "run_id": "abec760c01201e72ba5bc9f1642a7b2e55ee3433648ca73f4fe8bf6420ae8c8b",
       "case_id": "compile-failing-workspace",
       "arm": "atlas-context",
       "trial": 2,
@@ -3042,7 +3042,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "5a9b3888bba0dbbbe719705a3bbd5e9448d3d952b351a3e9f20f0e0a60939288",
+      "environment_fingerprint": "94383aeafa116d7dd244168f1920973edfd03d3f3c7a57e1b2562399bd1fc5e7",
       "tools": [
         "atlas-context",
         "atlas-explore",
@@ -3058,10 +3058,10 @@
         "read"
       ],
       "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "6efdd2402779fce1757b1be5cc0e348f3df7989ccbaed4da351a1c959110dc54",
+      "run_id": "b5169c290a0b9b6b4f97700192ccf533fbeeba5892ce4277f0c3a22d51031a1b",
       "case_id": "compile-failing-workspace",
       "arm": "baseline",
       "trial": 3,
@@ -3096,16 +3096,16 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "5a9b3888bba0dbbbe719705a3bbd5e9448d3d952b351a3e9f20f0e0a60939288",
+      "environment_fingerprint": "94383aeafa116d7dd244168f1920973edfd03d3f3c7a57e1b2562399bd1fc5e7",
       "tools": [
         "grep",
         "read"
       ],
       "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "8a8c91f16c95c84fce6cb9b88b26749387fbe9d85ceaa8839063d08f043fc2e5",
+      "run_id": "edc1888a6ee6b930b7b292e281385bede1bd773c9230f92f9d8c56043dc730b9",
       "case_id": "compile-failing-workspace",
       "arm": "atlas-primitives",
       "trial": 3,
@@ -3140,7 +3140,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "5a9b3888bba0dbbbe719705a3bbd5e9448d3d952b351a3e9f20f0e0a60939288",
+      "environment_fingerprint": "94383aeafa116d7dd244168f1920973edfd03d3f3c7a57e1b2562399bd1fc5e7",
       "tools": [
         "atlas-explore",
         "atlas-flow",
@@ -3155,10 +3155,10 @@
         "read"
       ],
       "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "5b913d08919714901b71233fb2697aa0147116c7531111df6b0b0dc7c53362dd",
+      "run_id": "f151061002e8992ab5f519755062a15588097e8b13131a714b7285056b9d634d",
       "case_id": "compile-failing-workspace",
       "arm": "atlas-context",
       "trial": 3,
@@ -3193,7 +3193,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "5a9b3888bba0dbbbe719705a3bbd5e9448d3d952b351a3e9f20f0e0a60939288",
+      "environment_fingerprint": "94383aeafa116d7dd244168f1920973edfd03d3f3c7a57e1b2562399bd1fc5e7",
       "tools": [
         "atlas-context",
         "atlas-explore",
@@ -3209,10 +3209,10 @@
         "read"
       ],
       "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "2ebe6a9ebd28ac52846ca05f3add79c63337b101910c4ad7b1d686704dd867b3",
+      "run_id": "d8c0c374dd663acad188a6345fb4c9e79d35d5a8f0e49f3bc6fb3e6b097c1cdb",
       "case_id": "worktree-scope",
       "arm": "baseline",
       "trial": 1,
@@ -3247,16 +3247,16 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "0dfbb78e0a9a76de5ae1788894ec6c3aa02184745f24e7983753cd0c66ef7dcb",
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
       "tools": [
         "grep",
         "read"
       ],
       "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "2c162ddc9660a072c95e8f9993d9e92d000fde07f4f430d56623e04e3b4ac067",
+      "run_id": "0b5edd234f62eb0a116a055f46f1249d31f9221bd532e5ff86b14b92c53ea125",
       "case_id": "worktree-scope",
       "arm": "atlas-primitives",
       "trial": 1,
@@ -3291,7 +3291,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "0dfbb78e0a9a76de5ae1788894ec6c3aa02184745f24e7983753cd0c66ef7dcb",
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
       "tools": [
         "atlas-explore",
         "atlas-flow",
@@ -3306,10 +3306,10 @@
         "read"
       ],
       "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "f03eb89470b3d6c3e056169a275c56f1206295e980eb7a29911b2abb29f17caa",
+      "run_id": "72f6e66c7dc9622de0908eef55b557c2a4b002e73f162e59d7c27addce8420ed",
       "case_id": "worktree-scope",
       "arm": "atlas-context",
       "trial": 1,
@@ -3344,7 +3344,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "0dfbb78e0a9a76de5ae1788894ec6c3aa02184745f24e7983753cd0c66ef7dcb",
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
       "tools": [
         "atlas-context",
         "atlas-explore",
@@ -3360,10 +3360,10 @@
         "read"
       ],
       "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "21f8e25a4c8c619d90d79cea88f85d99cfda2baa62dbef137692ab3119549faf",
+      "run_id": "61ad4082a09c7dea767e79caa95effc155b0ef9adaef957a178943809796c6e4",
       "case_id": "worktree-scope",
       "arm": "baseline",
       "trial": 2,
@@ -3398,16 +3398,16 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "0dfbb78e0a9a76de5ae1788894ec6c3aa02184745f24e7983753cd0c66ef7dcb",
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
       "tools": [
         "grep",
         "read"
       ],
       "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "46b1d3e3d4d59eaa82949fad6d7418a8336950c9a1ce7185be557696a011f6be",
+      "run_id": "1edfe9e72686e06102aaf6c54fabd0ce9b6d20b2f0ca43d0911973d9f01c0614",
       "case_id": "worktree-scope",
       "arm": "atlas-primitives",
       "trial": 2,
@@ -3442,7 +3442,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "0dfbb78e0a9a76de5ae1788894ec6c3aa02184745f24e7983753cd0c66ef7dcb",
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
       "tools": [
         "atlas-explore",
         "atlas-flow",
@@ -3457,10 +3457,10 @@
         "read"
       ],
       "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "a8715c47ac8208faaee192c2b93e4724554511d569427c1e52a0465a39e2002a",
+      "run_id": "ddfa1b6f3e63102aadb5799ef19ac8419da24b92a63db73ee08dacda0e8b1fcc",
       "case_id": "worktree-scope",
       "arm": "atlas-context",
       "trial": 2,
@@ -3495,7 +3495,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "0dfbb78e0a9a76de5ae1788894ec6c3aa02184745f24e7983753cd0c66ef7dcb",
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
       "tools": [
         "atlas-context",
         "atlas-explore",
@@ -3511,10 +3511,10 @@
         "read"
       ],
       "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "f04402d50ad7eacffa20f90365a7e5d9dd802fd054d11f67f47ce81a53277345",
+      "run_id": "aed1f47f5e35675bd488e158c610d12cc4ccafa137fcd8395a428cdb6af917fa",
       "case_id": "worktree-scope",
       "arm": "baseline",
       "trial": 3,
@@ -3549,16 +3549,16 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "0dfbb78e0a9a76de5ae1788894ec6c3aa02184745f24e7983753cd0c66ef7dcb",
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
       "tools": [
         "grep",
         "read"
       ],
       "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "a4fecf441e800eb16b2b5f898e545294cc95f49c0ae29e6750e8da9be06d338c",
+      "run_id": "1abae621ed18b8827e11f15bc1effdd1fc350df6367704fe3afe8ccf2615dc64",
       "case_id": "worktree-scope",
       "arm": "atlas-primitives",
       "trial": 3,
@@ -3593,7 +3593,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "0dfbb78e0a9a76de5ae1788894ec6c3aa02184745f24e7983753cd0c66ef7dcb",
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
       "tools": [
         "atlas-explore",
         "atlas-flow",
@@ -3608,10 +3608,10 @@
         "read"
       ],
       "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     },
     {
-      "run_id": "60ff9c9a3608c4b8d25dad9ad46f8206c6726c347978113d9e450a5c98b126f2",
+      "run_id": "04190c14b715da42eabeb413bb9f863a979ff0c854365858e9f280a9133b0148",
       "case_id": "worktree-scope",
       "arm": "atlas-context",
       "trial": 3,
@@ -3646,7 +3646,7 @@
           "version": "atlas-e0-rubric-v1"
         }
       },
-      "environment_fingerprint": "0dfbb78e0a9a76de5ae1788894ec6c3aa02184745f24e7983753cd0c66ef7dcb",
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
       "tools": [
         "atlas-context",
         "atlas-explore",
@@ -3662,7 +3662,7 @@
         "read"
       ],
       "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
-      "session_store": "artifacts/atlas-agent-ab"
+      "session_store": ".agent-spec/evaluation/agent-ab"
     }
   ]
 }

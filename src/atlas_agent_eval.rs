@@ -921,6 +921,7 @@ fn validate_planned_run(run: &AgentPlannedRun) -> Result<(), AgentEvalError> {
         || run.rubric.is_empty()
         || run.rubric.iter().any(|item| item.trim().is_empty())
         || run.trial == 0
+        || run.session_store.trim().is_empty()
         || is_temporary_path(&run.session_store)
         || expected_surface != run.surface_fingerprint
         || expected_rubric != run.rubric_fingerprint
@@ -959,6 +960,7 @@ pub fn validate_agent_receipts(
     plan: &AgentRunPlan,
     bundle: &AgentReceiptBundle,
 ) -> Result<(), AgentEvalError> {
+    validate_agent_plan(plan)?;
     if plan.schema != AGENT_PLAN_SCHEMA
         || bundle.schema != AGENT_RECEIPTS_SCHEMA
         || bundle.experiment_version != plan.experiment_version
@@ -1073,6 +1075,7 @@ pub fn validate_serving_receipts(
     plan: &ServingRunPlan,
     bundle: &ServingReceiptBundle,
 ) -> Result<(), AgentEvalError> {
+    validate_serving_plan(plan)?;
     if plan.schema != SERVING_PLAN_SCHEMA
         || bundle.schema != SERVING_RECEIPTS_SCHEMA
         || bundle.experiment_version != plan.experiment_version
@@ -1411,7 +1414,8 @@ fn compare_agent_arms(
         let Some(exemplar) = plan.runs.iter().find(|run| run.case_id == case_id) else {
             continue;
         };
-        let mut case_diagnostics = candidate_run_diagnostics(&candidate_runs);
+        let mut case_diagnostics = arm_run_diagnostics(&reference_runs, true);
+        case_diagnostics.extend(arm_run_diagnostics(&candidate_runs, false));
         diagnostics.extend(case_diagnostics.iter().cloned());
         let reference_metrics = aggregate_agent_metrics(&reference_runs);
         let candidate_metrics = aggregate_agent_metrics(&candidate_runs);
@@ -1511,8 +1515,14 @@ fn runs_for_case<'a>(
         .collect()
 }
 
-fn candidate_run_diagnostics(runs: &[&AgentRunReceipt]) -> Vec<GateDiagnostic> {
+fn arm_run_diagnostics(runs: &[&AgentRunReceipt], reference: bool) -> Vec<GateDiagnostic> {
     let mut diagnostics = Vec::new();
+    let role = if reference { "reference" } else { "candidate" };
+    let code_prefix = if reference {
+        "atlas-agent-ab-reference-"
+    } else {
+        "atlas-agent-ab-"
+    };
     let failures = runs
         .iter()
         .filter(|run| run.outcome != AgentRunOutcome::Completed)
@@ -1520,8 +1530,8 @@ fn candidate_run_diagnostics(runs: &[&AgentRunReceipt]) -> Vec<GateDiagnostic> {
         .collect::<Vec<_>>();
     if !failures.is_empty() {
         diagnostics.push(GateDiagnostic {
-            code: "atlas-agent-ab-run-failure".to_string(),
-            message: "candidate arm contains failed, timed out, or cancelled runs".to_string(),
+            code: format!("{code_prefix}run-failure"),
+            message: format!("{role} arm contains failed, timed out, or cancelled runs"),
             run_ids: failures,
         });
     }
@@ -1532,8 +1542,8 @@ fn candidate_run_diagnostics(runs: &[&AgentRunReceipt]) -> Vec<GateDiagnostic> {
         .collect::<Vec<_>>();
     if !incorrect.is_empty() {
         diagnostics.push(GateDiagnostic {
-            code: "atlas-agent-ab-correctness".to_string(),
-            message: "candidate arm contains an incorrect answer".to_string(),
+            code: format!("{code_prefix}correctness"),
+            message: format!("{role} arm contains an incorrect answer"),
             run_ids: incorrect,
         });
     }
@@ -1544,8 +1554,8 @@ fn candidate_run_diagnostics(runs: &[&AgentRunReceipt]) -> Vec<GateDiagnostic> {
         .collect::<Vec<_>>();
     if !stale.is_empty() {
         diagnostics.push(GateDiagnostic {
-            code: "atlas-agent-ab-stale-as-fresh".to_string(),
-            message: "candidate arm presented stale evidence as fresh".to_string(),
+            code: format!("{code_prefix}stale-as-fresh"),
+            message: format!("{role} arm presented stale evidence as fresh"),
             run_ids: stale,
         });
     }
@@ -1834,7 +1844,7 @@ mod tests {
                 },
                 "judge": { "mode": "rubric", "version": "judge-v1" }
             },
-            "session_store": "artifacts/atlas-agent-ab",
+            "session_store": ".agent-spec/evaluation/agent-ab",
             "surfaces": {
                 "baseline": ["grep", "read"],
                 "atlas_primitives": [
@@ -1965,7 +1975,7 @@ mod tests {
                 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
             service_config_fingerprint:
                 "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
-            session_store: "artifacts/atlas-serving-ab".to_string(),
+            session_store: ".agent-spec/evaluation/serving-ab".to_string(),
         }
     }
 
@@ -2084,6 +2094,35 @@ mod tests {
     }
 
     #[test]
+    fn test_agent_ab_plan_rejects_empty_session_store() {
+        let mut plan = agent_plan();
+        let run = &mut plan.runs[0];
+        run.session_store.clear();
+        run.environment_fingerprint = fingerprint(&(
+            &run.model,
+            &run.prompt,
+            &run.repository,
+            &run.revision,
+            run.permissions,
+            run.cache_condition,
+            &run.controls,
+            &run.session_store,
+        ))
+        .unwrap();
+        run.run_id = fingerprint(&(
+            &run.case_id,
+            run.trial,
+            run.arm,
+            &run.environment_fingerprint,
+            &run.surface_fingerprint,
+        ))
+        .unwrap();
+
+        let error = validate_agent_plan(&plan).unwrap_err();
+        assert_eq!(error.code(), "atlas-agent-ab-plan");
+    }
+
+    #[test]
     fn test_agent_ab_gate_requires_exact_planned_runs() {
         let plan = agent_plan();
         let mut missing = receipt_bundle(&plan);
@@ -2101,12 +2140,19 @@ mod tests {
             "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff".to_string();
         let error = validate_agent_receipts(&plan, &unknown).unwrap_err();
         assert_eq!(error.code(), "atlas-agent-ab-completeness");
+
+        let mut malformed_plan = plan.clone();
+        malformed_plan.runs.push(plan.runs[0].clone());
+        let mut receipts = receipt_bundle(&plan);
+        receipts.plan_fingerprint = fingerprint(&malformed_plan).unwrap();
+        let error = validate_agent_receipts(&malformed_plan, &receipts).unwrap_err();
+        assert_eq!(error.code(), "atlas-agent-ab-plan");
     }
 
     #[test]
     fn test_agent_ab_gate_retains_failed_runs() {
         let plan = agent_plan();
-        let mut bundle = receipt_bundle(&plan);
+        let mut bundle = passing_metric_bundle(&plan);
         bundle.runs[1].outcome = AgentRunOutcome::Failed;
         bundle.runs[1].correctness.passed = false;
         bundle.runs[1].correctness.rationale = "agent process failed".to_string();
@@ -2118,6 +2164,16 @@ mod tests {
         assert_eq!(
             bundle.runs[1].diagnostic.as_deref(),
             Some("driver exited 17")
+        );
+        let gate = gate_agent_receipts(&plan, &bundle).unwrap();
+        assert_eq!(gate.failed_runs.len(), 1);
+        assert_eq!(
+            gate.comparisons[&PromotionCandidate::AtlasPrimitives].state,
+            GateState::Blocked
+        );
+        assert_eq!(
+            gate.comparisons[&PromotionCandidate::AtlasContext].state,
+            GateState::Blocked
         );
     }
 
@@ -2309,6 +2365,13 @@ mod tests {
                 .len(),
             4
         );
+
+        let mut malformed_plan = plan.clone();
+        malformed_plan.runs.push(plan.runs[0].clone());
+        let mut receipts = serving_receipts(&plan);
+        receipts.plan_fingerprint = fingerprint(&malformed_plan).unwrap();
+        let error = validate_serving_receipts(&malformed_plan, &receipts).unwrap_err();
+        assert_eq!(error.code(), "atlas-serving-ab-plan");
     }
 
     #[test]

@@ -9,5 +9,5 @@
   "heartbeat_budget_ms": 100,
   "query_set_fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
   "service_config_fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
-  "session_store": "artifacts/atlas-serving-ab"
+  "session_store": ".agent-spec/evaluation/serving-ab"
 }

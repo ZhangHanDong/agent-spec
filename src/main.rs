@@ -12763,7 +12763,7 @@ Scenario: pass
                     "tool_instructions": { "mode": "disabled" },
                     "judge": { "mode": "rubric", "version": "judge-v1" }
                 },
-                "session_store": "artifacts/atlas-agent-ab",
+                "session_store": ".agent-spec/evaluation/agent-ab",
                 "surfaces": {
                     "baseline": ["grep", "read"],
                     "atlas_primitives": ["atlas-explore", "atlas-search", "grep", "read"],
@@ -12940,7 +12940,7 @@ Scenario: pass
                 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
             service_config_fingerprint:
                 "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
-            session_store: "artifacts/atlas-serving-ab".to_string(),
+            session_store: ".agent-spec/evaluation/serving-ab".to_string(),
         };
         fs::write(
             &experiment_path,

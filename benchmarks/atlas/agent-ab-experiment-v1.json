@@ -19,7 +19,7 @@
       "version": "atlas-e0-rubric-v1"
     }
   },
-  "session_store": "artifacts/atlas-agent-ab",
+  "session_store": ".agent-spec/evaluation/agent-ab",
   "surfaces": {
     "baseline": [
       "grep",
