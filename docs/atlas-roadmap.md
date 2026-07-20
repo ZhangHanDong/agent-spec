@@ -451,7 +451,7 @@ provider、skill 或模型。v1 ledger 继续可读，但返回 `affected-trace-
 
 #### D2. 增量 resolution 与 validation
 
-状态：daemon 之前。
+状态：实施中，合约 `REQ-ATLAS-INCREMENTAL-HARDENING` / `task-atlas-incremental-hardening`。
 
 D2 先交付可证明正确的增量事务，再为 D3 提供同步原语：
 
@@ -475,6 +475,11 @@ D2 先交付可证明正确的增量事务，再为 D3 提供同步原语：
 workspace manifest edit、large SCIP/MIR overlay、mid-resolution kill 和 orphan recovery。除耗时
 外还记录 touched shards、resolved/unresolved edge delta、peak memory、generation id 与 fallback
 原因。
+
+详细执行顺序与故障注入矩阵见
+`docs/superpowers/plans/2026-07-20-atlas-d2-incremental-hardening.md`。D2 的 accepted
+requirement 表示范围与约束已确认，不表示实现已交付；只有本文件第 8 节全部完成后才能把状态
+改为“已交付”。
 
 #### D3. 可选 watch 与 daemon mode
 
