@@ -384,7 +384,7 @@ target/debug/agent-spec lifecycle specs/task-atlas-agent-ab-gate.spec.md --code 
 Expected: all deterministic gates pass with no skip or uncertain verdict; E1 documentation still
 states that real Agent acceptance has not occurred.
 
-- [ ] **Step 4: Commit publication and record post-commit evidence**
+- [x] **Step 4: Commit publication and record post-commit evidence**
 
 ```bash
 git add docs/atlas-agent-ab-gate.md docs/atlas-evaluation.md docs/atlas-roadmap.md README.md \
