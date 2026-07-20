@@ -160,7 +160,7 @@ pub struct FreshnessReport {
     pub affected_paths: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DiagnosticSeverity {
     Warning,
@@ -1481,7 +1481,12 @@ fn validate_diagnostics(
         ));
     }
     diagnostics.sort_by(|left, right| {
-        (&left.code, &left.path, &left.message).cmp(&(&right.code, &right.path, &right.message))
+        (&left.code, &left.path, &left.message, left.severity).cmp(&(
+            &right.code,
+            &right.path,
+            &right.message,
+            right.severity,
+        ))
     });
     for diagnostic in diagnostics {
         if !valid_identifier(&diagnostic.code) || diagnostic.message.trim().is_empty() {
@@ -1797,10 +1802,28 @@ esac
     #[test]
     fn test_extraction_projection_is_stable_and_provider_scoped() {
         let manifest = extractor_manifest();
-        let first = project_extraction(&manifest, "worktree-main", extraction_payload()).unwrap();
+        let mut original = extraction_payload();
+        original.freshness.state = FreshnessState::Partial;
+        original.freshness.affected_paths = vec!["src/lib.fixture".to_string()];
+        original.diagnostics = vec![
+            ProviderDiagnostic {
+                code: "fixture-diagnostic".to_string(),
+                severity: DiagnosticSeverity::Warning,
+                message: "same diagnostic identity".to_string(),
+                path: Some("src/lib.fixture".to_string()),
+            },
+            ProviderDiagnostic {
+                code: "fixture-diagnostic".to_string(),
+                severity: DiagnosticSeverity::Error,
+                message: "same diagnostic identity".to_string(),
+                path: Some("src/lib.fixture".to_string()),
+            },
+        ];
+        let first = project_extraction(&manifest, "worktree-main", original.clone()).unwrap();
 
-        let mut reordered = extraction_payload();
+        let mut reordered = original;
         reordered.nodes.reverse();
+        reordered.diagnostics.reverse();
         let second = project_extraction(&manifest, "worktree-main", reordered).unwrap();
 
         assert_eq!(first, second);
