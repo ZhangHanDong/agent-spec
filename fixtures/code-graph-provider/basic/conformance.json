@@ -1,0 +1,11 @@
+{
+  "schema": "agent-spec/code-graph-provider/conformance-fixture-v1",
+  "fixture_id": "provider-basic",
+  "repository_root": "fixtures/code-graph-provider/basic/project",
+  "worktree_id": "fixture-worktree",
+  "revision": "0123456789abcdef0123456789abcdef01234567",
+  "expected_node_ids": [
+    "fixture-extractor:function:root/run",
+    "fixture-extractor:module:root"
+  ]
+}

@@ -40,10 +40,10 @@ harness, CLI surface, and documented provider-author contract without implementi
 
 ## Task 5: Deliver The Conformance Harness
 
-- [ ] Add provider-neutral source fixture, manifest, registration, and local fixture executable.
-- [ ] Write RED matrix test proving all required F1 checks are represented and enforced.
-- [ ] Implement strict conformance receipt and deterministic harness.
-- [ ] Run fixture conformance tests and commit.
+- [x] Add provider-neutral source fixture, manifest, registration, and local fixture executable.
+- [x] Write RED matrix test proving all required F1 checks are represented and enforced.
+- [x] Implement strict conformance receipt and deterministic harness.
+- [x] Run fixture conformance tests and commit.
 
 ## Task 6: Expose Explicit CLI Commands
 

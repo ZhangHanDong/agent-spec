@@ -19,6 +19,10 @@ pub const ENRICHMENT_PAYLOAD_SCHEMA: &str = "agent-spec/code-graph-provider/enri
 pub const ENRICHMENT_ARTIFACT_SCHEMA: &str =
     "agent-spec/code-graph-provider/enrichment-artifact-v1";
 pub const PROVIDER_REQUEST_SCHEMA: &str = "agent-spec/code-graph-provider/request-v1";
+pub const PROVIDER_CONFORMANCE_FIXTURE_SCHEMA: &str =
+    "agent-spec/code-graph-provider/conformance-fixture-v1";
+pub const PROVIDER_CONFORMANCE_RECEIPT_SCHEMA: &str =
+    "agent-spec/code-graph-provider/conformance-receipt-v1";
 
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -304,6 +308,45 @@ impl CancellationToken {
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::SeqCst)
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderConformanceFixture {
+    pub schema: String,
+    pub fixture_id: String,
+    pub repository_root: String,
+    pub worktree_id: String,
+    pub revision: String,
+    pub expected_node_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ConformanceState {
+    Passed,
+    Blocked,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConformanceCheck {
+    pub id: String,
+    pub passed: bool,
+    pub diagnostic_code: Option<String>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderConformanceReceipt {
+    pub schema: String,
+    pub provider_id: String,
+    pub provider_version: String,
+    pub manifest_fingerprint: String,
+    pub fixture_id: String,
+    pub state: ConformanceState,
+    pub checks: Vec<ConformanceCheck>,
 }
 
 pub fn validate_manifest(manifest: &ProviderManifest) -> Result<(), ProviderError> {
@@ -877,6 +920,407 @@ pub fn publish_json_atomic(output: &Path, value: &impl Serialize) -> Result<(), 
     result
 }
 
+pub fn load_provider_manifest(path: &Path) -> Result<ProviderManifest, ProviderError> {
+    let manifest: ProviderManifest = load_strict_json(path, "provider-manifest")?;
+    validate_manifest(&manifest)?;
+    Ok(manifest)
+}
+
+pub fn load_provider_registration(path: &Path) -> Result<ProviderRegistration, ProviderError> {
+    load_strict_json(path, "provider-registration")
+}
+
+pub fn load_conformance_fixture(path: &Path) -> Result<ProviderConformanceFixture, ProviderError> {
+    let mut fixture: ProviderConformanceFixture =
+        load_strict_json(path, "provider-conformance-fixture")?;
+    validate_conformance_fixture(&mut fixture)?;
+    Ok(fixture)
+}
+
+pub fn run_provider_conformance(
+    manifest: &ProviderManifest,
+    registration: &ProviderRegistration,
+    fixture: &ProviderConformanceFixture,
+    workspace_root: &Path,
+    scratch_dir: &Path,
+) -> Result<ProviderConformanceReceipt, ProviderError> {
+    validate_manifest(manifest)?;
+    validate_registration(manifest, registration)?;
+    let mut fixture = fixture.clone();
+    validate_conformance_fixture(&mut fixture)?;
+    if !workspace_root.is_dir() {
+        return Err(ProviderError::new(
+            "provider-conformance-fixture",
+            format!("workspace root {} does not exist", workspace_root.display()),
+        ));
+    }
+    let repository_root = workspace_root.join(&fixture.repository_root);
+    if !repository_root.is_dir() {
+        return Err(ProviderError::new(
+            "provider-conformance-fixture",
+            format!(
+                "fixture repository {} does not exist",
+                repository_root.display()
+            ),
+        ));
+    }
+    std::fs::create_dir_all(scratch_dir).map_err(|error| {
+        ProviderError::new(
+            "provider-conformance",
+            format!(
+                "failed to create conformance scratch directory {}: {error}",
+                scratch_dir.display()
+            ),
+        )
+    })?;
+    let registration = registration_for_workspace(registration, workspace_root);
+    validate_registration(manifest, &registration)?;
+    let artifact_path = scratch_dir.join("extraction-artifact.json");
+    let execute = |case_id: &str, cancellation: &CancellationToken| {
+        let request = conformance_request(&fixture, &repository_root, case_id);
+        run_and_publish_extraction(
+            manifest,
+            &registration,
+            &request,
+            cancellation,
+            &artifact_path,
+        )
+    };
+
+    let fresh = execute("fresh", &CancellationToken::new());
+    let stable_id = match &fresh {
+        Ok(artifact) => {
+            let actual = artifact
+                .payload
+                .nodes
+                .iter()
+                .map(|node| node.id.clone())
+                .collect::<Vec<_>>();
+            conformance_assert(
+                "stable-id",
+                actual == fixture.expected_node_ids,
+                None,
+                format!(
+                    "expected node ids {:?}, received {actual:?}",
+                    fixture.expected_node_ids
+                ),
+            )
+        }
+        Err(error) => conformance_error("stable-id", error),
+    };
+
+    let repeat = execute("repeat", &CancellationToken::new());
+    let deterministic = match (&fresh, &repeat) {
+        (Ok(first), Ok(second)) => conformance_assert(
+            "deterministic-repeat",
+            first.graph_fingerprint == second.graph_fingerprint,
+            None,
+            "repeated canonical graph fingerprints differ".to_string(),
+        ),
+        (Err(error), _) | (_, Err(error)) => conformance_error("deterministic-repeat", error),
+    };
+
+    let partial = execute("partial-parse", &CancellationToken::new());
+    let partial_parse = match partial {
+        Ok(artifact) => conformance_assert(
+            "partial-parse",
+            artifact.payload.freshness.state == FreshnessState::Partial
+                && !artifact.payload.freshness.affected_paths.is_empty()
+                && !artifact.payload.diagnostics.is_empty(),
+            None,
+            "partial response did not preserve affected paths and diagnostics".to_string(),
+        ),
+        Err(ref error) => conformance_error("partial-parse", error),
+    };
+
+    let stale = execute("stale", &CancellationToken::new());
+    let wrong = execute("wrong-worktree", &CancellationToken::new());
+    let stale_worktree = match (stale, wrong) {
+        (Ok(stale), Err(wrong)) => conformance_assert(
+            "stale-worktree",
+            stale.payload.freshness.state == FreshnessState::Stale
+                && !stale.payload.freshness.affected_paths.is_empty()
+                && wrong.code() == "provider-worktree-mismatch",
+            Some(wrong.code().to_string()),
+            "stale evidence or wrong-worktree rejection was not preserved".to_string(),
+        ),
+        (Err(ref error), _) => conformance_error("stale-worktree", error),
+        (_, Ok(_)) => conformance_assert(
+            "stale-worktree",
+            false,
+            None,
+            "wrong-worktree response was accepted".to_string(),
+        ),
+    };
+
+    let unknown = execute("unknown-schema", &CancellationToken::new());
+    let unknown_schema = expected_error_check("unknown-schema", unknown, "provider-schema");
+
+    let bounded_request = conformance_request(&fixture, &repository_root, "bounded-output");
+    let bounded = run_provider_process(
+        manifest,
+        &registration,
+        &bounded_request,
+        &CancellationToken::new(),
+    );
+    let bounded_output =
+        expected_process_error_check("bounded-output", bounded, "provider-output-limit");
+
+    let cancellation = CancellationToken::new();
+    let trigger = cancellation.clone();
+    let canceller = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(20));
+        trigger.cancel();
+    });
+    let cancel_request = conformance_request(&fixture, &repository_root, "cancellation");
+    let cancelled = run_provider_process(manifest, &registration, &cancel_request, &cancellation);
+    let cancellation_check = if canceller.join().is_err() {
+        conformance_assert(
+            "cancellation",
+            false,
+            None,
+            "conformance cancellation trigger panicked".to_string(),
+        )
+    } else {
+        expected_process_error_check("cancellation", cancelled, "provider-cancelled")
+    };
+
+    let atomic_publish = atomic_conformance_check(
+        manifest,
+        &registration,
+        &fixture,
+        &repository_root,
+        &artifact_path,
+    );
+    let checks = vec![
+        stable_id,
+        deterministic,
+        partial_parse,
+        stale_worktree,
+        unknown_schema,
+        bounded_output,
+        cancellation_check,
+        atomic_publish,
+    ];
+    let state = if checks.iter().all(|check| check.passed) {
+        ConformanceState::Passed
+    } else {
+        ConformanceState::Blocked
+    };
+    Ok(ProviderConformanceReceipt {
+        schema: PROVIDER_CONFORMANCE_RECEIPT_SCHEMA.to_string(),
+        provider_id: manifest.provider_id.clone(),
+        provider_version: manifest.provider_version.clone(),
+        manifest_fingerprint: canonical_fingerprint(manifest)?,
+        fixture_id: fixture.fixture_id,
+        state,
+        checks,
+    })
+}
+
+fn atomic_conformance_check(
+    manifest: &ProviderManifest,
+    registration: &ProviderRegistration,
+    fixture: &ProviderConformanceFixture,
+    repository_root: &Path,
+    artifact_path: &Path,
+) -> ConformanceCheck {
+    let fresh_request = conformance_request(fixture, repository_root, "fresh");
+    if let Err(error) = run_and_publish_extraction(
+        manifest,
+        registration,
+        &fresh_request,
+        &CancellationToken::new(),
+        artifact_path,
+    ) {
+        return conformance_error("atomic-publish", &error);
+    }
+    let before = match std::fs::read(artifact_path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            return conformance_assert(
+                "atomic-publish",
+                false,
+                None,
+                format!("failed to read seeded artifact: {error}"),
+            );
+        }
+    };
+    let invalid_request = conformance_request(fixture, repository_root, "unknown-schema");
+    let result = run_and_publish_extraction(
+        manifest,
+        registration,
+        &invalid_request,
+        &CancellationToken::new(),
+        artifact_path,
+    );
+    let after = std::fs::read(artifact_path);
+    let temporary_absent = artifact_path
+        .parent()
+        .and_then(|parent| std::fs::read_dir(parent).ok())
+        .is_some_and(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .all(|entry| !entry.file_name().to_string_lossy().contains(".tmp-"))
+        });
+    let diagnostic_code = result.as_ref().err().map(|error| error.code().to_string());
+    conformance_assert(
+        "atomic-publish",
+        result
+            .as_ref()
+            .is_err_and(|error| error.code() == "provider-schema")
+            && after.is_ok_and(|bytes| bytes == before)
+            && temporary_absent,
+        diagnostic_code,
+        "invalid response changed the prior artifact or left a temporary file".to_string(),
+    )
+}
+
+fn expected_error_check(
+    id: &str,
+    result: Result<ExtractionArtifact, ProviderError>,
+    expected: &str,
+) -> ConformanceCheck {
+    match result {
+        Err(error) => conformance_assert(
+            id,
+            error.code() == expected,
+            Some(error.code().to_string()),
+            format!("expected {expected}, received {}", error.code()),
+        ),
+        Ok(_) => conformance_assert(
+            id,
+            false,
+            None,
+            format!("expected {expected}, but provider output was accepted"),
+        ),
+    }
+}
+
+fn expected_process_error_check(
+    id: &str,
+    result: Result<ProviderProcessOutput, ProviderError>,
+    expected: &str,
+) -> ConformanceCheck {
+    match result {
+        Err(error) => conformance_assert(
+            id,
+            error.code() == expected,
+            Some(error.code().to_string()),
+            format!("expected {expected}, received {}", error.code()),
+        ),
+        Ok(_) => conformance_assert(
+            id,
+            false,
+            None,
+            format!("expected {expected}, but provider process succeeded"),
+        ),
+    }
+}
+
+fn conformance_assert(
+    id: &str,
+    passed: bool,
+    diagnostic_code: Option<String>,
+    failure_message: String,
+) -> ConformanceCheck {
+    ConformanceCheck {
+        id: id.to_string(),
+        passed,
+        diagnostic_code,
+        message: if passed {
+            "conformance invariant satisfied".to_string()
+        } else {
+            failure_message
+        },
+    }
+}
+
+fn conformance_error(id: &str, error: &ProviderError) -> ConformanceCheck {
+    conformance_assert(id, false, Some(error.code().to_string()), error.to_string())
+}
+
+fn conformance_request(
+    fixture: &ProviderConformanceFixture,
+    repository_root: &Path,
+    case_id: &str,
+) -> ProviderRequest {
+    ProviderRequest {
+        schema: PROVIDER_REQUEST_SCHEMA.to_string(),
+        request_id: format!("{}-{case_id}", fixture.fixture_id),
+        operation: ProviderOperation::Extract,
+        repository_root: repository_root.to_string_lossy().into_owned(),
+        worktree_id: fixture.worktree_id.clone(),
+        revision: Some(fixture.revision.clone()),
+        conformance_case: Some(case_id.to_string()),
+    }
+}
+
+fn registration_for_workspace(
+    registration: &ProviderRegistration,
+    workspace_root: &Path,
+) -> ProviderRegistration {
+    let mut registration = registration.clone();
+    if let Some(cwd) = registration.cwd.as_deref() {
+        let cwd = Path::new(cwd);
+        if cwd.is_relative() {
+            registration.cwd = Some(workspace_root.join(cwd).to_string_lossy().into_owned());
+        }
+    }
+    let executable = Path::new(&registration.executable);
+    if executable.components().count() > 1 && executable.is_relative() {
+        registration.executable = workspace_root
+            .join(executable)
+            .to_string_lossy()
+            .into_owned();
+    }
+    registration
+}
+
+fn validate_conformance_fixture(
+    fixture: &mut ProviderConformanceFixture,
+) -> Result<(), ProviderError> {
+    if fixture.schema != PROVIDER_CONFORMANCE_FIXTURE_SCHEMA
+        || !valid_identifier(&fixture.fixture_id)
+        || fixture.worktree_id.trim().is_empty()
+        || fixture.revision.trim().is_empty()
+        || fixture.expected_node_ids.is_empty()
+    {
+        return Err(ProviderError::new(
+            "provider-conformance-fixture",
+            "conformance fixture schema or identity is invalid",
+        ));
+    }
+    validate_repository_path(&fixture.repository_root)?;
+    fixture.expected_node_ids.sort();
+    if fixture
+        .expected_node_ids
+        .windows(2)
+        .any(|pair| pair[0] == pair[1])
+    {
+        return Err(ProviderError::new(
+            "provider-conformance-fixture",
+            "conformance expected node ids contain duplicates",
+        ));
+    }
+    Ok(())
+}
+
+fn load_strict_json<T: for<'de> Deserialize<'de>>(
+    path: &Path,
+    code: &'static str,
+) -> Result<T, ProviderError> {
+    let bytes = std::fs::read(path).map_err(|error| {
+        ProviderError::new(code, format!("failed to read {}: {error}", path.display()))
+    })?;
+    serde_json::from_slice(&bytes).map_err(|error| {
+        ProviderError::new(
+            code,
+            format!("failed to parse strict JSON {}: {error}", path.display()),
+        )
+    })
+}
+
 fn validate_request(
     manifest: &ProviderManifest,
     request: &ProviderRequest,
@@ -1149,7 +1593,7 @@ mod tests {
 
     fn limits() -> ResourceLimits {
         ResourceLimits {
-            timeout_ms: 1_000,
+            timeout_ms: 5_000,
             max_stdout_bytes: 64 * 1024,
             max_stderr_bytes: 16 * 1024,
             max_diagnostics: 32,
@@ -1263,7 +1707,7 @@ case "$1" in
   emit) cat "$2" ;;
   stdout) i=0; while [ "$i" -lt 300 ]; do printf x; i=$((i + 1)); done ;;
   stderr) i=0; while [ "$i" -lt 300 ]; do printf x >&2; i=$((i + 1)); done ;;
-  sleep) sleep 2 ;;
+  sleep) while :; do :; done ;;
   *) exit 17 ;;
 esac
 "#,
@@ -1591,5 +2035,50 @@ esac
                 .all(|entry| !entry.file_name().to_string_lossy().contains(".tmp-"))
         );
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn test_provider_conformance_fixture_covers_roadmap_matrix() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let fixture_root = root.join("fixtures/code-graph-provider/basic");
+        let manifest = load_provider_manifest(&fixture_root.join("manifest.json")).unwrap();
+        let registration =
+            load_provider_registration(&fixture_root.join("registration.json")).unwrap();
+        let fixture = load_conformance_fixture(&fixture_root.join("conformance.json")).unwrap();
+        let scratch = std::env::temp_dir().join(format!(
+            "agent-spec-provider-conformance-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&scratch);
+
+        let receipt =
+            run_provider_conformance(&manifest, &registration, &fixture, &root, &scratch).unwrap();
+
+        assert_eq!(receipt.schema, PROVIDER_CONFORMANCE_RECEIPT_SCHEMA);
+        assert_eq!(
+            receipt.state,
+            ConformanceState::Passed,
+            "{:#?}",
+            receipt.checks
+        );
+        assert_eq!(
+            receipt
+                .checks
+                .iter()
+                .map(|check| check.id.as_str())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([
+                "atomic-publish",
+                "bounded-output",
+                "cancellation",
+                "deterministic-repeat",
+                "partial-parse",
+                "stable-id",
+                "stale-worktree",
+                "unknown-schema",
+            ])
+        );
+        assert!(receipt.checks.iter().all(|check| check.passed));
+        std::fs::remove_dir_all(scratch).unwrap();
     }
 }

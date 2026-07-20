@@ -1,0 +1,28 @@
+{
+  "schema": "agent-spec/code-graph-provider/manifest-v1",
+  "provider_id": "fixture-extractor",
+  "provider_version": "1.0.0",
+  "language": "fixture",
+  "ir_schema": {
+    "min": 1,
+    "max": 1
+  },
+  "role": "extractor",
+  "capabilities": [
+    "basic-references",
+    "containment",
+    "nodes"
+  ],
+  "startup": "stdio-json-v1",
+  "freshness_inputs": [
+    "src/**"
+  ],
+  "limits": {
+    "timeout_ms": 5000,
+    "max_stdout_bytes": 4096,
+    "max_stderr_bytes": 1024,
+    "max_diagnostics": 16
+  },
+  "deterministic": true,
+  "supports_no_daemon": true
+}
