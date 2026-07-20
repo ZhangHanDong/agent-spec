@@ -54,7 +54,7 @@ impact 查询在明确预算内保留关键证据，并能解释遗漏来自 ret
 - CHANGELOG.md
 
 ### Symbols
-- rust-atlas: rust_atlas::compile_context
+- rust-atlas: rust_atlas::context::compile_context
 
 ### Forbidden
 - 不调用 LLM，不从自由文本猜测或写回 graph/KLL intent

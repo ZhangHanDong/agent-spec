@@ -67,5 +67,5 @@
 
 - [x] Run targeted tests, `cargo test --workspace --all-targets --all-features`, fmt and clippy with warnings denied.
 - [x] Run docs lint, wiki check, KLL graph/plan gates and graph provider checks.
-- [ ] Run lifecycle with zero skip/uncertain, replay the requirement and inspect trace graph against the final commit.
+- [x] Run lifecycle with zero skip/uncertain, replay the requirement and inspect trace graph against the final commit.
 - [x] Record real candidate, omission, byte and diagnostic numbers in docs and update roadmap status.
