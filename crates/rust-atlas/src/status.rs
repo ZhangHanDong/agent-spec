@@ -820,7 +820,7 @@ mod tests {
             },
         )
         .unwrap();
-        let meta_path = graph.join("meta.json");
+        let meta_path = crate::active_data_dir(&graph).join("meta.json");
         let original: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&meta_path).unwrap()).unwrap();
         let authority_fields = ["scip_index", "scip_fingerprint", "scip_source_fingerprint"];

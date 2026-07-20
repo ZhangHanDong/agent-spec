@@ -563,13 +563,30 @@ pub fn rebuild_query_index(
     meta: &Meta,
     shards: &[Shard],
 ) -> Result<QueryIndex, AtlasError> {
+    let snapshot = crate::generation::resolve_snapshot(graph_dir)?;
+    rebuild_query_index_at(&snapshot.data_dir, meta, shards)
+}
+
+pub(crate) fn rebuild_query_index_at(
+    data_dir: &Path,
+    meta: &Meta,
+    shards: &[Shard],
+) -> Result<QueryIndex, AtlasError> {
     let index = QueryIndex::from_graph(meta, shards);
-    write_json_atomic(&graph_dir.join(QUERY_INDEX_FILE), &index)?;
+    write_json_atomic(&data_dir.join(QUERY_INDEX_FILE), &index)?;
     Ok(index)
 }
 
 pub fn load_query_index(graph_dir: &Path, meta: &Meta) -> Result<QueryIndex, AtlasError> {
-    let path = graph_dir.join(QUERY_INDEX_FILE);
+    let snapshot = crate::generation::resolve_snapshot(graph_dir)?;
+    load_query_index_at(&snapshot.data_dir, meta)
+}
+
+pub(crate) fn load_query_index_at(
+    data_dir: &Path,
+    meta: &Meta,
+) -> Result<QueryIndex, AtlasError> {
+    let path = data_dir.join(QUERY_INDEX_FILE);
     let text = std::fs::read_to_string(&path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             AtlasError::QueryIndexMissing {
@@ -662,8 +679,8 @@ mod tests {
     use crate::{
         AtlasError, BuildOptions, Capability, Edge, EdgeKind, EdgeResolution, EdgeSite, MatchKind,
         Meta, Node, NodeKind, Provenance, QueryIndex, SCHEMA_VERSION, SearchOptions, Shard, build,
-        canonical_graph_fingerprint, load_graph, load_query_index, read_meta, search,
-        write_json_atomic,
+        active_data_dir, canonical_graph_fingerprint, load_graph, load_query_index, read_meta,
+        search, write_json_atomic,
     };
 
     fn temp_dir(name: &str) -> PathBuf {
@@ -701,7 +718,7 @@ mod tests {
     }
 
     fn rewrite_index(graph: &Path, update: impl FnOnce(&mut serde_json::Value)) {
-        let path = graph.join("query-index.json");
+        let path = active_data_dir(graph).join("query-index.json");
         let mut value: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         update(&mut value);
@@ -765,7 +782,7 @@ mod tests {
                 edges: Vec::new(),
             }],
         );
-        write_json_atomic(&graph.join(super::QUERY_INDEX_FILE), &index).unwrap();
+        write_json_atomic(&active_data_dir(graph).join(super::QUERY_INDEX_FILE), &index).unwrap();
     }
 
     #[test]
@@ -1018,12 +1035,13 @@ mod tests {
 
         for (case, replacement, matches_error) in cases {
             let (code, graph) = build_fixture(&format!("atlas-search-index-{case}"));
+            let data_dir = active_data_dir(&graph);
             fs::write(
-                graph.join("shards").join("src%2Flib.rs.json"),
+                data_dir.join("shards").join("src%2Flib.rs.json"),
                 "not valid JSON",
             )
             .unwrap();
-            let index_path = graph.join(super::QUERY_INDEX_FILE);
+            let index_path = data_dir.join(super::QUERY_INDEX_FILE);
             match replacement {
                 None => fs::remove_file(&index_path).unwrap(),
                 Some(value) => {
@@ -1058,9 +1076,10 @@ mod tests {
     fn test_atlas_build_writes_current_query_index() {
         let (code, graph) = build_fixture("atlas-query-index-build");
         let meta = read_meta(&graph).unwrap();
-        let index: QueryIndex =
-            serde_json::from_str(&fs::read_to_string(graph.join("query-index.json")).unwrap())
-                .unwrap();
+        let index: QueryIndex = serde_json::from_str(
+            &fs::read_to_string(active_data_dir(&graph).join("query-index.json")).unwrap(),
+        )
+        .unwrap();
 
         assert_eq!(index.schema_version, SCHEMA_VERSION);
         assert_eq!(index.graph_fingerprint, meta.graph_fingerprint);
@@ -1135,9 +1154,9 @@ mod tests {
     #[test]
     fn test_query_index_serialization_is_deterministic() {
         let (code, graph) = build_fixture("atlas-query-index-deterministic");
-        let before = fs::read(graph.join("query-index.json")).unwrap();
+        let before = fs::read(active_data_dir(&graph).join("query-index.json")).unwrap();
         build(&code, &graph, &BuildOptions::default()).unwrap();
-        let after = fs::read(graph.join("query-index.json")).unwrap();
+        let after = fs::read(active_data_dir(&graph).join("query-index.json")).unwrap();
         assert_eq!(before, after);
         fs::remove_dir_all(code.parent().unwrap()).ok();
     }
@@ -1146,14 +1165,15 @@ mod tests {
     fn test_load_query_index_reports_missing_index_exactly() {
         let (code, graph) = build_fixture("atlas-query-index-missing");
         let meta = read_meta(&graph).unwrap();
-        fs::remove_file(graph.join("query-index.json")).unwrap();
+        let index_path = active_data_dir(&graph).join("query-index.json");
+        fs::remove_file(&index_path).unwrap();
         let error = load_query_index(&graph, &meta).unwrap_err();
         assert!(matches!(error, AtlasError::QueryIndexMissing { .. }));
         assert_eq!(
             error.to_string(),
             format!(
                 "atlas-query-index-missing: no query index at {}; rebuild with `atlas build`",
-                graph.join("query-index.json").display()
+                index_path.display()
             )
         );
         fs::remove_dir_all(code.parent().unwrap()).ok();
@@ -1270,7 +1290,7 @@ mod tests {
         let (code, graph) = build_fixture("atlas-query-index-old-schema-body");
         let meta = read_meta(&graph).unwrap();
         fs::write(
-            graph.join("query-index.json"),
+            active_data_dir(&graph).join("query-index.json"),
             serde_json::to_vec_pretty(&serde_json::json!({
                 "schema_version": SCHEMA_VERSION - 1,
                 "nodes": "incompatible",
@@ -1290,7 +1310,7 @@ mod tests {
         let (code, graph) = build_fixture("atlas-query-index-current-schema-body");
         let meta = read_meta(&graph).unwrap();
         fs::write(
-            graph.join("query-index.json"),
+            active_data_dir(&graph).join("query-index.json"),
             serde_json::to_vec_pretty(&serde_json::json!({
                 "schema_version": SCHEMA_VERSION,
                 "nodes": "incompatible"
@@ -1307,12 +1327,13 @@ mod tests {
     #[test]
     fn test_graph_schema_mismatch_precedes_query_index_errors() {
         let (code, graph) = build_fixture("atlas-query-index-schema-priority");
-        let meta_path = graph.join("meta.json");
+        let data_dir = active_data_dir(&graph);
+        let meta_path = data_dir.join("meta.json");
         let mut meta: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&meta_path).unwrap()).unwrap();
         meta["schema_version"] = serde_json::json!(SCHEMA_VERSION - 1);
         fs::write(meta_path, serde_json::to_vec_pretty(&meta).unwrap()).unwrap();
-        fs::remove_file(graph.join("query-index.json")).unwrap();
+        fs::remove_file(data_dir.join("query-index.json")).unwrap();
 
         let error = load_graph(&graph).unwrap_err();
         assert!(matches!(error, AtlasError::SchemaMismatch { .. }));
@@ -1322,10 +1343,14 @@ mod tests {
     #[test]
     fn test_atomic_build_writes_parseable_json_without_temporary_files() {
         let (code, graph) = build_fixture("atlas-query-index-atomic-success");
-        let _: Meta = serde_json::from_slice(&fs::read(graph.join("meta.json")).unwrap()).unwrap();
-        let _: QueryIndex =
-            serde_json::from_slice(&fs::read(graph.join("query-index.json")).unwrap()).unwrap();
-        let temporary_files: Vec<_> = fs::read_dir(&graph)
+        let data_dir = active_data_dir(&graph);
+        let _: Meta =
+            serde_json::from_slice(&fs::read(data_dir.join("meta.json")).unwrap()).unwrap();
+        let _: QueryIndex = serde_json::from_slice(
+            &fs::read(data_dir.join("query-index.json")).unwrap(),
+        )
+        .unwrap();
+        let temporary_files: Vec<_> = fs::read_dir(&data_dir)
             .unwrap()
             .filter_map(Result::ok)
             .map(|entry| entry.file_name().to_string_lossy().into_owned())

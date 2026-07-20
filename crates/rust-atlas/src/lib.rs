@@ -21,6 +21,7 @@ mod affected;
 mod dynamic_dispatch;
 mod explore;
 mod flow;
+mod generation;
 mod impact;
 mod index;
 mod mir;
@@ -36,6 +37,7 @@ pub use explore::{
     ExploreResult, SourceExcerpt, explore,
 };
 pub use flow::{FlowDiagnostic, FlowEndpoint, FlowOptions, FlowQuery, FlowResult, flow};
+pub use generation::GraphSnapshot;
 pub use impact::{ImpactDiagnostic, ImpactEntry, ImpactOptions, ImpactResult, impact};
 use index::write_json_atomic;
 pub use index::{QueryIndex, canonical_graph_fingerprint, load_query_index, rebuild_query_index};
@@ -48,6 +50,14 @@ pub use traversal::{
 };
 
 pub const SCHEMA_VERSION: u32 = 6;
+
+/// Resolve the immutable graph snapshot selected by `CURRENT.json`.
+///
+/// Legacy graphs without a generation pointer resolve to the graph root with
+/// `generation: None` until the next successful build migrates them.
+pub fn graph_snapshot(graph_dir: &Path) -> Result<GraphSnapshot, AtlasError> {
+    generation::resolve_snapshot(graph_dir)
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum AtlasError {
@@ -320,6 +330,7 @@ pub struct MirBuildOptions {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct BuildReport {
+    pub generation: String,
     pub rebuilt: Vec<String>,
     pub removed: Vec<String>,
     pub unparsed: Vec<String>,
@@ -469,7 +480,40 @@ fn build_with_meta(
     // yields relative walk paths that never match the absolute target dirs).
     let code_root = &std::fs::canonicalize(code_root).map_err(io_err)?;
     std::fs::create_dir_all(graph_dir).map_err(io_err)?;
-    let identity = status::capture_identity(code_root, graph_dir)?;
+    let base = generation::resolve_optional_snapshot(graph_dir)?;
+    let known_meta = known_meta.or_else(|| {
+        base.as_ref()
+            .and_then(|snapshot| read_meta_at(&snapshot.data_dir).ok())
+    });
+    let transaction = generation::GenerationTransaction::begin(graph_dir, base.as_ref())?;
+    let (mut report, staged_meta) = build_staged(
+        code_root,
+        graph_dir,
+        transaction.data_dir(),
+        opts,
+        known_meta,
+        retain_semantic_authority_fingerprints,
+        mir_options,
+    )?;
+    let snapshot = transaction.publish(
+        &staged_meta.graph_fingerprint,
+        &staged_meta.capability,
+        None,
+    )?;
+    report.generation = snapshot.generation.unwrap_or_default();
+    Ok(report)
+}
+
+fn build_staged(
+    code_root: &Path,
+    graph_root: &Path,
+    graph_dir: &Path,
+    opts: &BuildOptions,
+    known_meta: Option<Meta>,
+    retain_semantic_authority_fingerprints: bool,
+    mir_options: Option<&MirBuildOptions>,
+) -> Result<(BuildReport, Meta), AtlasError> {
+    let identity = status::capture_identity(code_root, graph_root)?;
     let layout = ProjectLayout::discover(code_root)?;
     let shards_dir = graph_dir.join("shards");
     std::fs::create_dir_all(&shards_dir).map_err(io_err)?;
@@ -624,14 +668,18 @@ fn build_with_meta(
     }
     meta.graph_fingerprint = graph_fingerprint_with_identity(&meta, &shards, &identity)?;
     write_persisted_meta(&graph_dir.join("meta.json"), &meta, &identity)?;
-    rebuild_query_index(graph_dir, &meta, &shards)?;
-    Ok(BuildReport {
-        rebuilt,
-        removed,
-        unparsed,
-        capability,
-        diagnostics,
-    })
+    index::rebuild_query_index_at(graph_dir, &meta, &shards)?;
+    Ok((
+        BuildReport {
+            generation: String::new(),
+            rebuilt,
+            removed,
+            unparsed,
+            capability,
+            diagnostics,
+        },
+        meta,
+    ))
 }
 
 /// Report stale shard source files (content hash mismatch, deleted, or new).
@@ -742,8 +790,8 @@ pub fn tree(
     graph_dir: &Path,
     opts: &QueryOptions,
 ) -> Result<TreeOutline, AtlasError> {
-    let (meta, status) = refresh(code_root, graph_dir, opts)?;
-    let shards = load_shards(graph_dir, &meta)?;
+    let (meta, status, snapshot) = refresh(code_root, graph_dir, opts)?;
+    let shards = load_shards(&snapshot.data_dir, &meta)?;
     let mut kinds = BTreeMap::new();
     let mut children: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for shard in &shards {
@@ -874,8 +922,9 @@ pub fn impls(
 
 /// Load every shard plus meta (internal + MCP convenience).
 pub fn load_graph(graph_dir: &Path) -> Result<(Meta, Vec<Shard>), AtlasError> {
-    let meta = read_meta(graph_dir)?;
-    let shards = load_shards(graph_dir, &meta)?;
+    let snapshot = generation::resolve_snapshot(graph_dir)?;
+    let meta = read_meta_at(&snapshot.data_dir)?;
+    let shards = load_shards(&snapshot.data_dir, &meta)?;
     Ok((meta, shards))
 }
 
@@ -936,12 +985,28 @@ fn read_meta(graph_dir: &Path) -> Result<Meta, AtlasError> {
     Ok(read_persisted_meta(graph_dir)?.meta)
 }
 
+#[cfg(test)]
+pub(crate) fn active_data_dir(graph_dir: &Path) -> PathBuf {
+    generation::resolve_snapshot(graph_dir)
+        .unwrap_or_else(|error| panic!("cannot resolve active test generation: {error}"))
+        .data_dir
+}
+
 fn read_persisted_meta(graph_dir: &Path) -> Result<PersistedMeta, AtlasError> {
+    let snapshot = generation::resolve_snapshot(graph_dir)?;
+    read_persisted_meta_at(&snapshot.data_dir)
+}
+
+fn read_meta_at(data_dir: &Path) -> Result<Meta, AtlasError> {
+    Ok(read_persisted_meta_at(data_dir)?.meta)
+}
+
+fn read_persisted_meta_at(data_dir: &Path) -> Result<PersistedMeta, AtlasError> {
     #[cfg(test)]
     META_READ_COUNT.with(|count| count.set(count.get() + 1));
-    let path = graph_dir.join("meta.json");
+    let path = data_dir.join("meta.json");
     let text = std::fs::read_to_string(&path).map_err(|_| AtlasError::MissingGraph {
-        graph_dir: graph_dir.display().to_string(),
+        graph_dir: data_dir.display().to_string(),
     })?;
     // Reject a graph written by a different atlas version. Without this, a
     // stale-schema graph passes `check` (which only diffs file hashes) while
@@ -993,13 +1058,6 @@ fn meta_read_count() -> usize {
     META_READ_COUNT.with(std::cell::Cell::get)
 }
 
-fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), AtlasError> {
-    let mut text =
-        serde_json::to_string_pretty(value).map_err(|e| AtlasError::Io(e.to_string()))?;
-    text.push('\n');
-    std::fs::write(path, text).map_err(io_err)
-}
-
 fn shard_file_name(rel: &str) -> String {
     let escaped = rel
         .replace('%', "%25")
@@ -1009,7 +1067,7 @@ fn shard_file_name(rel: &str) -> String {
 }
 
 fn write_shard(shards_dir: &Path, shard: &Shard) -> Result<(), AtlasError> {
-    write_json(&shards_dir.join(shard_file_name(&shard.file)), shard)
+    write_json_atomic(&shards_dir.join(shard_file_name(&shard.file)), shard)
 }
 
 fn commit_shard_generation(
@@ -1222,20 +1280,22 @@ fn refresh(
     code_root: &Path,
     graph_dir: &Path,
     opts: &QueryOptions,
-) -> Result<(Meta, AtlasStatus), AtlasError> {
-    let persisted = read_persisted_meta(graph_dir)?;
+) -> Result<(Meta, AtlasStatus, generation::GraphSnapshot), AtlasError> {
+    let snapshot = generation::resolve_snapshot(graph_dir)?;
+    let persisted = read_persisted_meta_at(&snapshot.data_dir)?;
     let status = status::status_with_meta(code_root, graph_dir, &persisted)?;
     status::require_worktree_match(&status)?;
     if status.syn.state == LayerState::Fresh {
-        return Ok((persisted.meta, status));
+        return Ok((persisted.meta, status, snapshot));
     }
     if opts.frozen {
-        return Ok((persisted.meta, status));
+        return Ok((persisted.meta, status, snapshot));
     }
     let persisted = refresh_stale_graph(code_root, graph_dir, persisted.meta)?;
+    let snapshot = generation::resolve_snapshot(graph_dir)?;
     let status = status::status_with_meta(code_root, graph_dir, &persisted)?;
     status::require_worktree_match(&status)?;
-    Ok((persisted.meta, status))
+    Ok((persisted.meta, status, snapshot))
 }
 
 fn indexed_query_state(
@@ -1243,10 +1303,11 @@ fn indexed_query_state(
     graph_dir: &Path,
     opts: &QueryOptions,
 ) -> Result<(Meta, QueryIndex, AtlasStatus), AtlasError> {
-    let persisted = read_persisted_meta(graph_dir)?;
+    let snapshot = generation::resolve_snapshot(graph_dir)?;
+    let persisted = read_persisted_meta_at(&snapshot.data_dir)?;
     let status = status::status_with_meta(code_root, graph_dir, &persisted)?;
     status::require_worktree_match(&status)?;
-    let index = load_query_index(graph_dir, &persisted.meta)?;
+    let index = index::load_query_index_at(&snapshot.data_dir, &persisted.meta)?;
     if status.syn.state == LayerState::Fresh {
         return Ok((persisted.meta, index, status));
     }
@@ -1254,9 +1315,10 @@ fn indexed_query_state(
         return Ok((persisted.meta, index, status));
     }
     let persisted = refresh_stale_graph(code_root, graph_dir, persisted.meta)?;
+    let snapshot = generation::resolve_snapshot(graph_dir)?;
     let status = status::status_with_meta(code_root, graph_dir, &persisted)?;
     status::require_worktree_match(&status)?;
-    let index = load_query_index(graph_dir, &persisted.meta)?;
+    let index = index::load_query_index_at(&snapshot.data_dir, &persisted.meta)?;
     Ok((persisted.meta, index, status))
 }
 
@@ -3810,7 +3872,7 @@ impl std::fmt::Display for Local {
         build(&code, &graph, &BuildOptions::default()).unwrap();
 
         // Rewrite meta.json to an older, incompatible schema version.
-        let meta_path = graph.join("meta.json");
+        let meta_path = active_data_dir(&graph).join("meta.json");
         let mut meta: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&meta_path).unwrap()).unwrap();
         meta["schema_version"] = serde_json::json!(SCHEMA_VERSION - 1);
@@ -3851,7 +3913,8 @@ impl std::fmt::Display for Local {
     fn test_atlas_incremental_rebuild_only_dirty_shards() {
         let (code, graph) = copy_fixture("atlas-incremental");
         build(&code, &graph, &BuildOptions::default()).unwrap();
-        let snapshot: BTreeMap<String, Vec<u8>> = fs::read_dir(graph.join("shards"))
+        let snapshot: BTreeMap<String, Vec<u8>> =
+            fs::read_dir(active_data_dir(&graph).join("shards"))
             .unwrap()
             .map(|e| e.unwrap().path())
             .map(|p| {
@@ -3872,7 +3935,7 @@ impl std::fmt::Display for Local {
         assert!(report.rebuilt[0].ends_with("service.rs"));
 
         for (name, bytes) in &snapshot {
-            let now = fs::read(graph.join("shards").join(name)).unwrap();
+            let now = fs::read(active_data_dir(&graph).join("shards").join(name)).unwrap();
             if name.contains("service") {
                 assert_ne!(&now, bytes, "dirty shard must be rewritten");
             } else {
@@ -3914,7 +3977,8 @@ impl std::fmt::Display for Local {
         text.push_str("\npub fn extra() -> usize {\n    2\n}\n");
         fs::write(&service, text).unwrap();
 
-        let shard_bytes: Vec<Vec<u8>> = fs::read_dir(graph.join("shards"))
+        let data_dir = active_data_dir(&graph);
+        let shard_bytes: Vec<Vec<u8>> = fs::read_dir(data_dir.join("shards"))
             .unwrap()
             .map(|e| fs::read(e.unwrap().path()).unwrap())
             .collect();
@@ -3929,7 +3993,7 @@ impl std::fmt::Display for Local {
         assert_eq!(result.stale.len(), 1);
         assert!(result.stale[0].ends_with("service.rs"));
 
-        let shard_bytes_after: Vec<Vec<u8>> = fs::read_dir(graph.join("shards"))
+        let shard_bytes_after: Vec<Vec<u8>> = fs::read_dir(data_dir.join("shards"))
             .unwrap()
             .map(|e| fs::read(e.unwrap().path()).unwrap())
             .collect();
@@ -3943,7 +4007,9 @@ impl std::fmt::Display for Local {
         build(&code, &graph, &BuildOptions::default()).unwrap();
         let source_before = source_tree_snapshot(&code);
         fs::write(
-            graph.join("shards").join(shard_file_name("src/service.rs")),
+            active_data_dir(&graph)
+                .join("shards")
+                .join(shard_file_name("src/service.rs")),
             "not valid JSON",
         )
         .unwrap();
@@ -4152,7 +4218,7 @@ impl std::fmt::Display for Local {
                 .unwrap();
             assert!(output.status.success(), "git worktree add: {output:?}");
             build(&code, &graph, &BuildOptions::default()).unwrap();
-            invalidate(&graph.join("query-index.json"));
+            invalidate(&active_data_dir(&graph).join("query-index.json"));
             let graph_before = file_tree_snapshot(&graph);
 
             let error = query(
@@ -4488,7 +4554,7 @@ impl std::fmt::Display for Local {
             .into_iter()
             .collect();
         assert_ne!(index.edges, sorted_table, "fixture table must be unsorted");
-        let index_path = graph.join("query-index.json");
+        let index_path = active_data_dir(&graph).join("query-index.json");
         write_json_atomic(&index_path, &index).unwrap();
         let index_bytes = fs::read(&index_path).unwrap();
 
@@ -4513,7 +4579,7 @@ impl std::fmt::Display for Local {
     fn test_atlas_low_level_queries_propagate_missing_query_index() {
         let (code, graph) = copy_fixture("atlas-low-level-query-index-missing");
         build(&code, &graph, &BuildOptions::default()).unwrap();
-        fs::remove_file(graph.join("query-index.json")).unwrap();
+        fs::remove_file(active_data_dir(&graph).join("query-index.json")).unwrap();
         let frozen = QueryOptions { frozen: true };
 
         for result in [
@@ -4549,7 +4615,7 @@ impl std::fmt::Display for Local {
         for (case, update, expected) in cases {
             let (code, graph) = copy_fixture(&format!("atlas-low-level-query-index-{case}"));
             build(&code, &graph, &BuildOptions::default()).unwrap();
-            let index_path = graph.join("query-index.json");
+            let index_path = active_data_dir(&graph).join("query-index.json");
             let mut index: serde_json::Value =
                 serde_json::from_str(&fs::read_to_string(&index_path).unwrap()).unwrap();
             update(&mut index);
@@ -4618,7 +4684,7 @@ impl std::fmt::Display for Local {
                 let mut source = fs::read_to_string(&service).unwrap();
                 source.push_str("\npub fn stale_before_index_validation() {}\n");
                 fs::write(&service, source).unwrap();
-                invalidate(&graph.join("query-index.json"));
+                invalidate(&active_data_dir(&graph).join("query-index.json"));
                 let source_before = source_tree_snapshot(&code);
                 let graph_before = file_tree_snapshot(&graph);
 
@@ -4799,7 +4865,8 @@ impl std::fmt::Display for Local {
         .unwrap()
         .id
         .clone();
-        let mut service = read_shard(&graph.join("shards"), "src/service.rs").unwrap();
+        let shards_dir = active_data_dir(&graph).join("shards");
+        let mut service = read_shard(&shards_dir, "src/service.rs").unwrap();
         service
             .nodes
             .iter_mut()
@@ -4814,7 +4881,7 @@ impl std::fmt::Display for Local {
         let mut mir_edge = edge(&caller, &callee, EdgeKind::Calls);
         mir_edge.provenance = Provenance::Mir;
         service.edges.push(mir_edge);
-        write_shard(&graph.join("shards"), &service).unwrap();
+        write_shard(&shards_dir, &service).unwrap();
         assert_eq!(meta.files.len(), 3);
 
         build(&code, &graph, &BuildOptions::default()).unwrap();
@@ -5224,7 +5291,7 @@ impl std::fmt::Display for Local {
         let (code, graph) = copy_fixture("atlas-mir-generation-failure");
         build(&code, &graph, &BuildOptions::default()).unwrap();
         let (meta, mut shards) = load_graph(&graph).unwrap();
-        let shards_dir = graph.join("shards");
+        let shards_dir = active_data_dir(&graph).join("shards");
         let baseline = meta
             .files
             .keys()
@@ -5360,7 +5427,8 @@ impl std::fmt::Display for Local {
             .collect::<Vec<_>>();
         candidates.sort();
 
-        let mut shard = read_shard(&graph.join("shards"), &caller.file).unwrap();
+        let shards_dir = active_data_dir(graph).join("shards");
+        let mut shard = read_shard(&shards_dir, &caller.file).unwrap();
         shard.edges.push(Edge {
             from: caller.id,
             to: trait_method.id,
@@ -5384,7 +5452,7 @@ impl std::fmt::Display for Local {
         });
         shard.edges.sort();
         shard.edges.dedup();
-        write_shard(&graph.join("shards"), &shard).unwrap();
+        write_shard(&shards_dir, &shard).unwrap();
         (caller.symbol, candidates)
     }
 
@@ -5396,7 +5464,7 @@ impl std::fmt::Display for Local {
         let (meta, _) = load_graph(&graph).unwrap();
 
         let outcome = dynamic_dispatch::enrich(
-            &graph.join("shards"),
+            &active_data_dir(&graph).join("shards"),
             &meta.files,
             dynamic_dispatch::MAX_CANDIDATES,
         )
@@ -5478,7 +5546,7 @@ impl std::fmt::Display for Local {
         assert_eq!(expected_candidates.len(), 65);
         let (meta, _) = load_graph(&graph).unwrap();
         let outcome = dynamic_dispatch::enrich(
-            &graph.join("shards"),
+            &active_data_dir(&graph).join("shards"),
             &meta.files,
             dynamic_dispatch::MAX_CANDIDATES,
         )
@@ -5500,7 +5568,7 @@ impl std::fmt::Display for Local {
         let (caller, candidates) = inject_resolved_trait_call(&graph);
         let (meta, _) = load_graph(&graph).unwrap();
         dynamic_dispatch::enrich(
-            &graph.join("shards"),
+            &active_data_dir(&graph).join("shards"),
             &meta.files,
             dynamic_dispatch::MAX_CANDIDATES,
         )
@@ -5557,15 +5625,14 @@ impl std::fmt::Display for Local {
         assert_eq!(report.diagnostics[0].code, "mir-extraction-failed");
         let args = fs::read_to_string(&argv_log).unwrap();
         let canonical_code = fs::canonicalize(&code).unwrap();
-        assert_eq!(
-            args.lines().collect::<Vec<_>>(),
-            vec![
-                "--code",
-                canonical_code.to_string_lossy().as_ref(),
-                "--out",
-                graph.join("mir-overlay.json").to_string_lossy().as_ref(),
-            ]
-        );
+        let args = args.lines().collect::<Vec<_>>();
+        assert_eq!(args.len(), 4);
+        assert_eq!(args[0], "--code");
+        assert_eq!(args[1], canonical_code.to_string_lossy());
+        assert_eq!(args[2], "--out");
+        let output = Path::new(args[3]);
+        assert!(output.starts_with(graph.join(".staging")));
+        assert_eq!(output.file_name().and_then(|name| name.to_str()), Some("mir-overlay.json"));
         fs::remove_dir_all(base).ok();
     }
 

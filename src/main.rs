@@ -12248,7 +12248,11 @@ Scenario: pass
 
         let (code, graph) = atlas_fixture_copy("atlas-search-cli-frozen");
         rust_atlas::build(&code, &graph, &rust_atlas::BuildOptions::default()).unwrap();
-        let index_before = fs::read(graph.join("query-index.json")).unwrap();
+        let index_path = rust_atlas::graph_snapshot(&graph)
+            .unwrap()
+            .data_dir
+            .join("query-index.json");
+        let index_before = fs::read(&index_path).unwrap();
         let service = code.join("src/service.rs");
         let mut source = fs::read_to_string(&service).unwrap();
         source.push_str("\npub fn changed_for_search() {}\n");
@@ -12263,7 +12267,7 @@ Scenario: pass
         })
         .unwrap();
         assert_eq!(
-            fs::read(graph.join("query-index.json")).unwrap(),
+            fs::read(index_path).unwrap(),
             index_before
         );
         fs::remove_dir_all(code.parent().unwrap()).ok();
@@ -12721,7 +12725,11 @@ Scenario: pass
         fs::create_dir_all(&atlas_dir).unwrap();
         let graph_dir = atlas_dir.join("graph");
         fs::rename(&graph, &graph_dir).unwrap();
-        let index_before = fs::read(graph_dir.join("query-index.json")).unwrap();
+        let index_path = rust_atlas::graph_snapshot(&graph_dir)
+            .unwrap()
+            .data_dir
+            .join("query-index.json");
+        let index_before = fs::read(&index_path).unwrap();
 
         let service = code.join("src/service.rs");
         let mut source = fs::read_to_string(&service).unwrap();
@@ -12760,7 +12768,7 @@ Scenario: pass
                 .any(|file| file == "src/service.rs")
         );
         assert_eq!(
-            fs::read(graph_dir.join("query-index.json")).unwrap(),
+            fs::read(index_path).unwrap(),
             index_before
         );
         fs::remove_dir_all(code.parent().unwrap()).ok();

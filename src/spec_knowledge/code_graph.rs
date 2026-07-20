@@ -941,7 +941,10 @@ mod tests {
     #[test]
     fn test_code_bindings_preserve_atlas_schema_mismatch_precedence() {
         let dir = make_tree("bind-schema-precedence");
-        let meta_path = dir.join("graph/meta.json");
+        let meta_path = rust_atlas::graph_snapshot(&dir.join("graph"))
+            .unwrap()
+            .data_dir
+            .join("meta.json");
         let mut meta: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&meta_path).unwrap()).unwrap();
         meta["schema_version"] = serde_json::json!(5);
