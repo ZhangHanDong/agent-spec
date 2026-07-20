@@ -27,9 +27,11 @@ schema or query-index diagnostic names a stale graph artifact.
 ## Consequences
 
 The search index accelerates deterministic lookup but is never a second source
-of truth. MCP keeps graph reads frozen and makes indexed search opt-in in its
-tool list. KLL artifacts own durable requirements and decisions; lifecycle and
-replay establish current verification evidence.
+of truth. MCP keeps graph reads frozen, makes indexed search opt-in in its tool
+list, and makes `atlas_explore` unavailable to both discovery and dispatch
+unless explicitly enabled. Explore source excerpts require a current hash that
+matches graph metadata. KLL artifacts own durable requirements and decisions;
+lifecycle and replay establish current verification evidence.
 
 ## Maintenance
 

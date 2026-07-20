@@ -8,6 +8,14 @@ All notable changes to `agent-spec` are documented here. Format follows
 
 ### Added
 
+- Atlas Wave 2: deterministic compact/deep `atlas explore`, explainable
+  `atlas flow`, reverse `atlas impact`, and changed-file `atlas affected`
+  queries share bounded traversal, evidence paths, layered freshness, and
+  worktree authority. Source excerpts require matching graph hashes, affected
+  results do not infer tests from filenames, and `atlas_explore` is frozen and
+  unavailable over MCP unless `AGENT_SPEC_MCP_ATLAS_EXPLORE=1`. Evaluation
+  receipts now record response bytes, read-backs, follow-up queries, and
+  truncation counts; no real Agent A/B improvement is claimed.
 - Atlas Wave 1: schema v6 preserves edge occurrence/evidence facts, an atomic
   derived query index powers deterministic `atlas search`, and `atlas status`
   reports graph identity plus independent syn/SCIP/MIR freshness. Worktree

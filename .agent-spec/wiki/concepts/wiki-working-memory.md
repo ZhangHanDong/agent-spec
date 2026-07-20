@@ -21,9 +21,10 @@ flow. Architecture JSON and Mermaid files are derived views checked against
 those maintained pages.
 
 The generated index is the entry point for current coverage, including the
-Atlas architecture, authority concept, and derived-authority decision. Updating
-an article requires regenerating that index and refreshing metadata before the
-wiki check can confirm source trace freshness.
+Atlas architecture, its explore/flow/impact source ownership, the authority
+concept, and the derived-authority decision. Updating an article requires
+regenerating that index and refreshing metadata before the wiki check can
+confirm source trace freshness.
 
 ## Maintenance
 

@@ -38,7 +38,7 @@ agent-spec:   Write Contract (60%) → Agent codes (0%) → Read explain (30%) �
 | `agent-spec wiki status` | Check stale code live wiki articles | Before broad source reading |
 | `agent-spec wiki query <text>` | Search tracked live wiki articles | Before opening many source files |
 | `agent-spec wiki check` | Live wiki lint + worktree status gate | Pre-commit / CI for tracked wiki |
-| `agent-spec atlas build/tree/query/search/refs/impls/status/check` | Rust project graph: build, indexed search, identity, and freshness | Build before querying; `check` gates syn staleness |
+| `agent-spec atlas build/tree/query/search/explore/flow/impact/affected/refs/impls/status/check` | Rust project graph: bounded context, explainable paths, reverse impact, identity, and freshness | Build before querying; use frozen reads for review and `check` for syn staleness |
 | `agent-spec atlas benchmark validate/plan/summarize` | Validate an offline evaluation corpus, compile paired run plans, and summarize graded receipts | Use the correctness-first evaluation baseline; see `docs/atlas-evaluation.md` |
 
 ### Rust Atlas Workflow
@@ -46,6 +46,10 @@ agent-spec:   Write Contract (60%) → Agent codes (0%) → Read explain (30%) �
 ```bash
 agent-spec atlas build --code . --graph .agent-spec/graph
 agent-spec atlas search <query> --code . --graph .agent-spec/graph --limit 20
+agent-spec atlas explore <query> --profile compact --code . --graph .agent-spec/graph --frozen
+agent-spec atlas flow --from <symbol> --to <symbol> --code . --graph .agent-spec/graph --frozen
+agent-spec atlas impact <symbol> --depth 3 --code . --graph .agent-spec/graph --frozen
+agent-spec atlas affected --worktree --code . --graph .agent-spec/graph --frozen
 agent-spec atlas status --code . --graph .agent-spec/graph --format json
 agent-spec atlas check --code . --graph .agent-spec/graph
 ```
@@ -57,9 +61,19 @@ SCIP or MIR layer fresh. `check` preserves the syn stale-file gate. Rebuild with
 diagnostic. A worktree mismatch or stale available semantic layer blocks
 definitive provider, binding, lifecycle-symbol, and typed trace evidence.
 
+`explore` has fixed compact/deep budgets of 8/32/48/8/4/20/16,000 and
+16/96/160/20/12/40/24,000 for seeds, nodes, edges, paths, excerpts, excerpt
+lines, and serialized bytes. Source excerpts require a current hash matching
+the graph metadata. `flow` keeps found, no-path, capability-unavailable,
+truncated, unknown-endpoint, and ambiguous-endpoint distinct. `affected`
+accepts exactly one explicit, stdin, staged, worktree, or commit-range input and
+never infers tests or coverage from filenames.
+
 MCP Atlas reads are frozen and read-only. `atlas_search` is omitted from the
 default MCP tool list; set `AGENT_SPEC_MCP_ATLAS_SEARCH=1` when starting
-`agent-spec mcp` to list it. The graph, index, and bindings remain derived
+`agent-spec mcp` to list it. `atlas_explore` is unavailable unless
+`AGENT_SPEC_MCP_ATLAS_EXPLORE=1`; the default MCP surface stays unchanged while
+real Agent A/B remains pending. The graph, index, and bindings remain derived
 working data, while KLL truth remains in `knowledge/`.
 
 ### KLL Requirements Intake

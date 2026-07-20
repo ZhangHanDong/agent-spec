@@ -4,6 +4,10 @@ type: concept
 source_files:
   - crates/rust-atlas/src/status.rs
   - crates/rust-atlas/src/lib.rs
+  - crates/rust-atlas/src/explore.rs
+  - crates/rust-atlas/src/flow.rs
+  - crates/rust-atlas/src/impact.rs
+  - crates/rust-atlas/src/affected.rs
   - src/spec_knowledge/code_graph.rs
   - src/spec_verify/atlas_symbols.rs
   - docs/atlas-roadmap.md
@@ -31,6 +35,13 @@ share the authority gate. A stale available layer or borrowed worktree cannot
 produce a definitive binding, symbol verdict, or typed trace target. An
 unavailable optional semantic layer is distinct from stale authority and does
 not block a syn-only consumer.
+
+Explore, flow, impact, and affected all reuse this authority boundary. Frozen
+explore may return stale graph facts, but only hash-matching current files may
+be inlined as source excerpts. Flow keeps `found`, `no-path`,
+`capability-unavailable`, `truncated`, `unknown-endpoint`, and
+`ambiguous-endpoint` distinct. Affected maps changes to code evidence only;
+test obligations remain owned by the intent compiler and Task Contracts.
 
 ## Maintenance
 

@@ -5,11 +5,11 @@ This index is generated from article frontmatter. Read it before opening individ
 ## Architecture
 
 - [Architecture](_architecture.md) — `Cargo.lock`, `Cargo.toml`, `src/main.rs`
-- [Rust Atlas Architecture](architecture/atlas.md) — `crates/rust-atlas/src/lib.rs`, `crates/rust-atlas/src/index.rs`, `crates/rust-atlas/src/status.rs`, `src/main.rs`, `src/spec_mcp/tools.rs`
+- [Rust Atlas Architecture](architecture/atlas.md) — `crates/rust-atlas/src/lib.rs`, `crates/rust-atlas/src/index.rs`, `crates/rust-atlas/src/status.rs`, `crates/rust-atlas/src/traversal.rs`, `crates/rust-atlas/src/flow.rs`, `crates/rust-atlas/src/impact.rs`, `crates/rust-atlas/src/affected.rs`, `crates/rust-atlas/src/explore.rs`, `src/main.rs`, `src/spec_mcp/tools.rs`, `specs/task-atlas-explore-flow-impact.spec.md`
 
 ## Concept
 
-- [Atlas Graph Authority](concepts/atlas-authority.md) — `crates/rust-atlas/src/status.rs`, `crates/rust-atlas/src/lib.rs`, `src/spec_knowledge/code_graph.rs`, `src/spec_verify/atlas_symbols.rs`, `docs/atlas-roadmap.md`
+- [Atlas Graph Authority](concepts/atlas-authority.md) — `crates/rust-atlas/src/status.rs`, `crates/rust-atlas/src/lib.rs`, `crates/rust-atlas/src/explore.rs`, `crates/rust-atlas/src/flow.rs`, `crates/rust-atlas/src/impact.rs`, `crates/rust-atlas/src/affected.rs`, `src/spec_knowledge/code_graph.rs`, `src/spec_verify/atlas_symbols.rs`, `docs/atlas-roadmap.md`
 - [Cross-Project Wiki](concepts/cross-project-wiki.md) — `knowledge/requirements/req-cross-project-wiki.md`, `specs/task-cross-project-wiki.spec.md`, `src/spec_wiki/project_map.rs`, `src/spec_wiki/live.rs`
 - [Intent Compiler](concepts/intent-compiler.md) — `knowledge/requirements/req-requirements-compiler-plan-dag.md`, `src/spec_knowledge/requirement_plan.rs`, `src/spec_knowledge/trace_ledger.rs`, `src/spec_knowledge/test_obligations.rs`, `src/spec_knowledge/worktrees.rs`, `src/main.rs`
 - [Knowledge Liveness Layer](concepts/knowledge-liveness-layer.md) — `knowledge/requirements`, `src/spec_knowledge`

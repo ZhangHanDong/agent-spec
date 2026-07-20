@@ -62,7 +62,9 @@ in reports, trace records, and failure explanation.
 Contracts with Atlas symbols require a rebuilt graph whose `atlas status`
 identity and layer states support authority. A borrowed worktree graph or stale
 available semantic layer blocks the definitive symbol evidence used by
-lifecycle.
+lifecycle. `atlas affected` may locate impacted code, but lifecycle binds only
+the explicit selectors declared by scenarios; filenames never become inferred
+test evidence.
 
 ## Trace Implication
 

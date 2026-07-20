@@ -540,6 +540,11 @@ data; `knowledge/` remains the KLL source of truth.
 ```bash
 agent-spec atlas build --code . --graph .agent-spec/graph
 agent-spec atlas search <query> --code . --graph .agent-spec/graph --limit 20
+agent-spec atlas explore <query> --profile compact --code . --graph .agent-spec/graph --frozen
+agent-spec atlas flow --from <symbol> --to <symbol> --code . --graph .agent-spec/graph --frozen
+agent-spec atlas flow --through <symbol> --code . --graph .agent-spec/graph --frozen
+agent-spec atlas impact <symbol> --depth 3 --code . --graph .agent-spec/graph --frozen
+agent-spec atlas affected --worktree --code . --graph .agent-spec/graph --frozen
 agent-spec atlas status --code . --graph .agent-spec/graph --format json
 agent-spec atlas check --code . --graph .agent-spec/graph
 ```
@@ -550,6 +555,18 @@ compatibility freshness gate for syn stale files and exits non-zero when any
 remain. `status` reports the recorded and current graph identities plus separate
 layer states, so a fresh syn layer never implies a fresh SCIP or MIR layer.
 
+`explore` composes ranked graph context under fixed hard budgets. Compact uses
+8 seeds, 32 nodes, 48 edges, 8 paths, 4 excerpts of at most 20 lines, and
+16,000 serialized bytes; deep uses 16, 96, 160, 20, 12, 40, and 24,000 bytes.
+Only source files whose current hash matches the graph metadata may appear as
+excerpts. In `flow`, `found` carries a path, `no-path` means a complete capable
+search found none, `capability-unavailable` means the graph cannot decide,
+`truncated` means a traversal limit stopped the search, and `unknown-endpoint`
+or `ambiguous-endpoint` reports endpoint resolution before traversal.
+`affected` accepts exactly one of explicit paths, `--stdin`,
+`--staged`, `--worktree`, or `--commit <range>` and reports code nodes and
+evidence paths; it never infers test selectors or coverage from filenames.
+
 Rebuild with `agent-spec atlas build` after an `atlas-schema-mismatch` or any
 `atlas-query-index-missing`, `atlas-query-index-schema`,
 `atlas-query-index-stale`, or `atlas-query-index-corrupt` diagnostic. A graph
@@ -558,8 +575,10 @@ definitive provider result, code binding, lifecycle symbol verdict, or typed
 trace target.
 
 The MCP server is read-only and uses frozen Atlas reads. It lists
-`atlas_search` only when started with `AGENT_SPEC_MCP_ATLAS_SEARCH=1`; the
-default MCP tool list keeps search hidden until it is explicitly enabled.
+`atlas_search` only when started with `AGENT_SPEC_MCP_ATLAS_SEARCH=1`.
+`atlas_explore` is unavailable to discovery and dispatch unless the server is
+started with `AGENT_SPEC_MCP_ATLAS_EXPLORE=1`; its default profile is compact.
+The default MCP tool list remains unchanged while real Agent A/B is pending.
 
 ## Code Live Wiki
 
