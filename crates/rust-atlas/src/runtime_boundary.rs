@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path};
 
 use proc_macro2::Span;
@@ -157,62 +157,72 @@ fn scan_nodes(
         return (Vec::new(), BTreeMap::new(), false);
     };
 
-    let mut queue = VecDeque::from([(start.clone(), 0)]);
+    let mut layer = vec![start.clone()];
     let mut visited = BTreeSet::from([start.id.clone()]);
     let mut reachable = Vec::new();
     let mut source_bytes = BTreeMap::new();
     let mut bytes_read = 0;
     let mut expansions = 0;
     let mut truncated = false;
-    while let Some((node, depth)) = queue.pop_front() {
-        if expansions == limits.max_expansions {
-            truncated = true;
-            break;
-        }
-        expansions += 1;
-        match cache_fresh_source_bytes(
-            canonical_root,
-            meta,
-            &node,
-            &mut source_bytes,
-            &mut bytes_read,
-        ) {
-            SourceLoad::Fresh => {}
-            SourceLoad::Invalid => continue,
-            SourceLoad::BudgetExceeded => {
+    let mut depth = 0;
+    'frontier: while !layer.is_empty() {
+        layer.sort_by(|left, right| left.id.cmp(&right.id));
+        layer.dedup_by(|left, right| left.id == right.id);
+        let mut next_layer = BTreeMap::new();
+        for (position, node) in layer.iter().enumerate() {
+            if expansions == limits.max_expansions {
                 truncated = true;
-                break;
+                break 'frontier;
             }
-        }
-        if node.kind == NodeKind::Fn {
-            reachable.push((depth, node.clone()));
-        }
-        if matches!(query, FlowQuery::Through { .. }) {
-            break;
-        }
-        let neighbors = index
-            .outgoing_edges_for(&node.id)
-            .filter(|edge| edge_layer_is_fresh(edge.provenance, status))
-            .flat_map(|edge| edge_targets(index, edge))
-            .map(|(target, _)| target)
-            .filter(|target| !visited.contains(&target.id))
-            .map(|target| (target.id.clone(), target))
-            .collect::<BTreeMap<_, _>>()
-            .into_values()
-            .collect::<Vec<_>>();
-        if reachable.len() == MAX_SCAN_NODES {
-            truncated |= !neighbors.is_empty() || !queue.is_empty();
-            break;
+            expansions += 1;
+            match cache_fresh_source_bytes(
+                canonical_root,
+                meta,
+                node,
+                &mut source_bytes,
+                &mut bytes_read,
+            ) {
+                SourceLoad::Fresh => {}
+                SourceLoad::Invalid => continue,
+                SourceLoad::BudgetExceeded => {
+                    truncated = true;
+                    break 'frontier;
+                }
+            }
+            if node.kind == NodeKind::Fn {
+                reachable.push((depth, node.clone()));
+            }
+            if matches!(query, FlowQuery::Through { .. }) {
+                break 'frontier;
+            }
+            let neighbors = index
+                .outgoing_edges_for(&node.id)
+                .filter(|edge| edge_layer_is_fresh(edge.provenance, status))
+                .flat_map(|edge| edge_targets(index, edge))
+                .map(|(target, _)| target)
+                .filter(|target| !visited.contains(&target.id))
+                .map(|target| (target.id.clone(), target))
+                .collect::<BTreeMap<_, _>>();
+            if reachable.len() == MAX_SCAN_NODES {
+                truncated |= position + 1 < layer.len()
+                    || !neighbors.is_empty()
+                    || !next_layer.is_empty();
+                break 'frontier;
+            }
+            if depth == limits.max_depth {
+                truncated |= !neighbors.is_empty();
+                continue;
+            }
+            next_layer.extend(neighbors);
         }
         if depth == limits.max_depth {
-            truncated |= !neighbors.is_empty();
-            continue;
+            break;
         }
-        for target in neighbors {
-            if visited.insert(target.id.clone()) {
-                queue.push_back((target, depth + 1));
-            }
+        for id in next_layer.keys() {
+            visited.insert(id.clone());
         }
+        layer = next_layer.into_values().collect();
+        depth += 1;
     }
     reachable.sort_by(|(left_depth, left), (right_depth, right)| {
         left_depth
@@ -377,26 +387,42 @@ fn node_in_candidate_namespace(node: &Node, namespace: CandidateNamespace) -> bo
 }
 
 fn inherent_callable_lookup_queries(index: &QueryIndex, queries: &[String]) -> Vec<String> {
-    queries
+    let mut results = BTreeSet::new();
+    for (type_path, member) in queries
         .iter()
         .filter_map(|query| query.rsplit_once("::"))
-        .flat_map(|(type_path, member)| {
-            index
-                .matching_nodes(type_path)
-                .into_iter()
-                .filter(|node| {
-                    node_in_candidate_namespace(node, CandidateNamespace::Type)
-                        && node.kind != NodeKind::Trait
-                        && node.kind != NodeKind::TraitAlias
-                })
-                .filter_map(move |node| {
-                    let (module, _) = node.symbol.rsplit_once("::")?;
-                    Some(format!("{module}::impl {}::{member}", node.symbol))
-                })
-        })
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect()
+    {
+        let type_ids = index
+            .matching_nodes(type_path)
+            .into_iter()
+            .filter(|node| {
+                node_in_candidate_namespace(node, CandidateNamespace::Type)
+                    && node.kind != NodeKind::Trait
+                    && node.kind != NodeKind::TraitAlias
+            })
+            .map(|node| node.id.as_str())
+            .collect::<BTreeSet<_>>();
+        for implementation in index.edges.iter().filter(|edge| {
+            edge.kind == EdgeKind::ImplFor
+                && edge.resolution == crate::EdgeResolution::Resolved
+                && type_ids.contains(edge.to.as_str())
+        }) {
+            for edge in index.outgoing_edges_for(&implementation.from) {
+                if edge.kind != EdgeKind::Contains {
+                    continue;
+                }
+                let Some(node) = index.node_by_id(&edge.to) else {
+                    continue;
+                };
+                if node.kind == NodeKind::Fn
+                    && node.symbol.rsplit("::").next() == Some(member)
+                {
+                    results.insert(node.id.clone());
+                }
+            }
+        }
+    }
+    results.into_iter().collect()
 }
 
 fn candidate_lookup_queries(index: &QueryIndex, source: &Node, text: &str) -> Vec<String> {
@@ -1306,20 +1332,62 @@ fn safe(metrics: &Metrics, client: &Client, ctx: &Ctx, syllabus: &Syllabus, send
         let source = test_node("dispatch", "demo::dispatch");
         let mut handler = test_node("handler-type", "demo::Handler");
         handler.kind = NodeKind::Struct;
+        let mut implementation = test_node("handler-impl", "demo::impl demo::Handler");
+        implementation.kind = NodeKind::Impl;
+        let mut impl_for = test_edge("handler-impl", "handler-type");
+        impl_for.kind = crate::EdgeKind::ImplFor;
+        let mut contains = test_edge("handler-impl", "callback");
+        contains.kind = crate::EdgeKind::Contains;
         let index = QueryIndex::from_test_parts(
             "associated-candidate",
             vec![
                 source.clone(),
                 handler,
+                implementation,
                 test_node("callback", "demo::impl demo::Handler::callback"),
             ],
-            Vec::new(),
+            vec![impl_for, contains],
         );
 
         let (candidates, truncated) = resolve_candidates(
             &index,
             &source,
             &["crate::Handler::callback".to_string()],
+            CandidateNamespace::Callable,
+        );
+
+        assert!(!truncated);
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|node| node.id.as_str())
+                .collect::<Vec<_>>(),
+            ["callback"]
+        );
+    }
+
+    #[test]
+    fn test_runtime_boundary_generic_inherent_candidate_uses_impl_edges() {
+        let source = test_node("dispatch", "demo::dispatch");
+        let mut handler = test_node("handler-type", "demo::Handler");
+        handler.kind = NodeKind::Struct;
+        let mut implementation = test_node("handler-impl", "demo::impl Handler < T >");
+        implementation.kind = NodeKind::Impl;
+        let callback = test_node("callback", "demo::impl Handler < T >::callback");
+        let mut impl_for = test_edge("handler-impl", "handler-type");
+        impl_for.kind = crate::EdgeKind::ImplFor;
+        let mut contains = test_edge("handler-impl", "callback");
+        contains.kind = crate::EdgeKind::Contains;
+        let index = QueryIndex::from_test_parts(
+            "generic-associated-candidate",
+            vec![source.clone(), handler, implementation, callback],
+            vec![impl_for, contains],
+        );
+
+        let (candidates, truncated) = resolve_candidates(
+            &index,
+            &source,
+            &["crate::Handler::<u8>::callback".to_string()],
             CandidateNamespace::Callable,
         );
 
@@ -2129,6 +2197,70 @@ pub trait Runner {
         assert!(truncated);
 
         fs::remove_dir_all(&oversized_code).ok();
+        fs::remove_dir_all(&code).ok();
+    }
+
+    #[test]
+    fn test_runtime_boundary_scan_frontier_orders_each_depth_before_limits() {
+        let code = temp_graph("runtime-boundary-frontier-canonical-layer");
+        fs::create_dir_all(code.join("src")).unwrap();
+        let source = "pub fn start() {}\npub fn target() {}\n";
+        fs::write(code.join("src/lib.rs"), source).unwrap();
+        let mut nodes = vec![
+            Node {
+                id: "start".into(),
+                ..parsed_function_node(source, "start", "crate::start")
+            },
+            Node {
+                id: "target".into(),
+                ..parsed_function_node(source, "target", "crate::target")
+            },
+            test_node("parent-a", "crate::parent_a"),
+            test_node("parent-b", "crate::parent_b"),
+        ];
+        let mut edges = vec![test_edge("start", "parent-a"), test_edge("start", "parent-b")];
+        for index in 0..6 {
+            let a = format!("a-{index}");
+            let z = format!("z-{index}");
+            nodes.push(test_node(&a, &format!("crate::a_{index}")));
+            nodes.push(test_node(&z, &format!("crate::z_{index}")));
+            edges.push(test_edge("parent-b", &a));
+            edges.push(test_edge("parent-a", &z));
+        }
+        let index = QueryIndex::from_test_parts("canonical-frontier", nodes, edges);
+        let meta = Meta {
+            schema_version: crate::SCHEMA_VERSION,
+            package: "crate".into(),
+            packages: vec!["crate".into()],
+            roots: vec!["start".into()],
+            capability: crate::Capability::default(),
+            files: BTreeMap::from([(
+                "src/lib.rs".into(),
+                blake3::hash(source.as_bytes()).to_hex().to_string(),
+            )]),
+            graph_fingerprint: "canonical-frontier".into(),
+        };
+
+        let (frontier, _, truncated) = scan_nodes(
+            &fs::canonicalize(&code).unwrap(),
+            &meta,
+            &index,
+            &test_status(crate::LayerState::Unavailable),
+            &FlowQuery::Between {
+                from: "crate::start".into(),
+                to: "crate::target".into(),
+            },
+            TraversalLimits::flow_default(),
+        );
+
+        assert!(truncated);
+        assert_eq!(
+            frontier
+                .iter()
+                .map(|node| node.id.as_str())
+                .collect::<Vec<_>>(),
+            ["start", "parent-a", "parent-b", "a-0", "a-1", "a-2", "a-3", "a-4"]
+        );
         fs::remove_dir_all(&code).ok();
     }
 

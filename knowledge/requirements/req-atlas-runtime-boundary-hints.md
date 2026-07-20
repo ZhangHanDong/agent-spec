@@ -84,6 +84,8 @@ impact, lifecycle, and KLL evidence with an unproved relationship.
 
 [REQ-ATLAS-RUNTIME-BOUNDARY-CANDIDATE-INHERENT] A callable path in `crate::Type::method`, `self::Type::method`, or source-relative `Type::method` form MUST resolve to the matching indexed inherent-implementation method.
 
+[REQ-ATLAS-RUNTIME-BOUNDARY-CANDIDATE-INHERENT-GENERIC] A generic inherent callable path MUST resolve through indexed `ImplFor` and `Contains` relations without reconstructing an implementation symbol string.
+
 [REQ-ATLAS-RUNTIME-BOUNDARY-CANDIDATE-ORDER] Candidate continuations MUST remain canonically sorted plus unique.
 
 [REQ-ATLAS-RUNTIME-BOUNDARY-CANDIDATE-LIMIT] A hint MUST contain at most 16 resolved candidate nodes.
@@ -91,6 +93,8 @@ impact, lifecycle, and KLL evidence with an unproved relationship.
 [REQ-ATLAS-RUNTIME-BOUNDARY-CANDIDATE-OVERFLOW] Candidate overflow MUST return no arbitrary candidate prefix as a complete set.
 
 [REQ-ATLAS-RUNTIME-BOUNDARY-NODE-LIMIT] A query MUST scan at most 8 function nodes in source-first static-reachability order.
+
+[REQ-ATLAS-RUNTIME-BOUNDARY-LAYER-ORDER] Every static-reachability depth MUST be canonically ordered before node, byte, or expansion limits select a prefix.
 
 [REQ-ATLAS-RUNTIME-BOUNDARY-BYTE-LIMIT] A query MUST scan at most 200000 source bytes.
 
@@ -181,6 +185,12 @@ Scenario: Inherent associated callbacks resolve through implementation symbols
   When Atlas evaluates a disconnected flow from its callback registration
   Then the flow contract test exits zero only when the candidate is the indexed inherent method
 
+Scenario: Generic inherent callbacks resolve through graph relations
+  Given `Handler::<u8>::callback` targets a generic inherent implementation method
+  When Atlas resolves the preserved callback path
+  Then the resolver contract test exits zero only when the candidate id equals `callback`
+  And the lookup traverses indexed `ImplFor` and `Contains` relations
+
 Scenario: Suffix fallback does not override a source-module exact match
   Given the source module and a sibling module both declare `handler`
   When Atlas resolves bare candidate text `handler`
@@ -221,6 +231,11 @@ Scenario: Scan limits bound frontier source reads
   Given a reachable frontier exceeds eight functions or its next source file exceeds the remaining 200000-byte budget
   When Atlas constructs the runtime-boundary frontier
   Then the frontier contract test exits zero only when it returns eight nodes, no oversized-file cache entry, and truncation
+
+Scenario: Frontier limits select a canonical breadth layer prefix
+  Given parent `a` reaches `z-*` nodes and parent `b` reaches `a-*` nodes at the same depth
+  When the eight-function frontier limit selects a prefix
+  Then the frontier contract test exits zero only when depth-two ids begin with `a-0` through `a-4`
 
 Scenario: Wiki does not promote runtime hints
   Given tracked Atlas architecture and authority articles
