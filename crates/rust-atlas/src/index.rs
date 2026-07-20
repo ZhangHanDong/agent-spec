@@ -22,6 +22,14 @@ pub struct QueryIndex {
     pub incoming: BTreeMap<String, Vec<usize>>,
     pub outgoing: BTreeMap<String, Vec<usize>>,
     pub target: BTreeMap<String, Vec<usize>>,
+    incoming_nodes: BTreeMap<String, Vec<AdjacentLocator>>,
+    outgoing_nodes: BTreeMap<String, Vec<AdjacentLocator>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct AdjacentLocator {
+    edge_position: usize,
+    node_position: usize,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -32,6 +40,8 @@ struct Locators {
     incoming: BTreeMap<String, Vec<usize>>,
     outgoing: BTreeMap<String, Vec<usize>>,
     target: BTreeMap<String, Vec<usize>>,
+    incoming_nodes: BTreeMap<String, Vec<AdjacentLocator>>,
+    outgoing_nodes: BTreeMap<String, Vec<AdjacentLocator>>,
 }
 
 impl Locators {
@@ -56,16 +66,40 @@ impl Locators {
 
         let mut incoming = BTreeMap::new();
         let mut outgoing = BTreeMap::new();
+        let mut incoming_nodes = BTreeMap::new();
+        let mut outgoing_nodes = BTreeMap::new();
         for (position, edge) in edges.iter().enumerate() {
             insert_locator(&mut outgoing, &edge.from, position);
+            let source_position = id
+                .get(&edge.from)
+                .and_then(|positions| positions.first())
+                .copied();
             for value in edge_target_values(edge) {
                 for node_position in target.get(value).into_iter().flatten() {
                     if let Some(node) = nodes.get(*node_position) {
                         insert_locator(&mut incoming, &node.id, position);
+                        if let Some(source_position) = source_position {
+                            incoming_nodes
+                                .entry(node.id.clone())
+                                .or_insert_with(Vec::new)
+                                .push(AdjacentLocator {
+                                    edge_position: position,
+                                    node_position: source_position,
+                                });
+                            outgoing_nodes
+                                .entry(edge.from.clone())
+                                .or_insert_with(Vec::new)
+                                .push(AdjacentLocator {
+                                    edge_position: position,
+                                    node_position: *node_position,
+                                });
+                        }
                     }
                 }
             }
         }
+        canonicalize_adjacent_locators(&mut incoming_nodes, nodes, edges);
+        canonicalize_adjacent_locators(&mut outgoing_nodes, nodes, edges);
 
         Self {
             id,
@@ -74,6 +108,8 @@ impl Locators {
             incoming,
             outgoing,
             target,
+            incoming_nodes,
+            outgoing_nodes,
         }
     }
 }
@@ -106,6 +142,8 @@ impl QueryIndex {
             incoming: locators.incoming,
             outgoing: locators.outgoing,
             target: locators.target,
+            incoming_nodes: locators.incoming_nodes,
+            outgoing_nodes: locators.outgoing_nodes,
         }
     }
 
@@ -127,6 +165,8 @@ impl QueryIndex {
             incoming: locators.incoming,
             outgoing: locators.outgoing,
             target: locators.target,
+            incoming_nodes: locators.incoming_nodes,
+            outgoing_nodes: locators.outgoing_nodes,
         }
     }
 
@@ -139,6 +179,14 @@ impl QueryIndex {
             ("incoming", self.incoming == expected.incoming),
             ("outgoing", self.outgoing == expected.outgoing),
             ("target", self.target == expected.target),
+            (
+                "incoming_nodes",
+                self.incoming_nodes == expected.incoming_nodes,
+            ),
+            (
+                "outgoing_nodes",
+                self.outgoing_nodes == expected.outgoing_nodes,
+            ),
         ] {
             if !persisted_matches {
                 return Err(AtlasError::QueryIndexCorrupt {
@@ -217,6 +265,38 @@ impl QueryIndex {
             .and_then(|position| self.nodes.get(*position))
     }
 
+    pub fn incoming_neighbors_for<'a>(
+        &'a self,
+        node_id: &str,
+    ) -> impl Iterator<Item = (&'a Node, &'a Edge)> + 'a {
+        self.incoming_nodes
+            .get(node_id)
+            .into_iter()
+            .flatten()
+            .filter_map(|locator| {
+                Some((
+                    self.nodes.get(locator.node_position)?,
+                    self.edges.get(locator.edge_position)?,
+                ))
+            })
+    }
+
+    pub fn outgoing_neighbors_for<'a>(
+        &'a self,
+        node_id: &str,
+    ) -> impl Iterator<Item = (&'a Node, &'a Edge)> + 'a {
+        self.outgoing_nodes
+            .get(node_id)
+            .into_iter()
+            .flatten()
+            .filter_map(|locator| {
+                Some((
+                    self.nodes.get(locator.node_position)?,
+                    self.edges.get(locator.edge_position)?,
+                ))
+            })
+    }
+
     pub fn search_nodes(&self, query: &str) -> Vec<SearchHit> {
         let mut hits: Vec<SearchHit> = self
             .nodes
@@ -273,6 +353,33 @@ fn canonical_edge(mut edge: Edge) -> Edge {
     edge.candidates.sort();
     edge.candidates.dedup();
     edge
+}
+
+fn canonicalize_adjacent_locators(
+    locators: &mut BTreeMap<String, Vec<AdjacentLocator>>,
+    nodes: &[Node],
+    edges: &[Edge],
+) {
+    for values in locators.values_mut() {
+        values.sort_by(|left, right| {
+            nodes[left.node_position]
+                .id
+                .cmp(&nodes[right.node_position].id)
+                .then_with(|| {
+                    edges[left.edge_position]
+                        .kind
+                        .cmp(&edges[right.edge_position].kind)
+                })
+                .then_with(|| edges[left.edge_position].cmp(&edges[right.edge_position]))
+        });
+        let mut seen = BTreeSet::new();
+        values.retain(|locator| {
+            seen.insert((
+                nodes[locator.node_position].id.clone(),
+                edges[locator.edge_position].kind,
+            ))
+        });
+    }
 }
 
 fn classify_match(node: &Node, query: &str) -> Option<MatchKind> {

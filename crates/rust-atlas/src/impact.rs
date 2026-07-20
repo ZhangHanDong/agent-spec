@@ -4,8 +4,7 @@ use std::path::Path;
 use serde::Serialize;
 
 use crate::traversal::{
-    EndpointResolution, canonical_path_signature, for_each_edge_target, graph_path,
-    resolve_endpoint,
+    EndpointResolution, canonical_path_signature, graph_path, resolve_endpoint,
 };
 use crate::{
     AtlasError, AtlasStatus, EdgeKind, GraphPath, Node, PathDirection, PathHop, QueryIndex,
@@ -237,7 +236,13 @@ pub(crate) fn impact_many_index(
 
         let mut next = BTreeMap::new();
         for candidate in &candidates {
-            let neighbors = dependency_neighbors(index, &candidate.node, candidate_limit);
+            let neighbors = dependency_neighbors(
+                index,
+                &candidate.node,
+                candidate_limit,
+                &settled,
+                &candidate.path,
+            );
             truncated |= neighbors.truncated;
             metrics.record_scan(&neighbors);
             for (node, hop) in neighbors.neighbors {
@@ -339,7 +344,8 @@ fn containment_closure(
         }) {
             continue;
         }
-        let neighbors = containment_neighbors(index, &candidate.node, limit);
+        let neighbors =
+            containment_neighbors(index, &candidate.node, limit, settled, &candidate.path);
         truncated |= neighbors.truncated;
         metrics.record_scan(&neighbors);
         for (node, hop) in neighbors.neighbors {
@@ -435,14 +441,20 @@ fn append_neighbor(path: &GraphPath, node: Node, hop: PathHop) -> GraphPath {
     graph_path(nodes, hops)
 }
 
-fn containment_neighbors(index: &QueryIndex, current: &Node, limit: usize) -> NeighborScan {
+fn containment_neighbors(
+    index: &QueryIndex,
+    current: &Node,
+    limit: usize,
+    settled: &BTreeSet<String>,
+    path: &GraphPath,
+) -> NeighborScan {
     let mut neighbors = BTreeMap::new();
     let mut truncated = false;
     #[cfg(test)]
     let mut examined_edges = 0;
     #[cfg(test)]
     let mut examined_targets = 0;
-    'edges: for edge in index.outgoing_edges_for(&current.id) {
+    for (node, edge) in index.outgoing_neighbors_for(&current.id) {
         if edge.kind != EdgeKind::Contains {
             continue;
         }
@@ -450,19 +462,22 @@ fn containment_neighbors(index: &QueryIndex, current: &Node, limit: usize) -> Ne
         {
             examined_edges += 1;
         }
-        let completed = for_each_edge_target(index, edge, |node, hop| {
-            #[cfg(test)]
-            {
-                examined_targets += 1;
-            }
-            if !insert_neighbor_until_full(&mut neighbors, (node, hop), limit) {
-                truncated = true;
-                return false;
-            }
-            true
-        });
-        if !completed {
-            break 'edges;
+        #[cfg(test)]
+        {
+            examined_targets += 1;
+        }
+        if excluded_neighbor(node, settled, path) {
+            continue;
+        }
+        let hop = PathHop {
+            edge: edge.clone(),
+            chosen_target: node.id.clone(),
+            candidate: edge.resolution != crate::EdgeResolution::Resolved,
+            direction: PathDirection::Forward,
+        };
+        if !insert_neighbor_until_full(&mut neighbors, (node.clone(), hop), limit) {
+            truncated = true;
+            break;
         }
     }
     NeighborScan {
@@ -475,14 +490,20 @@ fn containment_neighbors(index: &QueryIndex, current: &Node, limit: usize) -> Ne
     }
 }
 
-fn dependency_neighbors(index: &QueryIndex, current: &Node, limit: usize) -> NeighborScan {
+fn dependency_neighbors(
+    index: &QueryIndex,
+    current: &Node,
+    limit: usize,
+    settled: &BTreeSet<String>,
+    path: &GraphPath,
+) -> NeighborScan {
     let mut neighbors = BTreeMap::new();
     let mut truncated = false;
     #[cfg(test)]
     let mut examined_edges = 0;
     #[cfg(test)]
     let mut examined_targets = 0;
-    for edge in index.incoming_edges_for(&current.id) {
+    for (dependent, edge) in index.incoming_neighbors_for(&current.id) {
         if !matches!(
             edge.kind,
             EdgeKind::Calls
@@ -498,16 +519,16 @@ fn dependency_neighbors(index: &QueryIndex, current: &Node, limit: usize) -> Nei
             examined_edges += 1;
             examined_targets += 1;
         }
-        let Some(dependent) = index.node_by_id(&edge.from).cloned() else {
+        if excluded_neighbor(dependent, settled, path) {
             continue;
-        };
+        }
         let hop = PathHop {
             edge: edge.clone(),
             chosen_target: current.id.clone(),
             candidate: edge.resolution != crate::EdgeResolution::Resolved,
             direction: PathDirection::Reverse,
         };
-        if !insert_neighbor_until_full(&mut neighbors, (dependent, hop), limit) {
+        if !insert_neighbor_until_full(&mut neighbors, (dependent.clone(), hop), limit) {
             truncated = true;
             break;
         }
@@ -522,25 +543,16 @@ fn dependency_neighbors(index: &QueryIndex, current: &Node, limit: usize) -> Nei
     }
 }
 
-type NeighborKey = (String, crate::Edge, String, bool, u8);
-
 fn insert_neighbor_until_full(
-    neighbors: &mut BTreeMap<NeighborKey, (Node, PathHop)>,
+    neighbors: &mut BTreeMap<String, (Node, PathHop)>,
     neighbor: (Node, PathHop),
     limit: usize,
 ) -> bool {
-    let direction = match neighbor.1.direction {
-        PathDirection::Forward => 0,
-        PathDirection::Reverse => 1,
-    };
-    let key = (
-        neighbor.0.id.clone(),
-        neighbor.1.edge.clone(),
-        neighbor.1.chosen_target.clone(),
-        neighbor.1.candidate,
-        direction,
-    );
-    if neighbors.contains_key(&key) {
+    let key = neighbor.0.id.clone();
+    if let Some(existing) = neighbors.get(&key) {
+        if canonical_hop_cmp(&neighbor.1, &existing.1).is_lt() {
+            neighbors.insert(key, neighbor);
+        }
         return true;
     }
     if neighbors.len() == limit {
@@ -550,13 +562,34 @@ fn insert_neighbor_until_full(
     true
 }
 
+fn excluded_neighbor(node: &Node, settled: &BTreeSet<String>, path: &GraphPath) -> bool {
+    settled.contains(&node.id) || path.nodes.iter().any(|visited| visited.id == node.id)
+}
+
+fn canonical_hop_cmp(left: &PathHop, right: &PathHop) -> std::cmp::Ordering {
+    left.edge
+        .cmp(&right.edge)
+        .then_with(|| left.chosen_target.cmp(&right.chosen_target))
+        .then_with(|| left.candidate.cmp(&right.candidate))
+        .then_with(|| {
+            path_direction_rank(left.direction).cmp(&path_direction_rank(right.direction))
+        })
+}
+
+fn path_direction_rank(direction: PathDirection) -> u8 {
+    match direction {
+        PathDirection::Forward => 0,
+        PathDirection::Reverse => 1,
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::{
-        AtlasStatus, Edge, EdgeConfidence, EdgeKind, EdgeResolution, GraphIdentity, LayerState,
-        LayerStatus, Node, NodeKind, Provenance, QueryIndex,
+        AtlasStatus, Edge, EdgeConfidence, EdgeKind, EdgeResolution, EdgeSite, GraphIdentity,
+        LayerState, LayerStatus, Node, NodeKind, Provenance, QueryIndex,
     };
 
     fn node(id: &str, kind: NodeKind) -> Node {
@@ -863,5 +896,89 @@ mod tests {
         assert!(dependency.examined_targets <= 4);
         assert_eq!(dependency.affected.len(), 2);
         assert!(dependency.truncated);
+    }
+
+    #[test]
+    fn impact_neighbor_budget_counts_unique_nodes_not_parallel_call_sites() {
+        let mut edges = Vec::new();
+        for column in 0..20 {
+            let mut parallel = edge("caller-a", "seed", EdgeKind::Calls);
+            parallel.site = Some(EdgeSite {
+                file: "src/caller_a.rs".into(),
+                line_start: 1,
+                column_start: column,
+                line_end: 1,
+                column_end: column + 1,
+            });
+            edges.push(parallel);
+        }
+        edges.push(edge("caller-z", "seed", EdgeKind::Calls));
+        let traversal = impact_many_index(
+            &index(
+                vec![
+                    node("seed", NodeKind::Fn),
+                    node("caller-a", NodeKind::Fn),
+                    node("caller-z", NodeKind::Fn),
+                ],
+                edges,
+            ),
+            &[node("seed", NodeKind::Fn)],
+            &ImpactOptions {
+                max_nodes: 2,
+                ..ImpactOptions::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            traversal
+                .affected
+                .iter()
+                .map(|entry| entry.node.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["caller-a", "caller-z"]
+        );
+    }
+
+    #[test]
+    fn impact_neighbor_budget_excludes_settled_cycle_edges_before_counting() {
+        let mut edges = vec![edge("a", "seed", EdgeKind::Calls)];
+        for column in 0..20 {
+            let mut cycle = edge("seed", "a", EdgeKind::Calls);
+            cycle.site = Some(EdgeSite {
+                file: "src/seed.rs".into(),
+                line_start: 2,
+                column_start: column,
+                line_end: 2,
+                column_end: column + 1,
+            });
+            edges.push(cycle);
+        }
+        edges.push(edge("z", "a", EdgeKind::Calls));
+        let traversal = impact_many_index(
+            &index(
+                vec![
+                    node("seed", NodeKind::Fn),
+                    node("a", NodeKind::Fn),
+                    node("z", NodeKind::Fn),
+                ],
+                edges,
+            ),
+            &[node("seed", NodeKind::Fn)],
+            &ImpactOptions {
+                max_nodes: 2,
+                ..ImpactOptions::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            traversal
+                .affected
+                .iter()
+                .map(|entry| entry.node.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a", "z"]
+        );
     }
 }
