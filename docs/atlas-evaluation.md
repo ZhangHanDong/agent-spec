@@ -18,8 +18,10 @@ cargo run -- atlas benchmark validate --corpus benchmarks/atlas/corpus.json
 cargo run -- atlas benchmark plan --corpus benchmarks/atlas/corpus.json --out plan.json
 ```
 
-Run the plan only through the explicit opt-in boundary described below. Grade
-every run for correctness before producing performance aggregates:
+Run the plan only through the explicit opt-in boundary described below. The
+runner writes a receipt candidate; `summarize` is the validated receipt
+boundary and must grade every parsed receipt for correctness before producing
+performance aggregates:
 
 ```bash
 cargo run -- atlas benchmark summarize --receipts receipts.ndjson --out summary.json
@@ -54,7 +56,8 @@ Each case has these fields:
 | `permissions` | string | `read-only` or `workspace-write`. |
 | `cache_condition` | string | `cold` or `warm`. |
 
-`validate` reads and validates this schema. On success it prints JSON such as
+`validate` reads and validates this schema. `plan` validates the same corpus
+before compiling runs. On success `validate` prints JSON such as
 `{"valid":true,"cases":8}`. It has no `--out` option. On a validation error,
 it produces no normal JSON result.
 
@@ -159,11 +162,12 @@ newline or arguments, a shell builtin or function, an unavailable executable,
 a missing `jq`, and a malformed or empty run plan. It passes the plan path and
 any literal arguments supplied after `--` to the executable, captures its
 stdout in a temporary file, and atomically moves that file to the receipt path
-only when the executable succeeds. The saved stdout is a receipt candidate:
-the runner does not parse, validate, or reconcile it against the run plan.
+only when the executable succeeds. The saved stdout is a receipt candidate. The
+runner validates only the run plan; it does not parse, validate, or reconcile
+receipt output against that plan.
 
-`atlas benchmark summarize` performs the receipt checks. It typed-parses the
-candidate as a JSON array or NDJSON, rejects unknown fields and empty input,
+`atlas benchmark summarize` is the validated receipt boundary. It typed-parses
+the candidate as a JSON array or NDJSON, rejects unknown fields and empty input,
 and refuses to calculate aggregates when any parsed receipt lacks
 `correctness`. It does not consume the run plan, so it cannot verify that every
 planned run has exactly one receipt or that the plan and receipt set are

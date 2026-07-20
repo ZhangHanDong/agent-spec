@@ -59,6 +59,11 @@ contract. Do not weaken the spec to make verification pass. `skip`, `fail`,
 `uncertain`, and `pending_review` are distinct states and should remain distinct
 in reports, trace records, and failure explanation.
 
+Contracts with Atlas symbols require a rebuilt graph whose `atlas status`
+identity and layer states support authority. A borrowed worktree graph or stale
+available semantic layer blocks the definitive symbol evidence used by
+lifecycle.
+
 ## Trace Implication
 
 Lifecycle results become useful only when they remain tied to:

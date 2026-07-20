@@ -1,8 +1,8 @@
 {
-  "project": "agent-spec",
+  "project": "atlas-roadmap-wave1",
   "repo_path": ".",
   "generator": "agent-spec code live wiki",
-  "generator_version": "0.4.0",
-  "last_compiled_commit": "9fc0d2d6fd78423ee60ec4204c48de28ebc350da",
+  "generator_version": "1.1.0",
+  "last_compiled_commit": "ea36c08f84f6eef3bf4f4e66a4df08feae9a46c7",
   "last_compiled_at": null
 }

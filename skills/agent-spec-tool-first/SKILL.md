@@ -63,10 +63,30 @@ Humans define "what is correct" (Contract). Machines verify "is the code correct
 | `agent-spec wiki status` | Check stale code live wiki articles | Session start / before broad source reading |
 | `agent-spec wiki query <text>` | Search tracked live wiki articles | Before opening many source files |
 | `agent-spec wiki check` | Live wiki lint + worktree status gate | Pre-commit / CI for tracked wiki |
-| `agent-spec atlas build/tree/query/refs/impls/check/scip-gen` | Rust project graph (symbols, impls, refs) with hash staleness; `scip-gen` invokes rust-analyzer to produce `index.scip` for the optional SCIP semantic overlay (`Calls`/`UsesType` edges, additive over the syn baseline) | Query structure instead of grepping; `--frozen` for read-only |
+| `agent-spec atlas build/tree/query/search/refs/impls/status/check/scip-gen` | Rust project graph with indexed search, graph identity, and independent syn/SCIP/MIR freshness; `scip-gen` invokes rust-analyzer to produce `index.scip` for the optional SCIP semantic overlay | Build before querying; `--frozen` for read-only queries; `check` gates syn stale files |
 | `agent-spec atlas benchmark validate/plan/summarize` | Validate a corpus, compile paired Atlas/baseline run plans, and summarize fully graded JSON-array or NDJSON receipts; `plan` and `summarize` write atomically with `--out` and otherwise print JSON | Evaluate correctness before performance; every corpus arm has at least three trials. The opt-in runner requires `jq`, strictly validates only the run plan, executes the external executable from `ATLAS_EVAL_AGENT_COMMAND`, and atomically saves stdout as an unvalidated receipt candidate. `summarize` typed-parses receipts and rejects unknown fields, empty input, and missing correctness; plan-receipt reconciliation is not implemented. See `docs/atlas-evaluation.md` |
 | `agent-spec verify <spec> --code .` | Raw verification only | When you want verify without lint gate |
 | `agent-spec checkpoint status` | VCS-aware status | Check uncommitted state |
+
+### Atlas Workflow
+
+```bash
+agent-spec atlas build --code . --graph .agent-spec/graph
+agent-spec atlas search <query> --code . --graph .agent-spec/graph --limit 20
+agent-spec atlas status --code . --graph .agent-spec/graph --format json
+agent-spec atlas check --code . --graph .agent-spec/graph
+```
+
+`status` reports recorded/current graph identity and the three layer states;
+syn fresh is not authority for a stale SCIP or MIR layer. Rebuild after
+`atlas-schema-mismatch` or an `atlas-query-index-*` diagnostic. A borrowed
+worktree graph or stale available semantic layer cannot produce definitive
+provider, binding, lifecycle-symbol, or typed trace evidence. Atlas graph
+shards, the query index, and bindings are derived working data, not KLL truth.
+
+MCP uses frozen, read-only Atlas reads. The default tool list omits
+`atlas_search`; start `agent-spec mcp` with `AGENT_SPEC_MCP_ATLAS_SEARCH=1` to
+list it.
 
 ## BDD-spine Commands (0.3.0)
 

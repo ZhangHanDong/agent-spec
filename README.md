@@ -530,6 +530,37 @@ For consistency, `verify` and `lifecycle` use the same precedence when `--change
 | `install-hooks` | Install git hooks for automatic checking |
 | `measure-determinism` | [experimental] Measure contract verification variance |
 
+## Rust Atlas
+
+Atlas builds a derived Rust code graph. Build it before querying, then use
+`status` to inspect graph identity and independent syn, SCIP, and MIR
+freshness. The graph, query index, and code bindings are rebuildable working
+data; `knowledge/` remains the KLL source of truth.
+
+```bash
+agent-spec atlas build --code . --graph .agent-spec/graph
+agent-spec atlas search <query> --code . --graph .agent-spec/graph --limit 20
+agent-spec atlas status --code . --graph .agent-spec/graph --format json
+agent-spec atlas check --code . --graph .agent-spec/graph
+```
+
+`search` accepts a query and supports `--limit` from 1 through 200 (default
+20); add `--frozen` to read without automatic syn refresh. `check` is the
+compatibility freshness gate for syn stale files and exits non-zero when any
+remain. `status` reports the recorded and current graph identities plus separate
+layer states, so a fresh syn layer never implies a fresh SCIP or MIR layer.
+
+Rebuild with `agent-spec atlas build` after an `atlas-schema-mismatch` or any
+`atlas-query-index-missing`, `atlas-query-index-schema`,
+`atlas-query-index-stale`, or `atlas-query-index-corrupt` diagnostic. A graph
+from another worktree, or stale available semantic authority, cannot produce a
+definitive provider result, code binding, lifecycle symbol verdict, or typed
+trace target.
+
+The MCP server is read-only and uses frozen Atlas reads. It lists
+`atlas_search` only when started with `AGENT_SPEC_MCP_ATLAS_SEARCH=1`; the
+default MCP tool list keeps search hidden until it is explicitly enabled.
+
 ## Code Live Wiki
 
 agent-spec can maintain a repo-local code live wiki from code, KLL artifacts,
@@ -553,6 +584,8 @@ agent-spec wiki lint --code . --wiki .agent-spec/wiki
 agent-spec wiki check --code . --wiki .agent-spec/wiki
 agent-spec atlas build --code .          # Rust project graph: build/refresh
 agent-spec atlas query <symbol> --code . # query structure instead of grepping
+agent-spec atlas search <query> --code . # deterministic indexed symbol search
+agent-spec atlas status --code .          # graph identity and layered freshness
 agent-spec atlas check --code .          # staleness gate (non-zero when stale)
 agent-spec atlas scip-gen --code .       # optional: rust-analyzer SCIP index for the semantic overlay (Calls/UsesType)
 agent-spec wiki meta update --code . --wiki .agent-spec/wiki

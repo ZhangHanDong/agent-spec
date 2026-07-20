@@ -8,6 +8,14 @@ All notable changes to `agent-spec` are documented here. Format follows
 
 ### Added
 
+- Atlas Wave 1: schema v6 preserves edge occurrence/evidence facts, an atomic
+  derived query index powers deterministic `atlas search`, and `atlas status`
+  reports graph identity plus independent syn/SCIP/MIR freshness. Worktree
+  mismatch and stale available semantic authority fail closed for definitive
+  provider, binding, lifecycle-symbol, and typed trace evidence. Users rebuild
+  with `atlas build` after schema or query-index diagnostics; `atlas check`
+  remains the syn stale-file gate. MCP keeps `atlas_search` hidden by default;
+  start `agent-spec mcp` with `AGENT_SPEC_MCP_ATLAS_SEARCH=1` to list it.
 - Atlas evaluation baseline: versioned offline corpus and paired run-plan
   compilation, typed correctness receipts, robust per-arm and aggregate median/
   MAD summaries, and `atlas benchmark validate|plan|summarize`. `plan` and

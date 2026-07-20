@@ -20,6 +20,11 @@ and flow pages preserve cross-project roles, protocols, mechanisms, and data
 flow. Architecture JSON and Mermaid files are derived views checked against
 those maintained pages.
 
+The generated index is the entry point for current coverage, including the
+Atlas architecture, authority concept, and derived-authority decision. Updating
+an article requires regenerating that index and refreshing metadata before the
+wiki check can confirm source trace freshness.
+
 ## Maintenance
 
 Update this page when any listed `source_files` change in a way that alters the project understanding an agent should reuse.
