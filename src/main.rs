@@ -19,6 +19,8 @@ mod vcs;
 
 use clap::{Parser, Subcommand};
 use std::collections::BTreeSet;
+use std::ffi::OsString;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::process::ExitCode;
@@ -464,6 +466,87 @@ enum AtlasCommands {
         query: String,
         #[arg(long, default_value_t = 20)]
         limit: usize,
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+        #[arg(long)]
+        frozen: bool,
+    },
+    /// Ranked, bounded code context for an agent query
+    Explore {
+        query: String,
+        #[arg(long, default_value = "compact", value_parser = ["compact", "deep"])]
+        profile: String,
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+        #[arg(long)]
+        frozen: bool,
+    },
+    /// Explain a path between symbols or through one symbol
+    #[command(group(
+        clap::ArgGroup::new("flow-input")
+            .required(true)
+            .multiple(false)
+            .args(["from", "through"])
+    ))]
+    Flow {
+        #[arg(long, requires = "to")]
+        from: Option<String>,
+        #[arg(long, requires = "from")]
+        to: Option<String>,
+        #[arg(long)]
+        through: Option<String>,
+        #[arg(long, default_value_t = 8)]
+        max_depth: usize,
+        #[arg(long, default_value_t = 2_000)]
+        max_expansions: usize,
+        #[arg(long, default_value_t = 8)]
+        max_paths: usize,
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+        #[arg(long)]
+        frozen: bool,
+    },
+    /// Reverse dependency impact for one symbol
+    Impact {
+        symbol: String,
+        #[arg(long, default_value_t = 3)]
+        depth: usize,
+        #[arg(long, default_value_t = 200)]
+        max_nodes: usize,
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+        #[arg(long)]
+        frozen: bool,
+    },
+    /// Map changed files to impacted code nodes
+    #[command(group(
+        clap::ArgGroup::new("affected-input")
+            .required(true)
+            .multiple(false)
+            .args(["paths", "stdin", "staged", "worktree", "commit"])
+    ))]
+    Affected {
+        paths: Vec<PathBuf>,
+        #[arg(long)]
+        stdin: bool,
+        #[arg(long)]
+        staged: bool,
+        #[arg(long)]
+        worktree: bool,
+        #[arg(long)]
+        commit: Option<String>,
+        #[arg(long, default_value_t = 3)]
+        depth: usize,
+        #[arg(long, default_value_t = 200)]
+        max_nodes: usize,
         #[arg(long, default_value = ".")]
         code: PathBuf,
         #[arg(long, default_value = ".agent-spec/graph")]
@@ -3315,6 +3398,244 @@ fn cmd_lint_knowledge(
     Ok(())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AffectedCliInput {
+    paths: Vec<PathBuf>,
+    stdin: bool,
+    staged: bool,
+    worktree: bool,
+    commit: Option<String>,
+}
+
+impl AffectedCliInput {
+    fn new(paths: Vec<PathBuf>) -> Self {
+        Self {
+            paths,
+            stdin: false,
+            staged: false,
+            worktree: false,
+            commit: None,
+        }
+    }
+
+    fn stdin(mut self) -> Self {
+        self.stdin = true;
+        self
+    }
+
+    fn staged(mut self) -> Self {
+        self.staged = true;
+        self
+    }
+
+    fn worktree(mut self) -> Self {
+        self.worktree = true;
+        self
+    }
+
+    fn commit(mut self, range: impl Into<String>) -> Self {
+        self.commit = Some(range.into());
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AffectedInputMode {
+    Explicit(Vec<PathBuf>),
+    Stdin,
+    Staged,
+    Worktree,
+    Commit(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GitDiffRequest {
+    program: &'static str,
+    args: Vec<OsString>,
+}
+
+type GitRunResult = Result<Vec<u8>, Box<dyn std::error::Error>>;
+type GitRunner<'a> = dyn FnMut(&GitDiffRequest) -> GitRunResult + 'a;
+
+fn affected_input_error(detail: impl Into<String>) -> Box<dyn std::error::Error> {
+    std::io::Error::other(format!("atlas-affected-input-mode: {}", detail.into())).into()
+}
+
+fn resolve_affected_input_mode(
+    input: &AffectedCliInput,
+) -> Result<AffectedInputMode, Box<dyn std::error::Error>> {
+    let mode_count = usize::from(!input.paths.is_empty())
+        + usize::from(input.stdin)
+        + usize::from(input.staged)
+        + usize::from(input.worktree)
+        + usize::from(input.commit.is_some());
+    if mode_count != 1 {
+        return Err(affected_input_error(
+            "choose exactly one of explicit paths, --stdin, --staged, --worktree, or --commit",
+        ));
+    }
+    if !input.paths.is_empty() {
+        Ok(AffectedInputMode::Explicit(input.paths.clone()))
+    } else if input.stdin {
+        Ok(AffectedInputMode::Stdin)
+    } else if input.staged {
+        Ok(AffectedInputMode::Staged)
+    } else if input.worktree {
+        Ok(AffectedInputMode::Worktree)
+    } else if let Some(range) = &input.commit {
+        Ok(AffectedInputMode::Commit(range.clone()))
+    } else {
+        Err(affected_input_error("affected input mode disappeared"))
+    }
+}
+
+fn git_diff_request(
+    code: &Path,
+    mode: &AffectedInputMode,
+) -> Result<Option<GitDiffRequest>, Box<dyn std::error::Error>> {
+    let mut args = vec![
+        OsString::from("-C"),
+        code.as_os_str().to_os_string(),
+        OsString::from("diff"),
+        OsString::from("--name-only"),
+    ];
+    match mode {
+        AffectedInputMode::Explicit(_) | AffectedInputMode::Stdin => return Ok(None),
+        AffectedInputMode::Staged => args.push(OsString::from("--cached")),
+        AffectedInputMode::Worktree => {}
+        AffectedInputMode::Commit(range) => {
+            if range.trim().is_empty() || range.starts_with('-') {
+                return Err(affected_input_error(
+                    "--commit range must be non-empty and must not begin with '-'",
+                ));
+            }
+            args.push(OsString::from(range));
+        }
+    }
+    args.push(OsString::from("--"));
+    Ok(Some(GitDiffRequest {
+        program: "git",
+        args,
+    }))
+}
+
+fn run_git_name_only(request: &GitDiffRequest) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let output = Command::new(request.program).args(&request.args).output()?;
+    if !output.status.success() {
+        return Err(std::io::Error::other(format!(
+            "atlas-affected-git: git diff failed ({}): {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+        .into());
+    }
+    Ok(output.stdout)
+}
+
+fn path_lines(bytes: &[u8], source: &str) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
+    if bytes.contains(&0) {
+        return Err(std::io::Error::other(format!(
+            "atlas-affected-{source}: path input contains NUL"
+        ))
+        .into());
+    }
+    let text = std::str::from_utf8(bytes).map_err(|error| {
+        std::io::Error::other(format!(
+            "atlas-affected-{source}: path input is not UTF-8: {error}"
+        ))
+    })?;
+    Ok(text
+        .lines()
+        .map(|line| line.strip_suffix('\r').unwrap_or(line))
+        .filter(|line| !line.is_empty())
+        .map(PathBuf::from)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect())
+}
+
+fn resolve_affected_inputs(
+    code: &Path,
+    mode: AffectedInputMode,
+    stdin: &mut dyn Read,
+    run_git: &mut GitRunner<'_>,
+) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
+    match mode {
+        AffectedInputMode::Explicit(paths) => Ok(paths),
+        AffectedInputMode::Stdin => {
+            let mut bytes = Vec::new();
+            stdin.read_to_end(&mut bytes)?;
+            path_lines(&bytes, "input")
+        }
+        mode => {
+            let request = git_diff_request(code, &mode)?
+                .ok_or_else(|| affected_input_error("VCS mode did not produce a Git request"))?;
+            let bytes = run_git(&request)?;
+            path_lines(&bytes, "git")
+        }
+    }
+}
+
+fn cmd_atlas_affected_with_io(
+    code: &Path,
+    graph: &Path,
+    input: AffectedCliInput,
+    options: &rust_atlas::AffectedOptions,
+    stdin: &mut dyn Read,
+    run_git: &mut GitRunner<'_>,
+    stdout: &mut dyn Write,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mode = resolve_affected_input_mode(&input)?;
+    let paths = resolve_affected_inputs(code, mode, stdin, run_git)?;
+    let result = rust_atlas::affected_paths(code, graph, &paths, options)?;
+    let bytes = serde_json::to_vec_pretty(&result)?;
+    stdout.write_all(&bytes)?;
+    stdout.write_all(b"\n")?;
+    Ok(())
+}
+
+fn parse_explore_profile(
+    profile: &str,
+) -> Result<rust_atlas::ExploreProfile, Box<dyn std::error::Error>> {
+    match profile {
+        "compact" => Ok(rust_atlas::ExploreProfile::Compact),
+        "deep" => Ok(rust_atlas::ExploreProfile::Deep),
+        _ => Err(std::io::Error::other(format!(
+            "atlas-explore-profile: unsupported profile `{profile}`"
+        ))
+        .into()),
+    }
+}
+
+fn resolve_flow_query(
+    from: Option<String>,
+    to: Option<String>,
+    through: Option<String>,
+) -> Result<rust_atlas::FlowQuery, Box<dyn std::error::Error>> {
+    match (from, to, through) {
+        (Some(from), Some(to), None) => Ok(rust_atlas::FlowQuery::Between { from, to }),
+        (None, None, Some(symbol)) => Ok(rust_atlas::FlowQuery::Through { symbol }),
+        _ => Err(std::io::Error::other(
+            "atlas-flow-input-mode: use both --from/--to or only --through",
+        )
+        .into()),
+    }
+}
+
+fn cmd_atlas_explore_with_writer(
+    code: &Path,
+    graph: &Path,
+    query: &str,
+    options: &rust_atlas::ExploreOptions,
+    stdout: &mut dyn Write,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let result = rust_atlas::explore(code, graph, query, options)?;
+    let bytes = serde_json::to_vec(&result)?;
+    stdout.write_all(&bytes)?;
+    stdout.write_all(b"\n")?;
+    Ok(())
+}
+
 fn cmd_atlas(action: AtlasCommands) -> Result<(), Box<dyn std::error::Error>> {
     fn print_value<T: serde::Serialize>(
         value: &T,
@@ -3386,6 +3707,111 @@ fn cmd_atlas(action: AtlasCommands) -> Result<(), Box<dyn std::error::Error>> {
                 &rust_atlas::SearchOptions { limit, frozen },
             )?;
             print_value(&result, "json")
+        }
+        AtlasCommands::Explore {
+            query,
+            profile,
+            code,
+            graph,
+            frozen,
+        } => {
+            let stdout = std::io::stdout();
+            cmd_atlas_explore_with_writer(
+                &code,
+                &graph,
+                &query,
+                &rust_atlas::ExploreOptions {
+                    profile: parse_explore_profile(&profile)?,
+                    frozen,
+                },
+                &mut stdout.lock(),
+            )
+        }
+        AtlasCommands::Flow {
+            from,
+            to,
+            through,
+            max_depth,
+            max_expansions,
+            max_paths,
+            code,
+            graph,
+            frozen,
+        } => {
+            let query = resolve_flow_query(from, to, through)?;
+            let result = rust_atlas::flow(
+                &code,
+                &graph,
+                query,
+                &rust_atlas::FlowOptions {
+                    limits: rust_atlas::TraversalLimits {
+                        max_depth,
+                        max_expansions,
+                        max_paths,
+                    },
+                    frozen,
+                },
+            )?;
+            print_value(&result, "json")
+        }
+        AtlasCommands::Impact {
+            symbol,
+            depth,
+            max_nodes,
+            code,
+            graph,
+            frozen,
+        } => {
+            let result = rust_atlas::impact(
+                &code,
+                &graph,
+                &symbol,
+                &rust_atlas::ImpactOptions {
+                    max_depth: depth,
+                    max_nodes,
+                    frozen,
+                },
+            )?;
+            print_value(&result, "json")
+        }
+        AtlasCommands::Affected {
+            paths,
+            stdin,
+            staged,
+            worktree,
+            commit,
+            depth,
+            max_nodes,
+            code,
+            graph,
+            frozen,
+        } => {
+            let input = AffectedCliInput {
+                paths,
+                stdin,
+                staged,
+                worktree,
+                commit,
+            };
+            let options = rust_atlas::AffectedOptions {
+                impact: rust_atlas::ImpactOptions {
+                    max_depth: depth,
+                    max_nodes,
+                    frozen,
+                },
+            };
+            let stdin = std::io::stdin();
+            let stdout = std::io::stdout();
+            let mut run_git = |request: &GitDiffRequest| run_git_name_only(request);
+            cmd_atlas_affected_with_io(
+                &code,
+                &graph,
+                input,
+                &options,
+                &mut stdin.lock(),
+                &mut run_git,
+                &mut stdout.lock(),
+            )
         }
         AtlasCommands::Refs {
             symbol,
@@ -11445,6 +11871,323 @@ Scenario: pass
             .unwrap_err();
             assert!(error.to_string().contains("atlas-search-limit"));
         }
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    struct PanicOnRead;
+
+    impl std::io::Read for PanicOnRead {
+        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+            panic!("stdin must not be read before affected mode validation")
+        }
+    }
+
+    #[test]
+    fn test_atlas_affected_cli_rejects_conflicting_input_modes() {
+        for input in [
+            super::AffectedCliInput::new(vec![PathBuf::from("src/lib.rs")]).staged(),
+            super::AffectedCliInput::new(Vec::new())
+                .stdin()
+                .commit("HEAD~1..HEAD"),
+        ] {
+            let mut stdin = PanicOnRead;
+            let mut git =
+                |_: &super::GitDiffRequest| -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+                    panic!("Git must not run before affected mode validation")
+                };
+            let mut stdout = Vec::new();
+            let error = super::cmd_atlas_affected_with_io(
+                Path::new("/unused"),
+                Path::new("/unused-graph"),
+                input,
+                &rust_atlas::AffectedOptions::default(),
+                &mut stdin,
+                &mut git,
+                &mut stdout,
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(error.contains("atlas-affected-input-mode"));
+            assert!(stdout.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_atlas_explore_flow_impact_cli_parse_contract() {
+        let explore = super::Cli::try_parse_from([
+            "agent-spec",
+            "atlas",
+            "explore",
+            "src/lib.rs entry",
+            "--profile",
+            "deep",
+            "--frozen",
+        ])
+        .unwrap();
+        assert!(matches!(
+            explore.command,
+            super::Commands::Atlas {
+                action: super::AtlasCommands::Explore {
+                    query,
+                    profile,
+                    frozen: true,
+                    ..
+                }
+            } if query == "src/lib.rs entry" && profile == "deep"
+        ));
+        let between =
+            super::Cli::try_parse_from(["agent-spec", "atlas", "flow", "--from", "a", "--to", "b"])
+                .unwrap();
+        assert!(matches!(
+            between.command,
+            super::Commands::Atlas {
+                action: super::AtlasCommands::Flow {
+                    from: Some(from),
+                    to: Some(to),
+                    through: None,
+                    max_depth: 8,
+                    max_expansions: 2_000,
+                    max_paths: 8,
+                    frozen: false,
+                    ..
+                }
+            } if from == "a" && to == "b"
+        ));
+        let through =
+            super::Cli::try_parse_from(["agent-spec", "atlas", "flow", "--through", "a"]).unwrap();
+        assert!(matches!(
+            through.command,
+            super::Commands::Atlas {
+                action: super::AtlasCommands::Flow {
+                    from: None,
+                    to: None,
+                    through: Some(symbol),
+                    ..
+                }
+            } if symbol == "a"
+        ));
+        let impact =
+            super::Cli::try_parse_from(["agent-spec", "atlas", "impact", "a", "--depth", "4"])
+                .unwrap();
+        assert!(matches!(
+            impact.command,
+            super::Commands::Atlas {
+                action: super::AtlasCommands::Impact {
+                    symbol,
+                    depth: 4,
+                    max_nodes: 200,
+                    frozen: false,
+                    ..
+                }
+            } if symbol == "a"
+        ));
+        let affected_modes = [
+            (
+                vec!["agent-spec", "atlas", "affected", "src/lib.rs"],
+                (true, false, false, false, None),
+            ),
+            (
+                vec!["agent-spec", "atlas", "affected", "--stdin"],
+                (false, true, false, false, None),
+            ),
+            (
+                vec!["agent-spec", "atlas", "affected", "--staged"],
+                (false, false, true, false, None),
+            ),
+            (
+                vec!["agent-spec", "atlas", "affected", "--worktree"],
+                (false, false, false, true, None),
+            ),
+            (
+                vec![
+                    "agent-spec",
+                    "atlas",
+                    "affected",
+                    "--commit",
+                    "HEAD~1..HEAD",
+                ],
+                (false, false, false, false, Some("HEAD~1..HEAD")),
+            ),
+        ];
+        for (args, expected) in affected_modes {
+            let parsed = super::Cli::try_parse_from(args).unwrap();
+            match parsed.command {
+                super::Commands::Atlas {
+                    action:
+                        super::AtlasCommands::Affected {
+                            paths,
+                            stdin,
+                            staged,
+                            worktree,
+                            commit,
+                            depth,
+                            max_nodes,
+                            frozen,
+                            ..
+                        },
+                } => {
+                    assert_eq!(!paths.is_empty(), expected.0);
+                    assert_eq!(stdin, expected.1);
+                    assert_eq!(staged, expected.2);
+                    assert_eq!(worktree, expected.3);
+                    assert_eq!(commit.as_deref(), expected.4);
+                    assert_eq!(depth, 3);
+                    assert_eq!(max_nodes, 200);
+                    assert!(!frozen);
+                }
+                _ => panic!("expected atlas affected"),
+            }
+        }
+        for args in [
+            vec![
+                "agent-spec",
+                "atlas",
+                "explore",
+                "entry",
+                "--profile",
+                "wide",
+            ],
+            vec!["agent-spec", "atlas", "flow", "--from", "a"],
+            vec!["agent-spec", "atlas", "impact"],
+            vec!["agent-spec", "atlas", "affected"],
+            vec!["agent-spec", "atlas", "affected", "src/lib.rs", "--staged"],
+            vec![
+                "agent-spec",
+                "atlas",
+                "affected",
+                "--stdin",
+                "--commit",
+                "HEAD~1..HEAD",
+            ],
+        ] {
+            assert!(super::Cli::try_parse_from(args).is_err(), "args must fail");
+        }
+    }
+
+    #[test]
+    fn test_atlas_affected_cli_covers_all_vcs_modes_and_failures() {
+        let code = Path::new("repo");
+        let staged = super::git_diff_request(code, &super::AffectedInputMode::Staged)
+            .unwrap()
+            .unwrap();
+        let worktree = super::git_diff_request(code, &super::AffectedInputMode::Worktree)
+            .unwrap()
+            .unwrap();
+        let commit = super::git_diff_request(
+            code,
+            &super::AffectedInputMode::Commit("HEAD~1..HEAD".into()),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(staged.program, "git");
+        assert_eq!(
+            staged.args,
+            ["-C", "repo", "diff", "--name-only", "--cached", "--"].map(std::ffi::OsString::from)
+        );
+        assert_eq!(
+            worktree.args,
+            ["-C", "repo", "diff", "--name-only", "--"].map(std::ffi::OsString::from)
+        );
+        assert_eq!(
+            commit.args,
+            ["-C", "repo", "diff", "--name-only", "HEAD~1..HEAD", "--",]
+                .map(std::ffi::OsString::from)
+        );
+        assert!(
+            super::git_diff_request(
+                code,
+                &super::AffectedInputMode::Explicit(vec![PathBuf::from("src/lib.rs")])
+            )
+            .unwrap()
+            .is_none()
+        );
+        assert!(
+            super::git_diff_request(code, &super::AffectedInputMode::Stdin)
+                .unwrap()
+                .is_none()
+        );
+        for revision in ["", "-HEAD"] {
+            assert!(
+                super::git_diff_request(code, &super::AffectedInputMode::Commit(revision.into()))
+                    .unwrap_err()
+                    .to_string()
+                    .contains("atlas-affected-input-mode")
+            );
+        }
+
+        let non_repo = std::env::temp_dir().join(format!(
+            "agent-spec-affected-non-repo-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&non_repo);
+        fs::create_dir_all(&non_repo).unwrap();
+        let request = super::git_diff_request(&non_repo, &super::AffectedInputMode::Staged)
+            .unwrap()
+            .unwrap();
+        assert!(
+            super::run_git_name_only(&request)
+                .unwrap_err()
+                .to_string()
+                .contains("atlas-affected-git")
+        );
+        let mut stdin = std::io::Cursor::new(Vec::<u8>::new());
+        let mut stdout = Vec::new();
+        let mut run_git = |request: &super::GitDiffRequest| super::run_git_name_only(request);
+        let error = super::cmd_atlas_affected_with_io(
+            &non_repo,
+            &non_repo.join("graph"),
+            super::AffectedCliInput::new(Vec::new()).staged(),
+            &rust_atlas::AffectedOptions::default(),
+            &mut stdin,
+            &mut run_git,
+            &mut stdout,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("atlas-affected-git"));
+        assert!(stdout.is_empty());
+        fs::remove_dir_all(non_repo).ok();
+    }
+
+    #[test]
+    fn test_atlas_affected_stdin_normalizes_before_successful_output() {
+        let (code, graph) = atlas_fixture_copy("atlas-affected-stdin");
+        rust_atlas::build(&code, &graph, &rust_atlas::BuildOptions::default()).unwrap();
+        let mut stdin = std::io::Cursor::new(b"./src/lib.rs\nsrc/lib.rs\n".to_vec());
+        let mut git = |_: &super::GitDiffRequest| -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+            panic!("stdin mode must not invoke Git")
+        };
+        let mut stdout = Vec::new();
+        super::cmd_atlas_affected_with_io(
+            &code,
+            &graph,
+            super::AffectedCliInput::new(Vec::new()).stdin(),
+            &rust_atlas::AffectedOptions::default(),
+            &mut stdin,
+            &mut git,
+            &mut stdout,
+        )
+        .unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
+        assert_eq!(value["files"], serde_json::json!(["src/lib.rs"]));
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_explore_cli_emits_finalized_json_bytes() {
+        let (code, graph) = atlas_fixture_copy("atlas-explore-cli-bytes");
+        rust_atlas::build(&code, &graph, &rust_atlas::BuildOptions::default()).unwrap();
+        let options = rust_atlas::ExploreOptions {
+            profile: rust_atlas::ExploreProfile::Compact,
+            frozen: true,
+        };
+        let expected = rust_atlas::explore(&code, &graph, "MemStore", &options).unwrap();
+        let mut stdout = Vec::new();
+        super::cmd_atlas_explore_with_writer(&code, &graph, "MemStore", &options, &mut stdout)
+            .unwrap();
+        let mut expected_bytes = serde_json::to_vec(&expected).unwrap();
+        expected_bytes.push(b'\n');
+        assert_eq!(stdout, expected_bytes);
+        assert_eq!(expected.usage.serialized_bytes + 1, stdout.len());
         fs::remove_dir_all(code.parent().unwrap()).ok();
     }
 
