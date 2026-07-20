@@ -5,9 +5,10 @@ use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    AtlasError, Meta, PersistedMeta, io_err, read_persisted_meta_at, rel_path, walk_rs_files,
-};
+use crate::scope::AtlasScope;
+#[cfg(test)]
+use crate::walk_rs_files;
+use crate::{AtlasError, Meta, PersistedMeta, io_err, read_persisted_meta_at, rel_path};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphIdentity {
@@ -70,7 +71,8 @@ pub(crate) fn status_with_meta(
     generation: Option<String>,
 ) -> Result<AtlasStatus, AtlasError> {
     let current_identity = capture_identity(code_root, graph_dir)?;
-    let current_files = source_hashes(code_root)?;
+    let scope = AtlasScope::discover(code_root, graph_dir)?;
+    let current_files = source_hashes_with_scope(code_root, &scope)?;
     let stale_files = stale_files(&recorded.meta.files, &current_files);
     let recorded_source_fingerprint = source_fingerprint(&recorded.meta.files)?;
     let current_source_fingerprint = source_fingerprint(&current_files)?;
@@ -405,11 +407,27 @@ fn unavailable(diagnostic: &str) -> LayerStatus {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn source_hashes(code_root: &Path) -> Result<BTreeMap<String, String>, AtlasError> {
     let code_root = canonical_path(code_root)?;
+    source_hashes_from_paths(&code_root, walk_rs_files(&code_root))
+}
+
+pub(crate) fn source_hashes_with_scope(
+    code_root: &Path,
+    scope: &AtlasScope,
+) -> Result<BTreeMap<String, String>, AtlasError> {
+    let code_root = canonical_path(code_root)?;
+    source_hashes_from_paths(&code_root, scope.source_files())
+}
+
+fn source_hashes_from_paths(
+    code_root: &Path,
+    paths: Vec<PathBuf>,
+) -> Result<BTreeMap<String, String>, AtlasError> {
     let mut files = BTreeMap::new();
-    for path in walk_rs_files(&code_root) {
-        let relative = rel_path(&code_root, &path);
+    for path in paths {
+        let relative = rel_path(code_root, &path);
         let mut file = std::fs::File::open(path).map_err(io_err)?;
         let mut hasher = blake3::Hasher::new();
         let mut buffer = [0_u8; 64 * 1024];

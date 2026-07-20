@@ -28,6 +28,7 @@ mod index;
 mod input_plan;
 mod mir;
 mod runtime_boundary;
+pub mod scope;
 mod status;
 mod traversal;
 
@@ -533,8 +534,9 @@ fn build_with_meta(
         base.as_ref()
             .and_then(|snapshot| read_meta_at(&snapshot.data_dir).ok())
     });
+    let scope = scope::AtlasScope::discover(code_root, graph_dir)?;
     let identity = status::capture_identity(code_root, graph_dir)?;
-    let input_key = input_plan::InputPlanKey::capture(code_root, opts, &identity.toolchain)?;
+    let input_key = input_plan::InputPlanKey::capture(&scope, opts, &identity.toolchain)?;
     let input_fingerprint = input_key.fingerprint()?;
     let prior_orphan = incremental::load_orphan(
         graph_dir,
@@ -550,12 +552,12 @@ fn build_with_meta(
             InputPlanState::Hit,
         ),
         None => (
-            ProjectLayout::discover(code_root, opts)?,
+            ProjectLayout::discover(code_root, opts, &scope)?,
             InputPlanState::Miss,
         ),
     };
     let input_artifact = layout.to_input_plan(input_fingerprint.clone(), &input_key);
-    let current_files = status::source_hashes(code_root)?;
+    let current_files = status::source_hashes_with_scope(code_root, &scope)?;
     if !opts.full
         && input_plan_state == InputPlanState::Hit
         && prior_orphan.is_none()
@@ -589,6 +591,7 @@ fn build_with_meta(
     input_plan::write(transaction.data_dir(), &input_artifact)?;
     let (mut report, staged_meta) = build_staged(BuildStagedContext {
         code_root,
+        scope,
         graph_root: graph_dir,
         graph_dir: transaction.data_dir(),
         layout,
@@ -626,6 +629,7 @@ fn build_with_meta(
 
 struct BuildStagedContext<'a> {
     code_root: &'a Path,
+    scope: scope::AtlasScope,
     graph_root: &'a Path,
     graph_dir: &'a Path,
     layout: ProjectLayout,
@@ -641,6 +645,7 @@ struct BuildStagedContext<'a> {
 fn build_staged(context: BuildStagedContext<'_>) -> Result<(BuildReport, Meta), AtlasError> {
     let BuildStagedContext {
         code_root,
+        scope,
         graph_root,
         graph_dir,
         layout,
@@ -679,7 +684,7 @@ fn build_staged(context: BuildStagedContext<'_>) -> Result<(BuildReport, Meta), 
     let mut unparsed = Vec::new();
     let mut old_changed_shards = BTreeMap::new();
     let mut working_bytes: usize = 0;
-    for (position, path) in walk_rs_files(code_root).into_iter().enumerate() {
+    for (position, path) in scope.source_files().into_iter().enumerate() {
         if position % opts.batch_size == 0 {
             check_cancelled(opts)?;
         }
@@ -2007,27 +2012,13 @@ fn workspace_excludes(code_root: &Path) -> Vec<PathBuf> {
     out
 }
 
-fn nested_workspace_manifests(code_root: &Path) -> Vec<PathBuf> {
+fn nested_workspace_manifests(code_root: &Path, scope: &scope::AtlasScope) -> Vec<PathBuf> {
     let root_manifest = code_root.join("Cargo.toml");
-    let excludes = workspace_excludes(code_root);
-    let mut manifests: Vec<PathBuf> = ignore::WalkBuilder::new(code_root)
-        .hidden(true)
-        .git_ignore(true)
-        .build()
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.into_path())
+    let mut manifests: Vec<PathBuf> = scope
+        .cargo_manifest_files()
+        .into_iter()
         .filter(|path| {
             path != &root_manifest
-                && path.file_name().and_then(|name| name.to_str()) == Some("Cargo.toml")
-                && !path
-                    .components()
-                    .any(|component| component.as_os_str() == "target")
-                // Respect the root workspace's `exclude`: a nested workspace that
-                // the root deliberately detaches (e.g. test fixtures) must not be
-                // pulled back into the graph.
-                && !excludes
-                    .iter()
-                    .any(|dir| path.starts_with(dir))
                 && std::fs::read_to_string(path)
                     .is_ok_and(|text| text.lines().any(|line| line.trim() == "[workspace]"))
         })
@@ -2207,7 +2198,11 @@ fn source_units(code_root: &Path, targets: &[TargetLayout]) -> BTreeMap<PathBuf,
 }
 
 impl ProjectLayout {
-    fn discover(code_root: &Path, opts: &BuildOptions) -> Result<Self, AtlasError> {
+    fn discover(
+        code_root: &Path,
+        opts: &BuildOptions,
+        scope: &scope::AtlasScope,
+    ) -> Result<Self, AtlasError> {
         let manifest = code_root.join("Cargo.toml");
         let root_metadata = cargo_metadata(&manifest, opts)?;
         let root_workspace = root_metadata.workspace_root.clone();
@@ -2217,7 +2212,7 @@ impl ProjectLayout {
             .iter()
             .map(|package| package.manifest_path.clone())
             .collect();
-        for nested_manifest in nested_workspace_manifests(code_root) {
+        for nested_manifest in nested_workspace_manifests(code_root, scope) {
             if known_manifests.contains(&nested_manifest) {
                 continue;
             }
@@ -2424,6 +2419,7 @@ impl ProjectLayout {
     }
 }
 
+#[cfg(test)]
 fn walk_rs_files(code_root: &Path) -> Vec<PathBuf> {
     // Skip files under workspace-excluded directories so build and check agree
     // on the same file set and excluded crates never enter the graph (not even
@@ -3790,6 +3786,79 @@ mod tests {
             fs::copy(fixture.join(rel), code.join(rel)).unwrap();
         }
         (code, base.join("graph"))
+    }
+
+    #[test]
+    fn test_atlas_live_scope_is_shared_by_build_and_watcher() {
+        let base = temp_dir("atlas-live-shared-scope");
+        let code = base.join("code");
+        let graph = code.join(".agent-spec/graph");
+        fs::create_dir_all(code.join("src")).unwrap();
+        fs::create_dir_all(code.join(".cargo")).unwrap();
+        fs::create_dir_all(code.join("target/generated")).unwrap();
+        fs::create_dir_all(code.join("ignored")).unwrap();
+        fs::create_dir_all(code.join("excluded/src")).unwrap();
+        fs::create_dir_all(graph.join(".runtime")).unwrap();
+        fs::write(
+            code.join("Cargo.toml"),
+            "[workspace]\nexclude = [\"excluded\"]\n",
+        )
+        .unwrap();
+        fs::write(code.join("Cargo.lock"), "# lock\n").unwrap();
+        fs::write(code.join(".cargo/config.toml"), "[build]\n").unwrap();
+        fs::write(code.join(".gitignore"), "ignored/\n").unwrap();
+        fs::write(code.join("src/lib.rs"), "pub fn live() {}\n").unwrap();
+        fs::write(code.join("target/generated/hidden.rs"), "fn hidden() {}\n").unwrap();
+        fs::write(code.join("ignored/hidden.rs"), "fn hidden() {}\n").unwrap();
+        fs::write(code.join("excluded/src/lib.rs"), "fn excluded() {}\n").unwrap();
+        fs::write(graph.join(".runtime/Cargo.toml"), "[workspace]\n").unwrap();
+        let outside = base.join("outside.rs");
+        fs::write(&outside, "fn outside() {}\n").unwrap();
+        let code = fs::canonicalize(code).unwrap();
+        let graph = code.join(".agent-spec/graph");
+        let outside = fs::canonicalize(outside).unwrap();
+
+        let scope = crate::scope::AtlasScope::discover(&code, &graph).unwrap();
+        assert_eq!(
+            scope
+                .source_files()
+                .iter()
+                .map(|path| rel_path(&code, path))
+                .collect::<Vec<_>>(),
+            vec!["src/lib.rs"]
+        );
+        assert_eq!(
+            crate::input_plan::input_hashes(&scope)
+                .unwrap()
+                .keys()
+                .filter_map(|path| Path::new(path).strip_prefix(&code).ok())
+                .map(|path| path.to_string_lossy().replace('\\', "/"))
+                .collect::<Vec<_>>(),
+            vec![".cargo/config.toml", "Cargo.lock", "Cargo.toml"]
+        );
+        assert_eq!(
+            scope.classify(&code.join("src/lib.rs")).unwrap(),
+            crate::scope::ScopeEntryKind::RustSource
+        );
+        assert_eq!(
+            scope.classify(&code.join("Cargo.toml")).unwrap(),
+            crate::scope::ScopeEntryKind::CargoInput
+        );
+        for rejected in [
+            code.join("target/generated/hidden.rs"),
+            code.join("ignored/hidden.rs"),
+            code.join("excluded/src/lib.rs"),
+            graph.join(".runtime/Cargo.toml"),
+            outside,
+        ] {
+            assert_eq!(
+                scope.classify(&rejected).unwrap(),
+                crate::scope::ScopeEntryKind::Ignored,
+                "{}",
+                rejected.display()
+            );
+        }
+        fs::remove_dir_all(base).ok();
     }
 
     fn node<'a>(shards: &'a [Shard], id: &str) -> Option<&'a Node> {

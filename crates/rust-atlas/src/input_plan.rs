@@ -1,9 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{AtlasError, BuildOptions, SCHEMA_VERSION, TargetLayout, io_err};
+use crate::{AtlasError, BuildOptions, SCHEMA_VERSION, TargetLayout, io_err, scope::AtlasScope};
 
 const INPUT_PLAN_SCHEMA_VERSION: u32 = 2;
 const INPUT_PLAN_FILE: &str = "input-plan.json";
@@ -45,7 +47,7 @@ pub(crate) struct CargoInputPlan {
 
 impl InputPlanKey {
     pub(crate) fn capture(
-        code_root: &Path,
+        scope: &AtlasScope,
         opts: &BuildOptions,
         toolchain: &str,
     ) -> Result<Self, AtlasError> {
@@ -78,7 +80,7 @@ impl InputPlanKey {
             schema_version: SCHEMA_VERSION,
             provider: PROVIDER_ID.to_string(),
             toolchain: toolchain.to_string(),
-            manifests: input_hashes(code_root)?,
+            manifests: input_hashes(scope)?,
             features,
             target,
             cfg,
@@ -146,34 +148,9 @@ fn canonical_values(values: &[String], label: &str) -> Result<Vec<String>, Atlas
     Ok(canonical.into_iter().collect())
 }
 
-fn input_hashes(code_root: &Path) -> Result<BTreeMap<String, String>, AtlasError> {
-    let mut paths = ignore::WalkBuilder::new(code_root)
-        .hidden(false)
-        .git_ignore(true)
-        .build()
-        .filter_map(Result::ok)
-        .map(|entry| entry.into_path())
-        .filter(|path| {
-            path.is_file()
-                && !path
-                    .components()
-                    .any(|component| component.as_os_str() == "target")
-                && matches!(
-                    path.file_name().and_then(|name| name.to_str()),
-                    Some(
-                        "Cargo.toml"
-                            | "Cargo.lock"
-                            | "rust-toolchain"
-                            | "rust-toolchain.toml"
-                            | "config"
-                            | "config.toml"
-                    )
-                )
-        })
-        .collect::<Vec<PathBuf>>();
-    paths.sort();
+pub(crate) fn input_hashes(scope: &AtlasScope) -> Result<BTreeMap<String, String>, AtlasError> {
     let mut hashes = BTreeMap::new();
-    for path in paths {
+    for path in scope.cargo_input_files() {
         let bytes = std::fs::read(&path).map_err(io_err)?;
         let canonical = std::fs::canonicalize(&path).map_err(io_err)?;
         hashes.insert(
@@ -208,19 +185,20 @@ mod tests {
     #[test]
     fn test_atlas_input_plan_uses_content_not_manifest_mtime() {
         let root = fixture();
+        let scope = AtlasScope::discover(&root, &root.join(".agent-spec/graph")).unwrap();
         let options = BuildOptions::default();
-        let first = InputPlanKey::capture(&root, &options, "rustc test")
+        let first = InputPlanKey::capture(&scope, &options, "rustc test")
             .unwrap()
             .fingerprint()
             .unwrap();
-        let same = InputPlanKey::capture(&root, &options, "rustc test")
+        let same = InputPlanKey::capture(&scope, &options, "rustc test")
             .unwrap()
             .fingerprint()
             .unwrap();
         assert_eq!(first, same);
 
         fs::write(root.join("Cargo.toml"), "[workspace]\nmembers = []\n").unwrap();
-        let changed = InputPlanKey::capture(&root, &options, "rustc test")
+        let changed = InputPlanKey::capture(&scope, &options, "rustc test")
             .unwrap()
             .fingerprint()
             .unwrap();
