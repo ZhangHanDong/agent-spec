@@ -477,9 +477,113 @@ mod tests {
             hops: vec![hop],
             confidence: PathConfidence::Exact,
         };
-        let value = serde_json::to_value(path).unwrap();
-        assert_eq!(value["hops"][0]["chosen_target"], "b");
-        assert_eq!(value["confidence"], "exact");
+        let identity = crate::GraphIdentity {
+            repository_root: "/repo".into(),
+            git_common_dir: None,
+            worktree_root: "/repo".into(),
+            graph_root: "/repo/graph".into(),
+            toolchain: "test".into(),
+        };
+        let layer = |state, stale_files| crate::LayerStatus {
+            state,
+            recorded_fingerprint: None,
+            current_fingerprint: None,
+            stale_files,
+            diagnostics: Vec::new(),
+        };
+        let status = crate::AtlasStatus {
+            graph_fingerprint: "test-graph".into(),
+            recorded_identity: identity.clone(),
+            current_identity: identity,
+            worktree_mismatch: None,
+            syn: layer(crate::LayerState::Stale, vec!["src/a.rs".into()]),
+            scip: layer(crate::LayerState::Fresh, Vec::new()),
+            mir: layer(crate::LayerState::Unavailable, Vec::new()),
+        };
+        let flow = crate::FlowResult {
+            schema: "agent-spec/rust-atlas/flow-v1".into(),
+            state: FlowState::Found,
+            endpoints: Vec::new(),
+            shortest: Some(path.clone()),
+            highest_confidence: Some(path.clone()),
+            alternatives: vec![path.clone()],
+            expansions: 1,
+            truncated: false,
+            diagnostics: Vec::new(),
+            status: status.clone(),
+            stale: status.syn.stale_files.clone(),
+        };
+        let impact_entry = crate::ImpactEntry {
+            node: node("b"),
+            distance: 1,
+            path: path.clone(),
+        };
+        let impact = crate::ImpactResult {
+            schema: "agent-spec/rust-atlas/impact-v1".into(),
+            seed: node("a"),
+            affected: vec![impact_entry.clone()],
+            truncated: false,
+            diagnostics: Vec::new(),
+            status: status.clone(),
+            stale: status.syn.stale_files.clone(),
+        };
+        let affected = crate::AffectedResult {
+            schema: "agent-spec/rust-atlas/affected-v1".into(),
+            files: vec!["src/a.rs".into()],
+            seeds: vec![crate::AffectedSeed {
+                file: "src/a.rs".into(),
+                nodes: vec![node("a")],
+            }],
+            affected: vec![impact_entry.clone()],
+            truncated: false,
+            diagnostics: Vec::new(),
+            status: status.clone(),
+            stale: status.syn.stale_files.clone(),
+        };
+        let explore = crate::ExploreResult {
+            schema: "agent-spec/rust-atlas/explore-v1".into(),
+            query: "a".into(),
+            profile: crate::ExploreProfile::Compact,
+            limits: crate::ExploreBudget::compact(),
+            usage: crate::BudgetUsage::default(),
+            seeds: vec![node("a")],
+            nodes: vec![crate::ExploreNode {
+                node: node("a"),
+                seed: true,
+                spine: true,
+            }],
+            edges: vec![path.hops[0].edge.clone()],
+            primary_paths: vec![path.clone()],
+            alternative_paths: Vec::new(),
+            impact: vec![impact_entry],
+            excerpts: Vec::new(),
+            truncated: false,
+            truncation_reasons: Vec::new(),
+            diagnostics: Vec::new(),
+            status: status.clone(),
+            stale: status.syn.stale_files.clone(),
+        };
+
+        let expected_path = serde_json::to_value(&path).unwrap();
+        let values = [
+            serde_json::to_value(flow).unwrap(),
+            serde_json::to_value(impact).unwrap(),
+            serde_json::to_value(affected).unwrap(),
+            serde_json::to_value(explore).unwrap(),
+        ];
+        assert_eq!(values[0]["shortest"], expected_path);
+        assert_eq!(values[1]["affected"][0]["path"], expected_path);
+        assert_eq!(values[2]["affected"][0]["path"], expected_path);
+        assert_eq!(values[3]["primary_paths"][0], expected_path);
+        for value in values {
+            assert_eq!(value["stale"], value["status"]["syn"]["stale_files"]);
+        }
+        assert_eq!(expected_path["hops"][0]["chosen_target"], "b");
+        assert_eq!(
+            expected_path["hops"][0]["edge"],
+            serde_json::to_value(&path.hops[0].edge).unwrap()
+        );
+        assert_eq!(expected_path["confidence"], "exact");
         assert_eq!(TraversalLimits::flow_default().max_expansions, 2_000);
     }
 

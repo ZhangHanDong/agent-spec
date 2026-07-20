@@ -18,6 +18,7 @@ use quote::ToTokens;
 use serde::{Deserialize, Serialize};
 
 mod affected;
+mod explore;
 mod flow;
 mod impact;
 mod index;
@@ -26,6 +27,10 @@ mod traversal;
 
 pub use affected::{
     AffectedDiagnostic, AffectedOptions, AffectedResult, AffectedSeed, affected_paths,
+};
+pub use explore::{
+    BudgetUsage, ExploreBudget, ExploreDiagnostic, ExploreNode, ExploreOptions, ExploreProfile,
+    ExploreResult, SourceExcerpt, explore,
 };
 pub use flow::{FlowDiagnostic, FlowEndpoint, FlowOptions, FlowQuery, FlowResult, flow};
 pub use impact::{ImpactDiagnostic, ImpactEntry, ImpactOptions, ImpactResult, impact};
@@ -3822,6 +3827,51 @@ impl std::fmt::Display for Local {
             assert!(diagnostic.contains(&current), "{diagnostic}");
         }
         assert_eq!(file_tree_snapshot(&graph), graph_before);
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_query_surfaces_reject_worktree_mismatch() {
+        let (code, graph) = copy_fixture("atlas-query-surfaces-worktree");
+        init_git_repository(&code);
+        let linked = code.parent().unwrap().join("linked-surfaces");
+        let output = Command::new("git")
+            .args([
+                "worktree",
+                "add",
+                "-b",
+                "linked-surfaces",
+                &linked.to_string_lossy(),
+            ])
+            .current_dir(&code)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git worktree add: {output:?}");
+        build(&code, &graph, &BuildOptions::default()).unwrap();
+
+        let operations = [
+            explore(&linked, &graph, "MemStore", &ExploreOptions::default()).map(|_| ()),
+            flow(
+                &linked,
+                &graph,
+                FlowQuery::Through {
+                    symbol: "Store".into(),
+                },
+                &FlowOptions::default(),
+            )
+            .map(|_| ()),
+            impact(&linked, &graph, "Store", &ImpactOptions::default()).map(|_| ()),
+            affected_paths(
+                &linked,
+                &graph,
+                &[PathBuf::from("src/lib.rs")],
+                &AffectedOptions::default(),
+            )
+            .map(|_| ()),
+        ];
+        for result in operations {
+            assert!(matches!(result, Err(AtlasError::WorktreeMismatch { .. })));
+        }
         fs::remove_dir_all(code.parent().unwrap()).ok();
     }
 
