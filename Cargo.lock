@@ -541,6 +541,7 @@ version = "0.2.0"
 dependencies = [
  "blake3",
  "fs2",
+ "getrandom",
  "ignore",
  "notify",
  "proc-macro2",

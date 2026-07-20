@@ -13,6 +13,7 @@ mir = []
 [dependencies]
 blake3 = "1"
 fs2 = "0.4"
+getrandom = "0.4"
 ignore = "0.4"
 notify = "8.2"
 proc-macro2 = { version = "1", features = ["span-locations"] }

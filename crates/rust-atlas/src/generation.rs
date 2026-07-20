@@ -1,10 +1,11 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 
+use crate::locking::{ReaderLease, ReaderRegistryLease, WriterLease, inspect_reader_lease};
 use crate::{AtlasError, Capability};
 
 const POINTER_SCHEMA_VERSION: u32 = 1;
@@ -16,10 +17,26 @@ const MANIFEST_FILE: &str = "generation.json";
 
 static NEXT_STAGING: AtomicU64 = AtomicU64::new(0);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct GraphSnapshot {
     pub data_dir: PathBuf,
     pub generation: Option<String>,
+    lease: Option<ReaderLease>,
+}
+
+impl PartialEq for GraphSnapshot {
+    fn eq(&self, other: &Self) -> bool {
+        self.data_dir == other.data_dir && self.generation == other.generation
+    }
+}
+
+impl Eq for GraphSnapshot {}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct ReclaimReport {
+    pub(crate) removed_generations: Vec<String>,
+    pub(crate) removed_staging: Vec<String>,
+    pub(crate) diagnostics: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -191,6 +208,7 @@ impl GenerationTransaction {
         Ok(GraphSnapshot {
             data_dir: final_dir,
             generation: Some(generation),
+            lease: None,
         })
     }
 }
@@ -212,9 +230,15 @@ fn cleanup_owned_staging(path: &Path) -> Result<(), AtlasError> {
 }
 
 pub(crate) fn resolve_snapshot(graph_root: &Path) -> Result<GraphSnapshot, AtlasError> {
-    resolve_optional_snapshot(graph_root)?.ok_or_else(|| AtlasError::MissingGraph {
-        graph_dir: graph_root.display().to_string(),
-    })
+    let registry = ReaderRegistryLease::acquire_shared(graph_root)?;
+    let mut snapshot =
+        resolve_optional_snapshot(graph_root)?.ok_or_else(|| AtlasError::MissingGraph {
+            graph_dir: graph_root.display().to_string(),
+        })?;
+    if let Some(generation) = snapshot.generation.as_deref() {
+        snapshot.lease = Some(ReaderLease::create(graph_root, generation, &registry)?);
+    }
+    Ok(snapshot)
 }
 
 pub(crate) fn artifacts_match_manifest(snapshot: &GraphSnapshot) -> bool {
@@ -259,6 +283,7 @@ pub(crate) fn resolve_optional_snapshot(
             Ok(Some(GraphSnapshot {
                 data_dir,
                 generation: Some(pointer.generation),
+                lease: None,
             }))
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -266,6 +291,7 @@ pub(crate) fn resolve_optional_snapshot(
                 Ok(Some(GraphSnapshot {
                     data_dir: graph_root.to_path_buf(),
                     generation: None,
+                    lease: None,
                 }))
             } else {
                 Ok(None)
@@ -273,6 +299,206 @@ pub(crate) fn resolve_optional_snapshot(
         }
         Err(error) => Err(io_error(error)),
     }
+}
+
+pub(crate) fn safe_reclaim(
+    graph_root: &Path,
+    writer: &WriterLease,
+) -> Result<ReclaimReport, AtlasError> {
+    writer.assert_graph(graph_root)?;
+    let graph_root = fs::canonicalize(graph_root).map_err(io_error)?;
+    let registry = ReaderRegistryLease::acquire_exclusive(&graph_root)?;
+    let current = resolve_optional_snapshot(&graph_root)?.and_then(|snapshot| snapshot.generation);
+    let mut report = ReclaimReport::default();
+    let mut active_generations = BTreeSet::new();
+    let readers = graph_root.join(".runtime/readers");
+    let reader_scan = sorted_entries(&readers, "reader lease", &mut report.diagnostics)?;
+    let mut ambiguous_reader = !reader_scan.complete;
+    for entry in reader_scan.entries {
+        let path = entry.path();
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(error) => {
+                ambiguous_reader = true;
+                report.diagnostics.push(format!(
+                    "cannot inspect reader lease {}: {error}",
+                    path.display()
+                ));
+                continue;
+            }
+        };
+        if !file_type.is_file() || file_type.is_symlink() {
+            ambiguous_reader = true;
+            report.diagnostics.push(format!(
+                "reader lease path is not a regular file: {}",
+                path.display()
+            ));
+            continue;
+        }
+        match inspect_reader_lease(&path) {
+            Ok(Some(generation)) => {
+                active_generations.insert(generation);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                ambiguous_reader = true;
+                report.diagnostics.push(format!(
+                    "cannot prove reader lease inactive at {}: {error}",
+                    path.display()
+                ));
+            }
+        }
+    }
+    drop(registry);
+
+    let generations = graph_root.join(GENERATIONS_DIR);
+    for entry in sorted_entries(&generations, "generation", &mut report.diagnostics)?.entries {
+        let path = entry.path();
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+            report.diagnostics.push(format!(
+                "generation name is not valid UTF-8: {}",
+                path.display()
+            ));
+            continue;
+        };
+        if let Err(error) = validate_generation_id(&name) {
+            report.diagnostics.push(format!(
+                "generation entry is not reclaimable at {}: {error}",
+                path.display()
+            ));
+            continue;
+        }
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(error) => {
+                report.diagnostics.push(format!(
+                    "cannot inspect generation {}: {error}",
+                    path.display()
+                ));
+                continue;
+            }
+        };
+        if !file_type.is_dir() || file_type.is_symlink() {
+            report.diagnostics.push(format!(
+                "generation path is not a real directory: {}",
+                path.display()
+            ));
+            continue;
+        }
+        if current.as_deref() == Some(name.as_str())
+            || ambiguous_reader
+            || active_generations.contains(&name)
+        {
+            continue;
+        }
+        match fs::remove_dir_all(&path) {
+            Ok(()) => report.removed_generations.push(name),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => report.diagnostics.push(format!(
+                "cannot reclaim generation {}: {error}",
+                path.display()
+            )),
+        }
+    }
+
+    let staging = graph_root.join(STAGING_DIR);
+    for entry in sorted_entries(&staging, "staging", &mut report.diagnostics)?.entries {
+        let path = entry.path();
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+            report.diagnostics.push(format!(
+                "staging name is not valid UTF-8: {}",
+                path.display()
+            ));
+            continue;
+        };
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(error) => {
+                report.diagnostics.push(format!(
+                    "cannot inspect staging path {}: {error}",
+                    path.display()
+                ));
+                continue;
+            }
+        };
+        if !file_type.is_dir() || file_type.is_symlink() {
+            report.diagnostics.push(format!(
+                "staging path is not a real directory: {}",
+                path.display()
+            ));
+            continue;
+        }
+        match fs::remove_dir_all(&path) {
+            Ok(()) => report.removed_staging.push(name),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => report.diagnostics.push(format!(
+                "cannot reclaim staging path {}: {error}",
+                path.display()
+            )),
+        }
+    }
+
+    Ok(report)
+}
+
+struct DirectoryScan {
+    entries: Vec<fs::DirEntry>,
+    complete: bool,
+}
+
+fn sorted_entries(
+    directory: &Path,
+    label: &str,
+    diagnostics: &mut Vec<String>,
+) -> Result<DirectoryScan, AtlasError> {
+    match fs::symlink_metadata(directory) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+            diagnostics.push(format!(
+                "{label} directory is not a real directory: {}",
+                directory.display()
+            ));
+            return Ok(DirectoryScan {
+                entries: Vec::new(),
+                complete: false,
+            });
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(DirectoryScan {
+                entries: Vec::new(),
+                complete: true,
+            });
+        }
+        Err(error) => {
+            diagnostics.push(format!(
+                "cannot inspect {label} directory {}: {error}",
+                directory.display()
+            ));
+            return Ok(DirectoryScan {
+                entries: Vec::new(),
+                complete: false,
+            });
+        }
+    }
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) => {
+            diagnostics.push(format!(
+                "cannot scan {label} directory {}: {error}",
+                directory.display()
+            ));
+            return Ok(DirectoryScan {
+                entries: Vec::new(),
+                complete: false,
+            });
+        }
+    };
+    let mut entries = entries.collect::<Result<Vec<_>, _>>().map_err(io_error)?;
+    entries.sort_by_key(std::fs::DirEntry::file_name);
+    Ok(DirectoryScan {
+        entries,
+        complete: true,
+    })
 }
 
 fn validate_generation_id(value: &str) -> Result<(), AtlasError> {
@@ -344,7 +570,12 @@ fn clone_directory(source: &Path, destination: &Path, top_level: bool) -> Result
         if top_level
             && matches!(
                 name_text.as_ref(),
-                CURRENT_FILE | GENERATIONS_DIR | STAGING_DIR | MANIFEST_FILE | "orphans.json"
+                CURRENT_FILE
+                    | GENERATIONS_DIR
+                    | STAGING_DIR
+                    | MANIFEST_FILE
+                    | "orphans.json"
+                    | ".runtime"
             )
         {
             continue;
@@ -432,9 +663,12 @@ fn injected_failure(stage: &str) -> AtlasError {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use std::fs;
+    use std::fs::OpenOptions;
+    use std::io::Write;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::*;
+    use crate::locking::WriterLease;
 
     fn temp_dir(label: &str) -> PathBuf {
         static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -503,6 +737,8 @@ mod tests {
     fn test_atlas_legacy_generation_migrates_only_after_success() {
         let graph = temp_dir("legacy");
         fs::write(graph.join("meta.json"), "legacy").unwrap();
+        fs::create_dir_all(graph.join(".runtime")).unwrap();
+        fs::write(graph.join(".runtime/legacy.lock"), "runtime").unwrap();
         let legacy = resolve_snapshot(&graph).unwrap();
         assert_eq!(legacy.data_dir, graph);
         assert_eq!(legacy.generation, None);
@@ -513,6 +749,7 @@ mod tests {
 
         let committed = publish_marker(&graph, "committed", PublishFault::None).unwrap();
         assert!(committed.generation.is_some());
+        assert!(!committed.data_dir.join(".runtime").exists());
         assert_eq!(resolve_snapshot(&graph).unwrap(), committed);
         assert_eq!(
             fs::read_to_string(graph.join("meta.json")).unwrap(),
@@ -534,5 +771,105 @@ mod tests {
         cleanup_owned_staging(&staging).unwrap();
         assert_eq!(resolve_snapshot(&graph).unwrap(), baseline);
         assert_eq!(read_marker(&baseline), "baseline");
+    }
+
+    #[test]
+    fn test_atlas_reader_lease_preserves_old_generation_until_drop() {
+        let graph = temp_dir("reader-lease");
+        let first = publish_marker(&graph, "first", PublishFault::None).unwrap();
+        let pinned = resolve_snapshot(&graph).unwrap();
+        let pinned_clone = pinned.clone();
+        let writer = WriterLease::try_acquire(&graph).unwrap();
+        let second = publish_marker(&graph, "second", PublishFault::None).unwrap();
+
+        let retained = safe_reclaim(&graph, &writer).unwrap();
+        assert!(retained.removed_generations.is_empty());
+        assert!(first.data_dir.is_dir());
+        assert!(second.data_dir.is_dir());
+
+        drop(pinned);
+        let still_retained = safe_reclaim(&graph, &writer).unwrap();
+        assert!(still_retained.removed_generations.is_empty());
+        assert!(first.data_dir.is_dir());
+
+        drop(pinned_clone);
+        let reclaimed = safe_reclaim(&graph, &writer).unwrap();
+        assert_eq!(
+            reclaimed.removed_generations,
+            vec![first.generation.unwrap()]
+        );
+        assert!(!first.data_dir.exists());
+        assert!(second.data_dir.is_dir());
+        fs::remove_dir_all(graph).ok();
+    }
+
+    #[test]
+    fn test_atlas_reclamation_retains_generations_for_ambiguous_reader_directory() {
+        let graph = temp_dir("ambiguous-reader-directory");
+        let first = publish_marker(&graph, "first", PublishFault::None).unwrap();
+        let second = publish_marker(&graph, "second", PublishFault::None).unwrap();
+        let readers = graph.join(".runtime/readers");
+        fs::create_dir_all(readers.parent().unwrap()).unwrap();
+        fs::write(&readers, "not-a-directory").unwrap();
+        let writer = WriterLease::try_acquire(&graph).unwrap();
+
+        let report = safe_reclaim(&graph, &writer).unwrap();
+
+        assert!(report.removed_generations.is_empty());
+        assert!(!report.diagnostics.is_empty());
+        assert!(first.data_dir.is_dir());
+        assert!(second.data_dir.is_dir());
+        fs::remove_dir_all(graph).ok();
+    }
+
+    #[test]
+    fn test_atlas_reclamation_retains_generations_for_ambiguous_lease() {
+        let graph = temp_dir("ambiguous-lease");
+        let first = publish_marker(&graph, "first", PublishFault::None).unwrap();
+        let second = publish_marker(&graph, "second", PublishFault::None).unwrap();
+        let readers = graph.join(".runtime/readers");
+        fs::create_dir_all(&readers).unwrap();
+        let lease_path = readers.join("locked-malformed.json");
+        let mut lease = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(&lease_path)
+            .unwrap();
+        lease.write_all(b"not-json\n").unwrap();
+        lease.lock_shared().unwrap();
+        let writer = WriterLease::try_acquire(&graph).unwrap();
+
+        let report = safe_reclaim(&graph, &writer).unwrap();
+
+        assert!(report.removed_generations.is_empty());
+        assert!(!report.diagnostics.is_empty());
+        assert!(first.data_dir.is_dir());
+        assert!(second.data_dir.is_dir());
+        lease.unlock().unwrap();
+        fs::remove_dir_all(graph).ok();
+    }
+
+    #[test]
+    fn test_atlas_safe_reclamation_cleans_abandoned_staging_idempotently() {
+        let graph = temp_dir("abandoned-staging");
+        let current = publish_marker(&graph, "current", PublishFault::None).unwrap();
+        let abandoned = graph.join(".staging/abandoned");
+        fs::create_dir_all(&abandoned).unwrap();
+        fs::write(abandoned.join("partial.json"), b"partial").unwrap();
+        let current_bytes = fs::read(current.data_dir.join("marker.json")).unwrap();
+        let writer = WriterLease::try_acquire(&graph).unwrap();
+
+        let first = safe_reclaim(&graph, &writer).unwrap();
+        let second = safe_reclaim(&graph, &writer).unwrap();
+
+        assert_eq!(first.removed_staging, vec!["abandoned"]);
+        assert!(second.removed_staging.is_empty());
+        assert!(!abandoned.exists());
+        assert_eq!(
+            fs::read(current.data_dir.join("marker.json")).unwrap(),
+            current_bytes
+        );
+        fs::remove_dir_all(graph).ok();
     }
 }

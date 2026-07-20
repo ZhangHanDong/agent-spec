@@ -435,6 +435,8 @@ git commit -m "feat(atlas): supervise optional local daemon"
 ### Task 8: Add Reader Leases And Safe Reclamation
 
 **Files:**
+- Modify: `Cargo.lock`
+- Modify: `crates/rust-atlas/Cargo.toml`
 - Modify: `crates/rust-atlas/src/locking.rs`
 - Modify: `crates/rust-atlas/src/generation.rs`
 - Modify: `crates/rust-atlas/src/lib.rs`
@@ -442,7 +444,7 @@ git commit -m "feat(atlas): supervise optional local daemon"
 **Interfaces:**
 - Produces `ReaderLease`, lease-backed `GraphSnapshot` and `safe_reclaim(&WriterLease)`.
 
-- [ ] **Step 1: Add failing tests**
+- [x] **Step 1: Add failing tests**
 
 ```text
 test_atlas_reader_lease_preserves_old_generation_until_drop
@@ -450,7 +452,7 @@ test_atlas_reclamation_retains_generations_for_ambiguous_lease
 test_atlas_safe_reclamation_cleans_abandoned_staging_idempotently
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```bash
 cargo test -p rust-atlas test_atlas_reader_lease_ -- --nocapture
@@ -458,26 +460,28 @@ cargo test -p rust-atlas test_atlas_reclamation_ -- --nocapture
 cargo test -p rust-atlas test_atlas_safe_reclamation_ -- --nocapture
 ```
 
-- [ ] **Step 3: Add process-bound reader lease**
+- [x] **Step 3: Add process-bound reader lease**
 
 `resolve_snapshot` creates `.runtime/readers/<pid>-<nonce>.json`, obtains a shared file lock and
 keeps it in `Arc<ReaderLeaseInner>`. Snapshot clones share the lease; final drop unlocks/removes it.
 Custom equality compares only data dir/generation.
 
-- [ ] **Step 4: Implement fail-closed reclamation**
+- [x] **Step 4: Implement fail-closed reclamation**
 
 Under `WriterLease`, exclusive-lockable reader files are stale and removable; a contended valid
 lease protects its generation. A contended malformed/unreadable lease retains all old generations.
 Always retain current. Remove abandoned `.staging/*` only under the writer lease.
 
-- [ ] **Step 5: Integrate warning-only maintenance, verify and commit**
+- [x] **Step 5: Integrate warning-only maintenance, verify and commit**
 
 ```bash
 cargo test -p rust-atlas generation::tests
 cargo test -p rust-atlas test_atlas_reader_lease_
 cargo test -p rust-atlas test_atlas_reclamation_
 cargo test -p rust-atlas test_atlas_safe_reclamation_
-git add crates/rust-atlas/src/locking.rs crates/rust-atlas/src/generation.rs crates/rust-atlas/src/lib.rs
+git add Cargo.lock crates/rust-atlas/Cargo.toml crates/rust-atlas/src/locking.rs \
+  crates/rust-atlas/src/generation.rs crates/rust-atlas/src/lib.rs \
+  docs/superpowers/plans/2026-07-20-atlas-live-runtime.md
 git commit -m "feat(atlas): reclaim generations with reader leases"
 ```
 

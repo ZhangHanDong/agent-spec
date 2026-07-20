@@ -602,7 +602,7 @@ pub(crate) fn build_with_meta_locked(
     {
         let meta = known_meta.unwrap_or_else(|| unreachable!("checked above"));
         let snapshot = base.unwrap_or_else(|| unreachable!("checked above"));
-        return Ok(BuildReport {
+        let mut report = BuildReport {
             generation: snapshot.generation.unwrap_or_default(),
             input_plan: InputPlanState::Hit,
             rebuilt: Vec::new(),
@@ -618,7 +618,9 @@ pub(crate) fn build_with_meta_locked(
             working_bytes: 0,
             fallback_reason: None,
             orphans_recovered: 0,
-        });
+        };
+        append_reclamation_diagnostics(graph_dir, writer, &mut report);
+        return Ok(report);
     }
     let transaction = generation::GenerationTransaction::begin(graph_dir, base.as_ref())?;
     input_plan::write(transaction.data_dir(), &input_artifact)?;
@@ -657,7 +659,36 @@ pub(crate) fn build_with_meta_locked(
             ),
         });
     }
+    append_reclamation_diagnostics(graph_dir, writer, &mut report);
     Ok(report)
+}
+
+fn append_reclamation_diagnostics(
+    graph_dir: &Path,
+    writer: &locking::WriterLease,
+    report: &mut BuildReport,
+) {
+    match generation::safe_reclaim(graph_dir, writer) {
+        Ok(reclaim) => {
+            report
+                .diagnostics
+                .extend(
+                    reclaim
+                        .diagnostics
+                        .into_iter()
+                        .map(|message| BuildDiagnostic {
+                            code: "generation-maintenance-warning".to_string(),
+                            severity: "warning".to_string(),
+                            message,
+                        }),
+                );
+        }
+        Err(error) => report.diagnostics.push(BuildDiagnostic {
+            code: "generation-maintenance-failed".to_string(),
+            severity: "warning".to_string(),
+            message: format!("committed generation retained; safe reclamation failed: {error}"),
+        }),
+    }
 }
 
 struct BuildStagedContext<'a> {
@@ -5238,6 +5269,28 @@ impl std::fmt::Display for Local {
         let recovery = build(&code, &graph, &BuildOptions::default()).unwrap();
         assert!(recovery.orphans_recovered > 0);
         assert!(!graph.join("orphans.json").exists());
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_reclamation_ambiguity_is_warning_only_after_success() {
+        let (code, graph) = copy_fixture("atlas-reclamation-warning");
+        let baseline = build(&code, &graph, &BuildOptions::default()).unwrap();
+        fs::write(graph.join(".runtime/readers"), "not-a-directory").unwrap();
+
+        let report = build(&code, &graph, &BuildOptions::default()).unwrap();
+
+        assert_eq!(report.generation, baseline.generation);
+        assert!(report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "generation-maintenance-warning"
+                && diagnostic.severity == "warning"
+                && diagnostic.message.contains("reader lease directory")
+        }));
+        fs::remove_file(graph.join(".runtime/readers")).unwrap();
+        assert_eq!(
+            graph_snapshot(&graph).unwrap().generation,
+            Some(report.generation)
+        );
         fs::remove_dir_all(code.parent().unwrap()).ok();
     }
 

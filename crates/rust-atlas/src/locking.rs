@@ -1,7 +1,10 @@
 use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use fs2::FileExt;
+use serde::{Deserialize, Serialize};
 
 use crate::AtlasError;
 
@@ -13,6 +16,33 @@ pub struct WriterLease {
 pub struct DaemonLease {
     file: File,
 }
+
+pub(crate) struct ReaderRegistryLease {
+    file: File,
+}
+
+#[derive(Clone)]
+pub(crate) struct ReaderLease {
+    inner: Arc<ReaderLeaseInner>,
+}
+
+struct ReaderLeaseInner {
+    file: Option<File>,
+    path: PathBuf,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReaderLeaseRecord {
+    schema_id: String,
+    generation: String,
+    pid: u32,
+    nonce: String,
+    created_at_ms: u64,
+}
+
+const READER_SCHEMA: &str = "rust-atlas/reader-lease-v1";
+const MAX_READER_LEASE_BYTES: u64 = 1024 * 1024;
 
 impl WriterLease {
     pub fn try_acquire(graph_root: &Path) -> Result<Self, AtlasError> {
@@ -45,6 +75,83 @@ impl DaemonLease {
     }
 }
 
+impl ReaderRegistryLease {
+    pub(crate) fn acquire_shared(graph_root: &Path) -> Result<Self, AtlasError> {
+        let file = open_runtime_lock(graph_root, "readers.lock")?;
+        FileExt::lock_shared(&file).map_err(lock_io)?;
+        Ok(Self { file })
+    }
+
+    pub(crate) fn acquire_exclusive(graph_root: &Path) -> Result<Self, AtlasError> {
+        let file = open_runtime_lock(graph_root, "readers.lock")?;
+        FileExt::lock_exclusive(&file).map_err(lock_io)?;
+        Ok(Self { file })
+    }
+}
+
+impl ReaderLease {
+    pub(crate) fn create(
+        graph_root: &Path,
+        generation: &str,
+        _registry: &ReaderRegistryLease,
+    ) -> Result<Self, AtlasError> {
+        validate_generation(generation)?;
+        let readers = readers_dir(graph_root)?;
+        let mut random = [0_u8; 16];
+        getrandom::fill(&mut random).map_err(|error| AtlasError::Io(error.to_string()))?;
+        let nonce = random
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let path = readers.join(format!("{}-{nonce}.json", std::process::id()));
+        reject_symlink(&path)?;
+        let record = ReaderLeaseRecord {
+            schema_id: READER_SCHEMA.to_string(),
+            generation: generation.to_string(),
+            pid: std::process::id(),
+            nonce,
+            created_at_ms: now_ms()?,
+        };
+        validate_reader_record(&record)?;
+        let mut bytes =
+            serde_json::to_vec_pretty(&record).map_err(|error| AtlasError::LiveState {
+                detail: error.to_string(),
+            })?;
+        bytes.push(b'\n');
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(lock_io)?;
+        if let Err(error) = file.write_all(&bytes).and_then(|()| file.sync_all()) {
+            drop(file);
+            let _ = fs::remove_file(&path);
+            return Err(lock_io(error));
+        }
+        if let Err(error) = FileExt::lock_shared(&file) {
+            drop(file);
+            let _ = fs::remove_file(&path);
+            return Err(lock_io(error));
+        }
+        Ok(Self {
+            inner: Arc::new(ReaderLeaseInner {
+                file: Some(file),
+                path,
+            }),
+        })
+    }
+}
+
+impl std::fmt::Debug for ReaderLease {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ReaderLease")
+            .field("path", &self.inner.path)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Drop for WriterLease {
     fn drop(&mut self) {
         let _ = FileExt::unlock(&self.file);
@@ -54,6 +161,69 @@ impl Drop for WriterLease {
 impl Drop for DaemonLease {
     fn drop(&mut self) {
         let _ = FileExt::unlock(&self.file);
+    }
+}
+
+impl Drop for ReaderRegistryLease {
+    fn drop(&mut self) {
+        let _ = FileExt::unlock(&self.file);
+    }
+}
+
+impl Drop for ReaderLeaseInner {
+    fn drop(&mut self) {
+        if let Some(file) = self.file.take() {
+            let _ = FileExt::unlock(&file);
+            drop(file);
+        }
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+pub(crate) fn inspect_reader_lease(path: &Path) -> Result<Option<String>, AtlasError> {
+    reject_symlink(path)?;
+    let mut file = match OpenOptions::new().read(true).write(true).open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(lock_io(error)),
+    };
+    match FileExt::try_lock_exclusive(&file) {
+        Ok(()) => {
+            let _ = FileExt::unlock(&file);
+            drop(file);
+            match fs::remove_file(path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(lock_io(error)),
+            }
+            Ok(None)
+        }
+        Err(error) if is_contention(&error) => {
+            let metadata = file.metadata().map_err(lock_io)?;
+            if metadata.len() > MAX_READER_LEASE_BYTES {
+                return Err(AtlasError::LiveState {
+                    detail: format!("active reader lease exceeds 1 MiB: {}", path.display()),
+                });
+            }
+            let mut bytes = Vec::new();
+            file.read_to_end(&mut bytes).map_err(lock_io)?;
+            let record: ReaderLeaseRecord =
+                serde_json::from_slice(&bytes).map_err(|error| AtlasError::LiveState {
+                    detail: format!("invalid active reader lease {}: {error}", path.display()),
+                })?;
+            validate_reader_record(&record)?;
+            let expected_name = format!("{}-{}.json", record.pid, record.nonce);
+            if path.file_name().and_then(|name| name.to_str()) != Some(expected_name.as_str()) {
+                return Err(AtlasError::LiveState {
+                    detail: format!(
+                        "active reader lease identity does not match path {}",
+                        path.display()
+                    ),
+                });
+            }
+            Ok(Some(record.generation))
+        }
+        Err(error) => Err(lock_io(error)),
     }
 }
 
@@ -91,6 +261,79 @@ fn try_acquire_lock(
         Err(error) if is_contention(&error) => Err(busy(graph_root.to_string_lossy().into_owned())),
         Err(error) => Err(lock_io(error)),
     }
+}
+
+fn open_runtime_lock(graph_root: &Path, name: &str) -> Result<File, AtlasError> {
+    fs::create_dir_all(graph_root).map_err(lock_io)?;
+    let graph_root = fs::canonicalize(graph_root).map_err(lock_io)?;
+    let runtime = graph_root.join(".runtime");
+    reject_symlink(&runtime)?;
+    fs::create_dir_all(&runtime).map_err(lock_io)?;
+    let path = runtime.join(name);
+    reject_symlink(&path)?;
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .map_err(lock_io)?;
+    if fs::canonicalize(&runtime).map_err(lock_io)? != runtime
+        || fs::canonicalize(&path).map_err(lock_io)? != path
+    {
+        return Err(AtlasError::LiveState {
+            detail: format!("runtime lock escaped the graph: {}", path.display()),
+        });
+    }
+    Ok(file)
+}
+
+fn readers_dir(graph_root: &Path) -> Result<PathBuf, AtlasError> {
+    let graph_root = fs::canonicalize(graph_root).map_err(lock_io)?;
+    let readers = graph_root.join(".runtime/readers");
+    reject_symlink(&readers)?;
+    fs::create_dir_all(&readers).map_err(lock_io)?;
+    if fs::canonicalize(&readers).map_err(lock_io)? != readers {
+        return Err(AtlasError::LiveState {
+            detail: format!("reader directory escaped the graph: {}", readers.display()),
+        });
+    }
+    Ok(readers)
+}
+
+fn validate_reader_record(record: &ReaderLeaseRecord) -> Result<(), AtlasError> {
+    if record.schema_id != READER_SCHEMA
+        || record.pid == 0
+        || record.created_at_ms == 0
+        || record.nonce.len() != 32
+        || !record.nonce.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(AtlasError::LiveState {
+            detail: "invalid reader lease identity".to_string(),
+        });
+    }
+    validate_generation(&record.generation)
+}
+
+fn validate_generation(generation: &str) -> Result<(), AtlasError> {
+    if generation.len() == 66
+        && generation.starts_with("g-")
+        && generation[2..].bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        Ok(())
+    } else {
+        Err(AtlasError::LiveState {
+            detail: format!("invalid reader generation `{generation}`"),
+        })
+    }
+}
+
+fn now_ms() -> Result<u64, AtlasError> {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| AtlasError::Io(error.to_string()))?
+        .as_millis();
+    u64::try_from(millis).map_err(|_| AtlasError::Io("system time exceeds u64".to_string()))
 }
 
 fn reject_symlink(path: &Path) -> Result<(), AtlasError> {
