@@ -1,0 +1,13 @@
+{
+  "schema": "agent-spec/atlas-eval/serving-experiment-v1",
+  "version": "atlas-e1-serving-ab-2026-07-21",
+  "execution_ready": false,
+  "repository": "REPLACE_WITH_PINNED_REPOSITORY",
+  "revision": "0000000000000000000000000000000000000000",
+  "trials_per_arm": 3,
+  "burst_width": 8,
+  "heartbeat_budget_ms": 100,
+  "query_set_fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
+  "service_config_fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
+  "session_store": "artifacts/atlas-serving-ab"
+}

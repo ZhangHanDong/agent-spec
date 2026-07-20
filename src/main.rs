@@ -833,6 +833,22 @@ enum AtlasBenchmarkCommands {
         #[arg(long)]
         out: Option<PathBuf>,
     },
+    /// Compile a real-repository direct-versus-worker burst plan
+    ServingPlan {
+        #[arg(long)]
+        experiment: PathBuf,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Gate complete direct-versus-worker burst receipts
+    ServingGate {
+        #[arg(long)]
+        plan: PathBuf,
+        #[arg(long)]
+        receipts: PathBuf,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
     /// Summarize JSON-array or NDJSON run receipts
     Summarize {
         #[arg(long)]
@@ -4422,6 +4438,23 @@ fn cmd_atlas_benchmark_with_writer(
             let gate = crate::atlas_agent_eval::gate_agent_receipts(&plan, &receipts)?;
             emit(&gate, out.as_deref(), stdout)?;
             crate::atlas_agent_eval::enforce_agent_gate(&gate)?;
+            Ok(())
+        }
+        AtlasBenchmarkCommands::ServingPlan { experiment, out } => {
+            let experiment = crate::atlas_agent_eval::load_serving_experiment(&experiment)?;
+            let plan = crate::atlas_agent_eval::compile_serving_plan(&experiment)?;
+            emit(&plan, out.as_deref(), stdout)
+        }
+        AtlasBenchmarkCommands::ServingGate {
+            plan,
+            receipts,
+            out,
+        } => {
+            let plan = crate::atlas_agent_eval::load_serving_plan(&plan)?;
+            let receipts = crate::atlas_agent_eval::load_serving_receipts(&receipts)?;
+            let gate = crate::atlas_agent_eval::gate_serving_receipts(&plan, &receipts)?;
+            emit(&gate, out.as_deref(), stdout)?;
+            crate::atlas_agent_eval::enforce_serving_gate(&gate)?;
             Ok(())
         }
         AtlasBenchmarkCommands::Summarize { receipts, out } => {
@@ -12883,6 +12916,154 @@ Scenario: pass
                 .values()
                 .any(|comparison| comparison.state == crate::atlas_agent_eval::GateState::Blocked)
         );
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn test_atlas_benchmark_serving_cli() {
+        let dir = make_temp_dir("atlas-serving-gate-cli");
+        let experiment_path = dir.join("experiment.json");
+        let plan_path = dir.join("plan.json");
+        let receipts_path = dir.join("receipts.json");
+        let gate_path = dir.join("gate.json");
+        let experiment = crate::atlas_agent_eval::ServingExperiment {
+            schema: crate::atlas_agent_eval::SERVING_EXPERIMENT_SCHEMA.to_string(),
+            version: "serving-cli-v1".to_string(),
+            execution_ready: true,
+            repository: "repos/pinned-project".to_string(),
+            revision: "0123456789abcdef0123456789abcdef01234567".to_string(),
+            trials_per_arm: 3,
+            burst_width: 8,
+            heartbeat_budget_ms: 100,
+            query_set_fingerprint:
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+            service_config_fingerprint:
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
+            session_store: "artifacts/atlas-serving-ab".to_string(),
+        };
+        fs::write(
+            &experiment_path,
+            serde_json::to_vec_pretty(&experiment).unwrap(),
+        )
+        .unwrap();
+
+        let parsed = super::Cli::try_parse_from([
+            "agent-spec",
+            "atlas",
+            "benchmark",
+            "serving-plan",
+            "--experiment",
+            experiment_path.to_str().unwrap(),
+            "--out",
+            plan_path.to_str().unwrap(),
+        ])
+        .unwrap();
+        let super::Commands::Atlas {
+            action:
+                super::AtlasCommands::Benchmark {
+                    action: super::AtlasBenchmarkCommands::ServingPlan { .. },
+                },
+        } = parsed.command
+        else {
+            panic!("expected serving-plan action");
+        };
+        let mut stdout = Vec::new();
+        run_atlas_benchmark_cli(
+            &[
+                "agent-spec",
+                "atlas",
+                "benchmark",
+                "serving-plan",
+                "--experiment",
+                experiment_path.to_str().unwrap(),
+                "--out",
+                plan_path.to_str().unwrap(),
+            ],
+            &mut stdout,
+        )
+        .unwrap();
+        assert!(stdout.is_empty());
+        let plan: crate::atlas_agent_eval::ServingRunPlan =
+            serde_json::from_slice(&fs::read(&plan_path).unwrap()).unwrap();
+        assert_eq!(plan.runs.len(), 24);
+
+        let runs = plan
+            .runs
+            .iter()
+            .map(|run| crate::atlas_agent_eval::ServingRunReceipt {
+                run_id: run.run_id.clone(),
+                outcome: crate::atlas_agent_eval::AgentRunOutcome::Completed,
+                logical_queries: run.burst_width,
+                correct_results: run.burst_width,
+                stale_as_fresh: false,
+                queue_timeouts: 0,
+                snapshot_count: 1,
+                generation: "g-cli".to_string(),
+                graph_fingerprint:
+                    "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".to_string(),
+                semantic_digest: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+                    .to_string(),
+                raw_session: crate::atlas_agent_eval::EvidenceArtifact {
+                    path: format!("{}/{}.json", run.session_store, run.run_id),
+                    hash: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+                        .to_string(),
+                },
+                measurements: crate::atlas_agent_eval::ServingMeasurements {
+                    batch_duration_ms: if run.arm == crate::atlas_agent_eval::ServingArm::Direct {
+                        100
+                    } else {
+                        60
+                    },
+                    p95_latency_ms: if run.arm == crate::atlas_agent_eval::ServingArm::Direct {
+                        30
+                    } else {
+                        25
+                    },
+                    heartbeat_max_ms: if run.arm == crate::atlas_agent_eval::ServingArm::Direct {
+                        0
+                    } else {
+                        10
+                    },
+                    queue_wait_p95_ms: 0,
+                    response_bytes: 4000,
+                    cpu_ms: 50,
+                    rss_bytes: 20_000_000,
+                },
+                diagnostic: None,
+            })
+            .collect();
+        let bundle = crate::atlas_agent_eval::ServingReceiptBundle {
+            schema: crate::atlas_agent_eval::SERVING_RECEIPTS_SCHEMA.to_string(),
+            experiment_version: plan.experiment_version.clone(),
+            plan_fingerprint: blake3::hash(&serde_json::to_vec(&plan).unwrap())
+                .to_hex()
+                .to_string(),
+            runs,
+        };
+        fs::write(&receipts_path, serde_json::to_vec_pretty(&bundle).unwrap()).unwrap();
+
+        let mut gate_stdout = Vec::new();
+        run_atlas_benchmark_cli(
+            &[
+                "agent-spec",
+                "atlas",
+                "benchmark",
+                "serving-gate",
+                "--plan",
+                plan_path.to_str().unwrap(),
+                "--receipts",
+                receipts_path.to_str().unwrap(),
+                "--out",
+                gate_path.to_str().unwrap(),
+            ],
+            &mut gate_stdout,
+        )
+        .unwrap();
+        assert!(gate_stdout.is_empty());
+        let gate: crate::atlas_agent_eval::ServingGateReceipt =
+            serde_json::from_slice(&fs::read(&gate_path).unwrap()).unwrap();
+        assert_eq!(gate.state, crate::atlas_agent_eval::GateState::Passed);
 
         fs::remove_dir_all(dir).unwrap();
     }

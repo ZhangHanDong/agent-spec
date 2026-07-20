@@ -7,6 +7,10 @@ pub const AGENT_EXPERIMENT_SCHEMA: &str = "agent-spec/atlas-eval/agent-experimen
 pub const AGENT_PLAN_SCHEMA: &str = "agent-spec/atlas-eval/agent-plan-v1";
 pub const AGENT_RECEIPTS_SCHEMA: &str = "agent-spec/atlas-eval/agent-receipts-v1";
 pub const AGENT_GATE_SCHEMA: &str = "agent-spec/atlas-eval/agent-gate-v1";
+pub const SERVING_EXPERIMENT_SCHEMA: &str = "agent-spec/atlas-eval/serving-experiment-v1";
+pub const SERVING_PLAN_SCHEMA: &str = "agent-spec/atlas-eval/serving-plan-v1";
+pub const SERVING_RECEIPTS_SCHEMA: &str = "agent-spec/atlas-eval/serving-receipts-v1";
+pub const SERVING_GATE_SCHEMA: &str = "agent-spec/atlas-eval/serving-gate-v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -281,6 +285,131 @@ pub struct FailedAgentRun {
     pub diagnostic: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ServingExperiment {
+    pub schema: String,
+    pub version: String,
+    pub execution_ready: bool,
+    pub repository: String,
+    pub revision: String,
+    pub trials_per_arm: u32,
+    pub burst_width: u32,
+    pub heartbeat_budget_ms: u64,
+    pub query_set_fingerprint: String,
+    pub service_config_fingerprint: String,
+    pub session_store: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ServingArm {
+    Direct,
+    Worker,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ServingRunPlan {
+    pub schema: String,
+    pub experiment_version: String,
+    pub experiment_fingerprint: String,
+    pub runs: Vec<ServingPlannedRun>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ServingPlannedRun {
+    pub run_id: String,
+    pub profile: rust_atlas::QueryLoadProfile,
+    pub arm: ServingArm,
+    pub trial: u32,
+    pub repository: String,
+    pub revision: String,
+    pub burst_width: u32,
+    pub heartbeat_budget_ms: u64,
+    pub query_set_fingerprint: String,
+    pub service_config_fingerprint: String,
+    pub environment_fingerprint: String,
+    pub session_store: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ServingReceiptBundle {
+    pub schema: String,
+    pub experiment_version: String,
+    pub plan_fingerprint: String,
+    pub runs: Vec<ServingRunReceipt>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ServingRunReceipt {
+    pub run_id: String,
+    pub outcome: AgentRunOutcome,
+    pub logical_queries: u32,
+    pub correct_results: u32,
+    pub stale_as_fresh: bool,
+    pub queue_timeouts: u32,
+    pub snapshot_count: u32,
+    pub generation: String,
+    pub graph_fingerprint: String,
+    pub semantic_digest: String,
+    pub raw_session: EvidenceArtifact,
+    pub measurements: ServingMeasurements,
+    pub diagnostic: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ServingMeasurements {
+    pub batch_duration_ms: u64,
+    pub p95_latency_ms: u64,
+    pub heartbeat_max_ms: u64,
+    pub queue_wait_p95_ms: u64,
+    pub response_bytes: u64,
+    pub cpu_ms: u64,
+    pub rss_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ServingGateReceipt {
+    pub schema: String,
+    pub experiment_version: String,
+    pub plan_fingerprint: String,
+    pub receipts: usize,
+    pub state: GateState,
+    pub profiles: Vec<ServingProfileComparison>,
+    pub failed_runs: Vec<FailedAgentRun>,
+    pub diagnostics: Vec<GateDiagnostic>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ServingProfileComparison {
+    pub profile: rust_atlas::QueryLoadProfile,
+    pub state: GateState,
+    pub batch_duration: MetricComparison,
+    pub p95_latency: MetricComparison,
+    pub direct_metrics: ServingMetricAggregate,
+    pub worker_metrics: ServingMetricAggregate,
+    pub diagnostics: Vec<GateDiagnostic>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ServingMetricAggregate {
+    pub batch_duration_ms: MetricBand,
+    pub p95_latency_ms: MetricBand,
+    pub heartbeat_max_ms: MetricBand,
+    pub queue_wait_p95_ms: MetricBand,
+    pub response_bytes: MetricBand,
+    pub cpu_ms: MetricBand,
+    pub rss_bytes: MetricBand,
+}
+
 #[derive(Debug, thiserror::Error)]
 #[error("{code}: {message}")]
 pub struct AgentEvalError {
@@ -383,6 +512,261 @@ pub fn compile_agent_plan(
         corpus_fingerprint,
         experiment_fingerprint,
         runs,
+    })
+}
+
+pub fn compile_serving_plan(
+    experiment: &ServingExperiment,
+) -> Result<ServingRunPlan, AgentEvalError> {
+    validate_serving_experiment(experiment)?;
+    let experiment_fingerprint = fingerprint(experiment)?;
+    let environment_fingerprint = fingerprint(&(
+        &experiment.repository,
+        &experiment.revision,
+        experiment.burst_width,
+        experiment.heartbeat_budget_ms,
+        &experiment.query_set_fingerprint,
+        &experiment.service_config_fingerprint,
+        &experiment.session_store,
+    ))?;
+    let mut runs = Vec::new();
+    for profile in [
+        rust_atlas::QueryLoadProfile::Light,
+        rust_atlas::QueryLoadProfile::Traversal,
+        rust_atlas::QueryLoadProfile::SourceHeavy,
+        rust_atlas::QueryLoadProfile::Mixed,
+    ] {
+        for trial in 1..=experiment.trials_per_arm {
+            for arm in [ServingArm::Direct, ServingArm::Worker] {
+                let run_id = fingerprint(&(
+                    experiment.version.as_str(),
+                    profile,
+                    arm,
+                    trial,
+                    environment_fingerprint.as_str(),
+                ))?;
+                runs.push(ServingPlannedRun {
+                    run_id,
+                    profile,
+                    arm,
+                    trial,
+                    repository: experiment.repository.clone(),
+                    revision: experiment.revision.clone(),
+                    burst_width: experiment.burst_width,
+                    heartbeat_budget_ms: experiment.heartbeat_budget_ms,
+                    query_set_fingerprint: experiment.query_set_fingerprint.clone(),
+                    service_config_fingerprint: experiment.service_config_fingerprint.clone(),
+                    environment_fingerprint: environment_fingerprint.clone(),
+                    session_store: experiment.session_store.clone(),
+                });
+            }
+        }
+    }
+    Ok(ServingRunPlan {
+        schema: SERVING_PLAN_SCHEMA.to_string(),
+        experiment_version: experiment.version.clone(),
+        experiment_fingerprint,
+        runs,
+    })
+}
+
+pub fn validate_serving_experiment(experiment: &ServingExperiment) -> Result<(), AgentEvalError> {
+    if experiment.schema != SERVING_EXPERIMENT_SCHEMA || experiment.version.trim().is_empty() {
+        return Err(AgentEvalError::new(
+            "atlas-agent-ab-schema",
+            format!("expected non-empty {SERVING_EXPERIMENT_SCHEMA} experiment"),
+        ));
+    }
+    if !experiment.execution_ready
+        || experiment.repository.trim().is_empty()
+        || experiment.repository.contains("REPLACE")
+        || has_fixture_component(&experiment.repository)
+        || !is_git_revision(&experiment.revision)
+    {
+        return Err(AgentEvalError::new(
+            "atlas-agent-ab-real-repository",
+            "serving experiment requires an enabled non-fixture repository and full pinned revision",
+        ));
+    }
+    if experiment.trials_per_arm < 3 {
+        return Err(AgentEvalError::new(
+            "atlas-agent-ab-trials",
+            "serving experiment requires at least three trials per arm",
+        ));
+    }
+    if !(2..=256).contains(&experiment.burst_width)
+        || !(1..=60_000).contains(&experiment.heartbeat_budget_ms)
+        || !is_lower_hex(&experiment.query_set_fingerprint)
+        || !is_lower_hex(&experiment.service_config_fingerprint)
+        || experiment.session_store.trim().is_empty()
+        || is_temporary_path(&experiment.session_store)
+    {
+        return Err(AgentEvalError::new(
+            "atlas-serving-ab-config",
+            "serving burst, heartbeat, fingerprints, or session store are invalid",
+        ));
+    }
+    Ok(())
+}
+
+fn has_fixture_component(value: &str) -> bool {
+    Path::new(value)
+        .components()
+        .any(|component| component.as_os_str() == "fixtures")
+}
+
+fn is_git_revision(value: &str) -> bool {
+    value.len() == 40
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        && value.bytes().any(|byte| byte != b'0')
+}
+
+fn query_profile_name(profile: rust_atlas::QueryLoadProfile) -> &'static str {
+    match profile {
+        rust_atlas::QueryLoadProfile::Light => "light",
+        rust_atlas::QueryLoadProfile::Traversal => "traversal",
+        rust_atlas::QueryLoadProfile::SourceHeavy => "source-heavy",
+        rust_atlas::QueryLoadProfile::Mixed => "mixed",
+    }
+}
+
+pub fn load_serving_experiment(path: &Path) -> Result<ServingExperiment, AgentEvalError> {
+    let bytes = std::fs::read(path).map_err(|error| {
+        AgentEvalError::new(
+            "atlas-agent-ab-load",
+            format!("failed to read {}: {error}", path.display()),
+        )
+    })?;
+    serde_json::from_slice(&bytes).map_err(|error| {
+        AgentEvalError::new(
+            "atlas-serving-ab-experiment",
+            format!("failed to parse {}: {error}", path.display()),
+        )
+    })
+}
+
+pub fn load_serving_plan(path: &Path) -> Result<ServingRunPlan, AgentEvalError> {
+    let bytes = std::fs::read(path).map_err(|error| {
+        AgentEvalError::new(
+            "atlas-agent-ab-load",
+            format!("failed to read {}: {error}", path.display()),
+        )
+    })?;
+    let plan = serde_json::from_slice(&bytes).map_err(|error| {
+        AgentEvalError::new(
+            "atlas-serving-ab-plan",
+            format!("failed to parse {}: {error}", path.display()),
+        )
+    })?;
+    validate_serving_plan(&plan)?;
+    Ok(plan)
+}
+
+pub fn validate_serving_plan(plan: &ServingRunPlan) -> Result<(), AgentEvalError> {
+    if plan.schema != SERVING_PLAN_SCHEMA
+        || plan.experiment_version.trim().is_empty()
+        || !is_lower_hex(&plan.experiment_fingerprint)
+        || plan.runs.is_empty()
+    {
+        return Err(AgentEvalError::new(
+            "atlas-serving-ab-plan",
+            "serving plan has an invalid schema, version, fingerprint, or empty run set",
+        ));
+    }
+    let mut ids = BTreeSet::new();
+    let mut groups = std::collections::BTreeMap::<(&str, u32), Vec<&ServingPlannedRun>>::new();
+    let mut trials = std::collections::BTreeMap::<&str, BTreeSet<u32>>::new();
+    for run in &plan.runs {
+        let profile = query_profile_name(run.profile);
+        let environment_fingerprint = fingerprint(&(
+            &run.repository,
+            &run.revision,
+            run.burst_width,
+            run.heartbeat_budget_ms,
+            &run.query_set_fingerprint,
+            &run.service_config_fingerprint,
+            &run.session_store,
+        ))?;
+        let run_id = fingerprint(&(
+            plan.experiment_version.as_str(),
+            run.profile,
+            run.arm,
+            run.trial,
+            environment_fingerprint.as_str(),
+        ))?;
+        if !ids.insert(run.run_id.as_str())
+            || run.run_id != run_id
+            || run.environment_fingerprint != environment_fingerprint
+            || run.trial == 0
+            || run.repository.trim().is_empty()
+            || has_fixture_component(&run.repository)
+            || !is_git_revision(&run.revision)
+            || !(2..=256).contains(&run.burst_width)
+            || !(1..=60_000).contains(&run.heartbeat_budget_ms)
+            || !is_lower_hex(&run.query_set_fingerprint)
+            || !is_lower_hex(&run.service_config_fingerprint)
+            || run.session_store.trim().is_empty()
+            || is_temporary_path(&run.session_store)
+        {
+            return Err(AgentEvalError::new(
+                "atlas-serving-ab-plan",
+                format!("serving run {} failed self-validation", run.run_id),
+            ));
+        }
+        groups.entry((profile, run.trial)).or_default().push(run);
+        trials.entry(profile).or_default().insert(run.trial);
+    }
+    let profiles = trials.keys().copied().collect::<BTreeSet<_>>();
+    if profiles != BTreeSet::from(["light", "mixed", "source-heavy", "traversal"]) {
+        return Err(AgentEvalError::new(
+            "atlas-serving-ab-plan",
+            "serving plan must cover all four B5 load profiles",
+        ));
+    }
+    for ((profile, trial), runs) in groups {
+        let arms = runs.iter().map(|run| run.arm).collect::<BTreeSet<_>>();
+        if runs.len() != 2 || arms != BTreeSet::from([ServingArm::Direct, ServingArm::Worker]) {
+            return Err(AgentEvalError::new(
+                "atlas-serving-ab-plan",
+                format!("profile {profile} trial {trial} must match direct and worker"),
+            ));
+        }
+        if runs
+            .iter()
+            .any(|run| run.environment_fingerprint != runs[0].environment_fingerprint)
+        {
+            return Err(AgentEvalError::new(
+                "atlas-serving-ab-plan",
+                format!("profile {profile} trial {trial} is asymmetric"),
+            ));
+        }
+    }
+    for (profile, values) in trials {
+        let expected = (1..=values.len() as u32).collect::<BTreeSet<_>>();
+        if values.len() < 3 || values != expected {
+            return Err(AgentEvalError::new(
+                "atlas-agent-ab-trials",
+                format!("profile {profile} must have at least three contiguous trials"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub fn load_serving_receipts(path: &Path) -> Result<ServingReceiptBundle, AgentEvalError> {
+    let bytes = std::fs::read(path).map_err(|error| {
+        AgentEvalError::new(
+            "atlas-agent-ab-load",
+            format!("failed to read {}: {error}", path.display()),
+        )
+    })?;
+    serde_json::from_slice(&bytes).map_err(|error| {
+        AgentEvalError::new(
+            "atlas-serving-ab-receipt",
+            format!("failed to parse {}: {error}", path.display()),
+        )
     })
 }
 
@@ -683,6 +1067,325 @@ pub fn enforce_agent_gate(gate: &AgentGateReceipt) -> Result<(), AgentEvalError>
         ));
     }
     Ok(())
+}
+
+pub fn validate_serving_receipts(
+    plan: &ServingRunPlan,
+    bundle: &ServingReceiptBundle,
+) -> Result<(), AgentEvalError> {
+    if plan.schema != SERVING_PLAN_SCHEMA
+        || bundle.schema != SERVING_RECEIPTS_SCHEMA
+        || bundle.experiment_version != plan.experiment_version
+        || bundle.plan_fingerprint != fingerprint(plan)?
+    {
+        return Err(AgentEvalError::new(
+            "atlas-serving-ab-receipt",
+            "serving receipt bundle does not match the versioned plan",
+        ));
+    }
+    let planned = plan
+        .runs
+        .iter()
+        .map(|run| (run.run_id.as_str(), run))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut seen = BTreeSet::new();
+    for receipt in &bundle.runs {
+        if !seen.insert(receipt.run_id.as_str()) || !planned.contains_key(receipt.run_id.as_str()) {
+            return Err(AgentEvalError::new(
+                "atlas-serving-ab-completeness",
+                format!("duplicate or unknown serving run {}", receipt.run_id),
+            ));
+        }
+        let run = planned[receipt.run_id.as_str()];
+        let session_path = Path::new(&receipt.raw_session.path);
+        if receipt.generation.trim().is_empty()
+            || !is_lower_hex(&receipt.graph_fingerprint)
+            || !is_lower_hex(&receipt.semantic_digest)
+            || !session_path.starts_with(Path::new(&run.session_store))
+            || is_temporary_path(&receipt.raw_session.path)
+            || !is_lower_hex(&receipt.raw_session.hash)
+        {
+            return Err(AgentEvalError::new(
+                "atlas-serving-ab-evidence",
+                format!(
+                    "serving run {} has invalid snapshot or session evidence",
+                    run.run_id
+                ),
+            ));
+        }
+        let completed = receipt.outcome == AgentRunOutcome::Completed;
+        if completed && receipt.diagnostic.is_some()
+            || !completed && receipt.diagnostic.as_deref().is_none_or(str::is_empty)
+        {
+            return Err(AgentEvalError::new(
+                "atlas-serving-ab-receipt",
+                format!("serving run {} has inconsistent outcome fields", run.run_id),
+            ));
+        }
+    }
+    if seen.len() != planned.len() {
+        return Err(AgentEvalError::new(
+            "atlas-serving-ab-completeness",
+            "serving receipt bundle is missing planned runs",
+        ));
+    }
+    Ok(())
+}
+
+pub fn gate_serving_receipts(
+    plan: &ServingRunPlan,
+    bundle: &ServingReceiptBundle,
+) -> Result<ServingGateReceipt, AgentEvalError> {
+    validate_serving_receipts(plan, bundle)?;
+    let receipt_map = bundle
+        .runs
+        .iter()
+        .map(|receipt| (receipt.run_id.as_str(), receipt))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut profiles = Vec::new();
+    let mut diagnostics = Vec::new();
+    for profile in [
+        rust_atlas::QueryLoadProfile::Light,
+        rust_atlas::QueryLoadProfile::Traversal,
+        rust_atlas::QueryLoadProfile::SourceHeavy,
+        rust_atlas::QueryLoadProfile::Mixed,
+    ] {
+        let direct = serving_runs_for_profile(plan, &receipt_map, profile, ServingArm::Direct);
+        let worker = serving_runs_for_profile(plan, &receipt_map, profile, ServingArm::Worker);
+        let profile_diagnostics = serving_profile_diagnostics(plan, profile, &direct, &worker);
+        diagnostics.extend(profile_diagnostics.iter().cloned());
+        let batch_duration = serving_benefit_comparison(
+            metric_band(direct.iter().map(|run| run.measurements.batch_duration_ms)),
+            metric_band(worker.iter().map(|run| run.measurements.batch_duration_ms)),
+        );
+        let p95_latency = serving_tie_comparison(
+            metric_band(direct.iter().map(|run| run.measurements.p95_latency_ms)),
+            metric_band(worker.iter().map(|run| run.measurements.p95_latency_ms)),
+        );
+        let state = if !profile_diagnostics.is_empty()
+            || batch_duration.decision == MetricDecision::Blocked
+            || p95_latency.decision == MetricDecision::Blocked
+        {
+            GateState::Blocked
+        } else {
+            GateState::Passed
+        };
+        profiles.push(ServingProfileComparison {
+            profile,
+            state,
+            batch_duration,
+            p95_latency,
+            direct_metrics: aggregate_serving_metrics(&direct),
+            worker_metrics: aggregate_serving_metrics(&worker),
+            diagnostics: profile_diagnostics,
+        });
+    }
+    let state = if profiles
+        .iter()
+        .any(|profile| profile.state == GateState::Blocked)
+    {
+        GateState::Blocked
+    } else {
+        GateState::Passed
+    };
+    let failed_runs = bundle
+        .runs
+        .iter()
+        .filter(|run| run.outcome != AgentRunOutcome::Completed)
+        .map(|run| FailedAgentRun {
+            run_id: run.run_id.clone(),
+            outcome: run.outcome,
+            diagnostic: run.diagnostic.clone().unwrap_or_default(),
+        })
+        .collect();
+    Ok(ServingGateReceipt {
+        schema: SERVING_GATE_SCHEMA.to_string(),
+        experiment_version: plan.experiment_version.clone(),
+        plan_fingerprint: fingerprint(plan)?,
+        receipts: bundle.runs.len(),
+        state,
+        profiles,
+        failed_runs,
+        diagnostics,
+    })
+}
+
+pub fn enforce_serving_gate(gate: &ServingGateReceipt) -> Result<(), AgentEvalError> {
+    if gate.state == GateState::Blocked {
+        return Err(AgentEvalError::new(
+            "atlas-serving-ab-blocked",
+            "the direct-versus-worker promotion candidate is blocked",
+        ));
+    }
+    Ok(())
+}
+
+fn serving_runs_for_profile<'a>(
+    plan: &'a ServingRunPlan,
+    receipts: &std::collections::BTreeMap<&str, &'a ServingRunReceipt>,
+    profile: rust_atlas::QueryLoadProfile,
+    arm: ServingArm,
+) -> Vec<&'a ServingRunReceipt> {
+    plan.runs
+        .iter()
+        .filter(|run| run.profile == profile && run.arm == arm)
+        .map(|run| receipts[run.run_id.as_str()])
+        .collect()
+}
+
+fn serving_profile_diagnostics(
+    plan: &ServingRunPlan,
+    profile: rust_atlas::QueryLoadProfile,
+    direct: &[&ServingRunReceipt],
+    worker: &[&ServingRunReceipt],
+) -> Vec<GateDiagnostic> {
+    let mut diagnostics = Vec::new();
+    let planned = plan
+        .runs
+        .iter()
+        .filter(|run| run.profile == profile)
+        .map(|run| (run.run_id.as_str(), run))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let all = direct
+        .iter()
+        .chain(worker.iter())
+        .copied()
+        .collect::<Vec<_>>();
+    push_serving_diagnostic(
+        &mut diagnostics,
+        "atlas-serving-ab-run-failure",
+        "direct or worker burst did not complete",
+        all.iter()
+            .filter(|run| run.outcome != AgentRunOutcome::Completed)
+            .map(|run| run.run_id.clone())
+            .collect(),
+    );
+    push_serving_diagnostic(
+        &mut diagnostics,
+        "atlas-serving-ab-logical-results",
+        "a burst lost or returned an incorrect logical query",
+        all.iter()
+            .filter(|run| {
+                let expected = planned[run.run_id.as_str()].burst_width;
+                run.logical_queries != expected || run.correct_results != expected
+            })
+            .map(|run| run.run_id.clone())
+            .collect(),
+    );
+    push_serving_diagnostic(
+        &mut diagnostics,
+        "atlas-serving-ab-stale-as-fresh",
+        "a burst presented stale evidence as fresh",
+        all.iter()
+            .filter(|run| run.stale_as_fresh)
+            .map(|run| run.run_id.clone())
+            .collect(),
+    );
+    push_serving_diagnostic(
+        &mut diagnostics,
+        "atlas-serving-ab-queue-timeout",
+        "worker burst reported queue timeout",
+        worker
+            .iter()
+            .filter(|run| run.queue_timeouts != 0)
+            .map(|run| run.run_id.clone())
+            .collect(),
+    );
+    push_serving_diagnostic(
+        &mut diagnostics,
+        "atlas-serving-ab-snapshot",
+        "a burst observed more or fewer than one immutable snapshot",
+        all.iter()
+            .filter(|run| run.snapshot_count != 1)
+            .map(|run| run.run_id.clone())
+            .collect(),
+    );
+    push_serving_diagnostic(
+        &mut diagnostics,
+        "atlas-serving-ab-heartbeat",
+        "worker heartbeat was absent or exceeded the experiment budget",
+        worker
+            .iter()
+            .filter(|run| {
+                let budget = planned[run.run_id.as_str()].heartbeat_budget_ms;
+                run.measurements.heartbeat_max_ms == 0 || run.measurements.heartbeat_max_ms > budget
+            })
+            .map(|run| run.run_id.clone())
+            .collect(),
+    );
+    let mut parity_failures = Vec::new();
+    for (direct_run, worker_run) in direct.iter().zip(worker.iter()) {
+        if direct_run.semantic_digest != worker_run.semantic_digest
+            || direct_run.graph_fingerprint != worker_run.graph_fingerprint
+            || direct_run.generation != worker_run.generation
+        {
+            parity_failures.push(worker_run.run_id.clone());
+        }
+    }
+    push_serving_diagnostic(
+        &mut diagnostics,
+        "atlas-serving-ab-semantic-parity",
+        "direct and worker bursts differ in semantic or snapshot identity",
+        parity_failures,
+    );
+    diagnostics
+}
+
+fn push_serving_diagnostic(
+    diagnostics: &mut Vec<GateDiagnostic>,
+    code: &str,
+    message: &str,
+    run_ids: Vec<String>,
+) {
+    if !run_ids.is_empty() {
+        diagnostics.push(GateDiagnostic {
+            code: code.to_string(),
+            message: message.to_string(),
+            run_ids,
+        });
+    }
+}
+
+fn serving_benefit_comparison(reference: MetricBand, candidate: MetricBand) -> MetricComparison {
+    let decision = if candidate.median + reference.mad < reference.median {
+        MetricDecision::Improved
+    } else {
+        MetricDecision::Blocked
+    };
+    MetricComparison {
+        reference,
+        candidate,
+        decision,
+    }
+}
+
+fn serving_tie_comparison(reference: MetricBand, candidate: MetricBand) -> MetricComparison {
+    let lower = (reference.median - reference.mad).max(0.0);
+    let upper = reference.median + reference.mad;
+    let decision = if candidate.median < lower {
+        MetricDecision::Improved
+    } else if candidate.median <= upper {
+        MetricDecision::Tie
+    } else {
+        MetricDecision::Blocked
+    };
+    MetricComparison {
+        reference,
+        candidate,
+        decision,
+    }
+}
+
+fn aggregate_serving_metrics(runs: &[&ServingRunReceipt]) -> ServingMetricAggregate {
+    ServingMetricAggregate {
+        batch_duration_ms: metric_band(runs.iter().map(|run| run.measurements.batch_duration_ms)),
+        p95_latency_ms: metric_band(runs.iter().map(|run| run.measurements.p95_latency_ms)),
+        heartbeat_max_ms: metric_band(runs.iter().map(|run| run.measurements.heartbeat_max_ms)),
+        queue_wait_p95_ms: metric_band(runs.iter().map(|run| run.measurements.queue_wait_p95_ms)),
+        response_bytes: metric_band(runs.iter().map(|run| run.measurements.response_bytes)),
+        cpu_ms: metric_band(runs.iter().map(|run| run.measurements.cpu_ms)),
+        rss_bytes: metric_band(runs.iter().map(|run| run.measurements.rss_bytes)),
+    }
 }
 
 fn compare_agent_arms(
@@ -1248,6 +1951,73 @@ mod tests {
         bundle
     }
 
+    fn serving_experiment() -> ServingExperiment {
+        ServingExperiment {
+            schema: SERVING_EXPERIMENT_SCHEMA.to_string(),
+            version: "serving-fixture-v1".to_string(),
+            execution_ready: true,
+            repository: "repos/real-rust-project".to_string(),
+            revision: "0123456789abcdef0123456789abcdef01234567".to_string(),
+            trials_per_arm: 3,
+            burst_width: 8,
+            heartbeat_budget_ms: 100,
+            query_set_fingerprint:
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+            service_config_fingerprint:
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
+            session_store: "artifacts/atlas-serving-ab".to_string(),
+        }
+    }
+
+    fn serving_receipt_for(run: &ServingPlannedRun) -> ServingRunReceipt {
+        ServingRunReceipt {
+            run_id: run.run_id.clone(),
+            outcome: AgentRunOutcome::Completed,
+            logical_queries: run.burst_width,
+            correct_results: run.burst_width,
+            stale_as_fresh: false,
+            queue_timeouts: 0,
+            snapshot_count: 1,
+            generation: "g-fixture".to_string(),
+            graph_fingerprint: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                .to_string(),
+            semantic_digest: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+                .to_string(),
+            raw_session: EvidenceArtifact {
+                path: format!("{}/{}.json", run.session_store, run.run_id),
+                hash: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+                    .to_string(),
+            },
+            measurements: ServingMeasurements {
+                batch_duration_ms: if run.arm == ServingArm::Direct {
+                    100
+                } else {
+                    60
+                },
+                p95_latency_ms: if run.arm == ServingArm::Direct {
+                    30
+                } else {
+                    25
+                },
+                heartbeat_max_ms: if run.arm == ServingArm::Direct { 0 } else { 10 },
+                queue_wait_p95_ms: if run.arm == ServingArm::Direct { 0 } else { 4 },
+                response_bytes: 4000,
+                cpu_ms: 50,
+                rss_bytes: 20_000_000,
+            },
+            diagnostic: None,
+        }
+    }
+
+    fn serving_receipts(plan: &ServingRunPlan) -> ServingReceiptBundle {
+        ServingReceiptBundle {
+            schema: SERVING_RECEIPTS_SCHEMA.to_string(),
+            experiment_version: plan.experiment_version.clone(),
+            plan_fingerprint: fingerprint(plan).unwrap(),
+            runs: plan.runs.iter().map(serving_receipt_for).collect(),
+        }
+    }
+
     #[test]
     fn test_agent_ab_plan_builds_three_symmetric_arms() {
         let plan = compile_agent_plan(&corpus(3), &experiment()).unwrap();
@@ -1513,5 +2283,92 @@ mod tests {
             gate.comparisons[&PromotionCandidate::AtlasContext].state,
             GateState::Blocked
         );
+    }
+
+    #[test]
+    fn test_agent_ab_serving_plan_builds_matched_profiles() {
+        let plan = compile_serving_plan(&serving_experiment()).unwrap();
+
+        assert_eq!(plan.schema, SERVING_PLAN_SCHEMA);
+        assert_eq!(plan.runs.len(), 24);
+        for pair in plan.runs.chunks_exact(2) {
+            assert_eq!(pair[0].arm, ServingArm::Direct);
+            assert_eq!(pair[1].arm, ServingArm::Worker);
+            assert_eq!(pair[0].profile, pair[1].profile);
+            assert_eq!(pair[0].trial, pair[1].trial);
+            assert_eq!(
+                pair[0].environment_fingerprint,
+                pair[1].environment_fingerprint
+            );
+        }
+        assert_eq!(
+            plan.runs
+                .iter()
+                .map(|run| format!("{:?}", run.profile))
+                .collect::<BTreeSet<_>>()
+                .len(),
+            4
+        );
+    }
+
+    #[test]
+    fn test_agent_ab_serving_gate_blocks_correctness_snapshot_and_timeout_regression() {
+        let plan = compile_serving_plan(&serving_experiment()).unwrap();
+        let mut receipts = serving_receipts(&plan);
+        assert_eq!(
+            gate_serving_receipts(&plan, &receipts).unwrap().state,
+            GateState::Passed
+        );
+        let worker = plan
+            .runs
+            .iter()
+            .find(|run| run.arm == ServingArm::Worker)
+            .unwrap();
+        let receipt = receipts
+            .runs
+            .iter_mut()
+            .find(|receipt| receipt.run_id == worker.run_id)
+            .unwrap();
+        receipt.correct_results -= 1;
+        receipt.stale_as_fresh = true;
+        receipt.queue_timeouts = 1;
+        receipt.snapshot_count = 2;
+        receipt.graph_fingerprint =
+            "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff".to_string();
+
+        let gate = gate_serving_receipts(&plan, &receipts).unwrap();
+        assert_eq!(gate.state, GateState::Blocked);
+        for code in [
+            "atlas-serving-ab-logical-results",
+            "atlas-serving-ab-stale-as-fresh",
+            "atlas-serving-ab-queue-timeout",
+            "atlas-serving-ab-snapshot",
+            "atlas-serving-ab-semantic-parity",
+        ] {
+            assert!(
+                gate.diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.code == code),
+                "missing diagnostic {code}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_agent_ab_serving_plan_rejects_fixture_repository() {
+        let mut fixture = serving_experiment();
+        fixture.repository = "fixtures/atlas/concurrent-query".to_string();
+        let error = compile_serving_plan(&fixture).unwrap_err();
+        assert_eq!(error.code(), "atlas-agent-ab-real-repository");
+
+        let mut short_revision = serving_experiment();
+        short_revision.revision = "abc123".to_string();
+        let error = compile_serving_plan(&short_revision).unwrap_err();
+        assert_eq!(error.code(), "atlas-agent-ab-real-repository");
+
+        let mut disabled = serving_experiment();
+        disabled.execution_ready = false;
+        let error = compile_serving_plan(&disabled).unwrap_err();
+        assert_eq!(error.code(), "atlas-agent-ab-real-repository");
     }
 }

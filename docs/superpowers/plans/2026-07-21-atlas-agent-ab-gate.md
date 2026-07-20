@@ -248,7 +248,7 @@ git commit -m "feat(atlas): gate agent surface promotion evidence"
 **Interfaces:**
 - Produces: serving plan/receipt/gate types and `serving-plan`, `serving-gate` CLI actions.
 
-- [ ] **Step 1: Write RED serving tests**
+- [x] **Step 1: Write RED serving tests**
 
 Add `test_agent_ab_serving_plan_builds_matched_profiles`,
 `test_agent_ab_serving_gate_blocks_correctness_snapshot_and_timeout_regression`, and
@@ -256,7 +256,7 @@ Add `test_agent_ab_serving_plan_builds_matched_profiles`,
 40-hex revision; negative cases mutate lost-query counts, stale flags, semantic/snapshot digests,
 queue timeouts, and repository identity.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```bash
 cargo test test_agent_ab_serving_plan_builds_matched_profiles -- --nocapture
@@ -266,14 +266,14 @@ cargo test test_agent_ab_serving_plan_rejects_fixture_repository -- --nocapture
 
 Expected: compile failure for missing serving APIs.
 
-- [ ] **Step 3: Implement serving schemas and gate**
+- [x] **Step 3: Implement serving schemas and gate**
 
 Compile four profiles times two modes times at least three trials. Validate exact run coverage,
 session evidence, all logical results, zero stale and queue timeout, matched semantic and snapshot
 digests, and worker heartbeat budget. Require worker batch median plus direct MAD below direct median;
 reject p95 regression beyond direct MAD. Preserve CPU/RSS as observations.
 
-- [ ] **Step 4: Add serving CLI actions and checked-in manifest**
+- [x] **Step 4: Add serving CLI actions and checked-in manifest**
 
 Add:
 
@@ -286,7 +286,7 @@ The checked-in manifest intentionally uses a descriptive external repository/rev
 validated only when the user replaces it with a real pinned target; do not check in a passing plan
 or receipt that claims a run occurred.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 ```bash
 cargo test agent_ab_serving -- --nocapture
