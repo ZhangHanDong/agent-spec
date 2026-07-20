@@ -34,6 +34,7 @@ pub mod scope;
 mod status;
 pub mod sync;
 mod traversal;
+pub mod watch;
 
 pub use affected::{
     AffectedDiagnostic, AffectedOptions, AffectedResult, AffectedSeed, affected_paths,
@@ -128,6 +129,8 @@ pub enum AtlasError {
     LiveState { detail: String },
     #[error("atlas-writer-busy: graph writer is already active for {graph_root}")]
     WriterBusy { graph_root: String },
+    #[error("atlas-watcher: {detail}")]
+    Watcher { detail: String },
     #[error("atlas-affected-path: `{path}`: {detail}")]
     AffectedPath { path: String, detail: String },
     #[error(
