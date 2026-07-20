@@ -18,10 +18,10 @@ harness, CLI surface, and documented provider-author contract without implementi
 
 ## Task 2: Create The Standalone SDK
 
-- [ ] Write RED tests for manifest role/capability/schema/limit validation and opt-in registration.
-- [ ] Add `crates/code-graph-provider` to the workspace with strict serde wire types.
-- [ ] Implement stable diagnostic codes and manifest/registration validation.
-- [ ] Run focused tests and commit.
+- [x] Write RED tests for manifest role/capability/schema/limit validation and opt-in registration.
+- [x] Add `crates/code-graph-provider` to the workspace with strict serde wire types.
+- [x] Implement stable diagnostic codes and manifest/registration validation.
+- [x] Run focused tests and commit.
 
 ## Task 3: Project Extraction And Enrichment
 
