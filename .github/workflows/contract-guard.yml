@@ -152,7 +152,8 @@ jobs:
           "
           done
 
-          # Write the full summary to a file for later steps
+          # Keep the PR comment bounded; the full per-contract report belongs in
+          # the Actions step summary, which is not subject to the comment limit.
           {
             echo "## 📋 Contract Guard Report"
             echo ""
@@ -168,6 +169,11 @@ jobs:
             echo "| --- | --- | --- |"
             echo "| ${SPEC_COUNT} | ${PASS_COUNT} | ${FAIL_COUNT} |"
             echo ""
+            echo "Full per-contract details are available in the workflow run summary."
+          } > /tmp/contract-comment.md
+
+          {
+            cat /tmp/contract-comment.md
             echo "$SUMMARY"
           } > /tmp/contract-summary.md
 
@@ -181,7 +187,7 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const summary = fs.readFileSync('/tmp/contract-summary.md', 'utf8');
+            const summary = fs.readFileSync('/tmp/contract-comment.md', 'utf8');
 
             // Find existing agent-spec comment to update (avoid duplicates)
             const { data: comments } = await github.rest.issues.listComments({
