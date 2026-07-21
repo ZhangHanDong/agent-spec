@@ -232,7 +232,7 @@ estimate: 5d
 
 场景: D2 docs 与 wiki 保留 authority 边界
   测试:
-    过滤: test_atlas_incremental_docs_describe_generation_and_d3_boundary
+    过滤: test_atlas_incremental_docs_describe_generation_and_live_runtime_boundary
     层级: integration
   假设 reader docs、roadmap、skill 与 tracked wiki
   当 文档契约测试读取其 generation、frontier、orphan 与 zero-change terms

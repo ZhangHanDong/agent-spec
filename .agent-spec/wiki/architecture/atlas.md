@@ -100,6 +100,8 @@ watcher and local daemon over the same `AtlasScope`. A persisted pending
 watermark survives failed sync; separate retry budgets expose `degraded`
 instead of retrying forever. Query results scope pending paths to represented
 files while global status retains the complete journal.
+Documentation coverage for this handoff is mechanically bound to the current
+live-runtime boundary test; selector drift is a blocking `skip`.
 Post-commit acknowledgement failure remains a maintenance warning and falls
 back to the pre-build snapshot rather than converting the committed build into
 failure.

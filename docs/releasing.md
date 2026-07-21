@@ -26,6 +26,8 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo package -p agent-spec-code-graph-provider --allow-dirty
 cargo package -p rust-atlas --allow-dirty
 bash scripts/docs-lint.sh
+cargo run -q -- atlas build --code . --graph .agent-spec/graph
+cargo run -q -- atlas check --code . --graph .agent-spec/graph
 cargo run -q -- lint-knowledge --knowledge knowledge --gate
 cargo run -q -- requirements graph --knowledge knowledge --format json --gate
 cargo run -q -- wiki check --code . --wiki .agent-spec/wiki

@@ -36,11 +36,16 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/agent-spec
-          key: agent-spec-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          key: agent-spec-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'src/**/*.rs', 'crates/**/Cargo.toml', 'crates/**/*.rs') }}
 
       - name: Install agent-spec
         run: |
-          command -v agent-spec || cargo install --path . --bin agent-spec
+          command -v agent-spec || cargo install --locked --path . --bin agent-spec
+
+      - name: Build Atlas graph
+        run: |
+          agent-spec atlas build --code . --graph .agent-spec/graph
+          agent-spec atlas check --code . --graph .agent-spec/graph
 
       - name: Contract Guard
         run: agent-spec guard --spec-dir specs --code . --change-scope worktree
