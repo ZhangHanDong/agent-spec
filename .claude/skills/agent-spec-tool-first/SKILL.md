@@ -14,7 +14,7 @@ description: |
 
 # Agent Spec Tool-First Workflow
 
-> **Version:** 3.6.0 | **Last Updated:** 2026-07-19 | **Tracks agent-spec:** 1.1.0 (stability promise)
+> **Version:** 3.7.0 | **Last Updated:** 2026-07-22 | **Tracks agent-spec:** 1.2.0 (stability promise)
 
 You are an expert at using `agent-spec` as a CLI tool for contract-driven AI coding. Help users by:
 - **Planning**: Render task contracts with `contract`, generate plan context with `plan`
@@ -63,7 +63,11 @@ Humans define "what is correct" (Contract). Machines verify "is the code correct
 | `agent-spec wiki status` | Check stale code live wiki articles | Session start / before broad source reading |
 | `agent-spec wiki query <text>` | Search tracked live wiki articles | Before opening many source files |
 | `agent-spec wiki check` | Live wiki lint + worktree status gate | Pre-commit / CI for tracked wiki |
-| `agent-spec atlas build/tree/query/refs/impls/check/scip-gen` | Rust project graph (symbols, impls, refs) with hash staleness; `scip-gen` invokes rust-analyzer to produce `index.scip` for the optional SCIP semantic overlay (`Calls`/`UsesType` edges, additive over the syn baseline) | Query structure instead of grepping; `--frozen` for read-only |
+| `agent-spec atlas build/tree/query/search/explore/context/flow/impact/affected/refs/impls/status/check/scip-gen` | Rust graph with scored retrieval, bounded context projection, explainable paths, reverse impact, identity, and independent syn/SCIP/MIR freshness; `scip-gen` invokes rust-analyzer for the optional SCIP overlay | Build before querying; use `--frozen` for review, and never infer tests from affected filenames |
+| `agent-spec atlas benchmark validate/plan/summarize/score` | Validate offline evaluation inputs and gate query-quality observations | Evaluate correctness before performance; default tests do not invoke a model or network |
+| `agent-spec atlas benchmark agent-plan/agent-gate` | Compile and gate matched Read/Grep, Atlas primitive, and context arms | Real execution is opt-in; a checked-in plan is not adoption evidence |
+| `agent-spec atlas benchmark serving-plan/serving-gate` | Compile and gate direct/worker burst trials | Keep worker serving opt-in until real evidence is accepted |
+| `agent-spec atlas provider validate/conformance` | Validate external Code Graph providers and run the F1 conformance matrix | Conformance proves adapter behavior, not language quality |
 | `agent-spec verify <spec> --code .` | Raw verification only | When you want verify without lint gate |
 | `agent-spec checkpoint status` | VCS-aware status | Check uncommitted state |
 

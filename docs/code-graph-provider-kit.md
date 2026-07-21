@@ -17,6 +17,17 @@ The reusable package is `agent-spec-code-graph-provider` in
 `crates/code-graph-provider`. It has no dependency on `rust-atlas` or the
 agent-spec binary.
 
+The first published SDK version is `0.1.0`:
+
+```toml
+[dependencies]
+agent-spec-code-graph-provider = "0.1.0"
+```
+
+Provider protocol compatibility is governed by the manifest IR range and wire
+schema ids. A Cargo version match does not allow a provider to bypass those
+runtime gates.
+
 ## Artifact Contracts
 
 | Artifact | Schema id | Owner |

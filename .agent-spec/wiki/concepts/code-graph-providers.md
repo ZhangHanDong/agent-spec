@@ -4,6 +4,7 @@ type: concept
 source_files:
   - crates/code-graph-provider/src/lib.rs
   - crates/code-graph-provider/Cargo.toml
+  - crates/code-graph-provider/README.md
   - src/main.rs
   - fixtures/code-graph-provider/basic/manifest.json
   - fixtures/code-graph-provider/basic/conformance.json
@@ -42,3 +43,7 @@ The checked-in local fixture covers stable ids, deterministic repeat, partial
 parse, stale/worktree behavior, unknown schema, bounded output, cancellation,
 and atomic publish. This receipt proves the F1 transport and validation contract,
 not production language support. Concrete non-Rust providers remain F2.
+
+The 1.2 workspace release publishes this SDK independently as
+`agent-spec-code-graph-provider` 0.1.0. Cargo resolution does not replace the
+manifest IR-range and strict wire-schema gates.

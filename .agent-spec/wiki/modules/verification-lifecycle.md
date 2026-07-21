@@ -116,3 +116,7 @@ not lifecycle verdict semantics or evidence provenance.
 Atlas E1's own Contract lifecycle verifies the harness selectors. Real Agent
 and serving gate receipts remain separate adoption evidence and cannot replace
 scenario test evidence.
+
+Reviewed for the 1.2 release: release metadata does not weaken any Atlas
+selector. Provider, Agent A/B, and concurrent-serving contracts must still pass
+against a fresh worktree-bound graph before publication.

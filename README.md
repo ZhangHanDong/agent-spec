@@ -93,10 +93,11 @@ contracts. Every gate in between (`lint-knowledge`, `graph`, `plan`, `lifecycle`
 `trace`) is deterministic and model-free, and human acceptance sits at both ends:
 requirement review on the way in, Contract Acceptance on the way out.
 
-The nodes marked `planned` keep two different facts separate:
-Requirement IR records what the system must do; Code Graph IR records what the
-current program is. A provider-neutral Intent-Code Linker grounds accepted work
-units in code without turning derived code facts into KLL truth. Quality Planning
+The two IR tracks keep different facts separate: Requirement IR records what
+the system must do; Code Graph IR records what the current program is. The code
+graph is derived and rebuildable, while accepted KLL requirements remain the
+governed source of truth. A provider-neutral Intent-Code Linker grounds
+accepted work units in code without turning derived code facts into KLL truth. Quality Planning
 then resolves deterministic tools and required agent skills into an Execution
 Bundle. Skills guide generation; tool results provide acceptance evidence.
 See [Intent Compiler Architecture](docs/intent-compiler/architecture.md) for the
@@ -518,6 +519,7 @@ For consistency, `verify` and `lifecycle` use the same precedence when `--change
 | `init --workspace` | Scaffold the canonical `knowledge/` tree for KLL artifacts |
 | `requirements` | Import PRD/issue requirement blocks, validate a requirement graph, generate work units, and draft specs |
 | `wiki` | Generate, check, and export a local-first source trace wiki from code, KLL artifacts, specs, traces, and docs |
+| `atlas` | Build and query a freshness-gated Rust code graph, analyze flow/impact, run live serving, and validate external providers |
 | `trace` | Trace a decision/requirement id to satisfying specs and report derived liveness |
 | `lint-knowledge` | Lint the knowledge corpus and gate malformed or inconsistent artifacts |
 | `mcp` | Serve specs, knowledge, guidance, context, and live liveness over read-only MCP |
@@ -535,7 +537,8 @@ For consistency, `verify` and `lifecycle` use the same precedence when `--change
 
 ## Rust Atlas
 
-Atlas builds a derived Rust code graph. Build it before querying, then use
+The independently versioned `rust-atlas` crate builds a derived Rust code graph.
+Build it before querying, then use
 `status` to inspect graph identity and independent syn, SCIP, and MIR
 freshness. The graph, query index, and code bindings are rebuildable working
 data; `knowledge/` remains the KLL source of truth.
@@ -955,6 +958,9 @@ If you use Claude Code, Codex, Cursor, or another AI coding agent, install the s
 The `agent-spec-tool-first` skill tells the agent to read the Contract first, implement within its Boundaries, run `lifecycle` to verify, and retry on failure without modifying the spec. The `agent-spec-authoring` skill helps the agent draft or revise Task Contracts in the DSL. The `agent-spec-estimate` skill maps Contract elements to round-based effort estimates for sprint planning.
 
 For agents without skill support, the project includes `AGENTS.md` (Codex), `.cursorrules` (Cursor), and `.aider.conf.yml` (Aider) with the essential command reference.
+
+Release maintainers should follow the multi-crate order and package gates in
+[Release Process](docs/releasing.md).
 
 ### What we review
 

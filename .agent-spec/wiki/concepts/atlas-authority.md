@@ -82,9 +82,10 @@ evidence, or deterministic affected paths. Rust namespace filtering and
 inherent-method resolution improve candidate precision without promoting a
 hint to a graph fact. Affected maps changes to code evidence only;
 test obligations remain owned by the intent compiler and Task Contracts.
-Connecting affected code paths to requirements, scenarios, and quality gates is
-the next intent-aware consumer step; code impact alone does not establish that
-trace.
+The delivered intent-aware affected and execution-bundle consumers connect code
+paths to explicit requirements, scenarios, selectors, quality gates, worktrees,
+and VCS evidence. The join remains derived evidence: code impact alone still
+does not establish requirement satisfaction.
 
 F1 external provider artifacts enter this boundary only after strict role,
 worktree, freshness, path, evidence, and conformance validation. A protocol
@@ -115,3 +116,7 @@ authority boundaries.
 Atlas E1 receipts evaluate adoption but do not create code-graph facts,
 freshness, KLL state, or scenario verdicts. Machine pass remains subject to
 human acceptance before any default changes.
+
+Reviewed for the 1.2 release: schema v6 graphs from `rust-atlas` 0.3.0 require a
+rebuild from 0.2, and this explicit invalidation preserves the same fail-closed
+authority boundary.

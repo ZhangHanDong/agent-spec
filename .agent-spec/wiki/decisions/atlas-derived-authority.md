@@ -55,8 +55,9 @@ expands inherent associated paths through indexed type declarations, but this
 extra precision does not increase authority. The hints do not gain edge provenance or enter impact,
 binding, lifecycle, trace, or archive authority without a later mechanism-
 specific promotion gate.
-The delivered impact graph therefore remains derived input until a later
-intent-aware consumer joins it to explicit bindings and Contract selectors.
+The delivered intent-aware affected consumer joins impact to explicit bindings,
+Contract selectors, requirements, worktrees, and quality policy. Both the
+impact graph and the joined projection remain rebuildable derived evidence.
 
 B5 context evidence and receipts are also derived. Stable evidence ids pin
 continuation to one graph fingerprint, while retrieval/projection counts expose
@@ -94,3 +95,7 @@ that authority or promoting worker defaults before E1.
 Atlas E1 adds adoption evidence without promoting it to graph authority. A
 passing gate is a human-review candidate, not an automatic MCP, B5, or worker
 configuration change.
+
+The 1.2 release advances `rust-atlas` to schema v6 and requires old derived
+graphs to rebuild. Fail-closed invalidation is the compatibility mechanism; no
+old shard is partially interpreted as current evidence.

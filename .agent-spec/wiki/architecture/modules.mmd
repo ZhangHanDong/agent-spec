@@ -1,5 +1,8 @@
 graph TD
+  atlas_agent_eval["atlas_agent_eval"]
+  atlas_daemon["atlas_daemon"]
   atlas_eval["atlas_eval"]
+  atlas_query_service["atlas_query_service"]
   main["main"]
   spec_archive["spec_archive"]
   spec_core["spec_core"]
@@ -77,7 +80,11 @@ graph TD
   spec_wiki__project_map["spec_wiki::project_map"]
   spec_wiki__sources["spec_wiki::sources"]
   vcs["vcs"]
+  atlas_agent_eval --> atlas_eval
+  main --> atlas_agent_eval
+  main --> atlas_daemon
   main --> atlas_eval
+  main --> atlas_query_service
   main --> spec_archive
   main --> spec_core
   main --> spec_core

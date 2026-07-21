@@ -26,6 +26,8 @@ source_files:
   - src/atlas_eval.rs
   - src/atlas_agent_eval.rs
   - crates/code-graph-provider/src/lib.rs
+  - crates/code-graph-provider/Cargo.toml
+  - crates/code-graph-provider/README.md
   - src/spec_mcp/mod.rs
   - src/spec_mcp/tools.rs
   - docs/atlas-live-runtime.md
@@ -158,6 +160,10 @@ module inside Rust Atlas. External extractors and semantic enrichers project to
 strict, separate payloads and pass a bounded process/conformance gate before
 their artifacts can be published. The fixture proves protocol behavior only;
 Rust Atlas remains the only production language provider in this repository.
+
+The 1.2 workspace release publishes `rust-atlas` 0.3.0 with schema v6 and the
+provider SDK 0.1.0. Existing 0.2 graphs are derived artifacts and require a full
+rebuild; the version change does not promote graph data to KLL authority.
 
 ## Maintenance
 

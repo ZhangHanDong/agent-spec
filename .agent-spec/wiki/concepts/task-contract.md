@@ -61,3 +61,7 @@ has run or that a default has been accepted.
 Atlas F1 is dogfooded by `task-code-graph-provider-kit.spec.md`. Its selectors
 prove the adapter SDK and fixture conformance contract, not a production F2
 language provider.
+
+Reviewed for the 1.2 release: active Atlas contracts remain the acceptance
+authority for versioned crate and documentation updates; a version bump does
+not substitute for lifecycle evidence.

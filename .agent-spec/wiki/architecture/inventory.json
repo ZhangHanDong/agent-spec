@@ -3,17 +3,25 @@
   "root": ".",
   "packages": [
     {
-      "id": "path+.#1.1.0",
+      "id": "path+.#1.2.0",
       "name": "agent-spec",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "path": ".",
       "language": "rust",
       "kind": "workspace-member"
     },
     {
-      "id": "path+crates/rust-atlas#0.2.0",
+      "id": "path+crates/code-graph-provider#0.1.0",
+      "name": "agent-spec-code-graph-provider",
+      "version": "0.1.0",
+      "path": "crates/code-graph-provider",
+      "language": "rust",
+      "kind": "workspace-member"
+    },
+    {
+      "id": "path+crates/rust-atlas#0.3.0",
       "name": "rust-atlas",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "path": "crates/rust-atlas",
       "language": "rust",
       "kind": "workspace-member"
@@ -33,6 +41,12 @@
       "src_path": "build.rs"
     },
     {
+      "package": "agent-spec-code-graph-provider",
+      "name": "agent_spec_code_graph_provider",
+      "kind": "lib",
+      "src_path": "crates/code-graph-provider/src/lib.rs"
+    },
+    {
       "package": "rust-atlas",
       "name": "rust_atlas",
       "kind": "lib",
@@ -42,6 +56,12 @@
   "dependencies": [
     {
       "from": "agent-spec",
+      "to": "agent-spec-code-graph-provider",
+      "kind": "local",
+      "source": "cargo-metadata"
+    },
+    {
+      "from": "agent-spec",
       "to": "blake3",
       "kind": "external",
       "source": "cargo-metadata"
@@ -49,6 +69,12 @@
     {
       "from": "agent-spec",
       "to": "clap",
+      "kind": "external",
+      "source": "cargo-metadata"
+    },
+    {
+      "from": "agent-spec",
+      "to": "getrandom",
       "kind": "external",
       "source": "cargo-metadata"
     },
@@ -83,6 +109,30 @@
       "source": "cargo-metadata"
     },
     {
+      "from": "agent-spec-code-graph-provider",
+      "to": "blake3",
+      "kind": "external",
+      "source": "cargo-metadata"
+    },
+    {
+      "from": "agent-spec-code-graph-provider",
+      "to": "serde",
+      "kind": "external",
+      "source": "cargo-metadata"
+    },
+    {
+      "from": "agent-spec-code-graph-provider",
+      "to": "serde_json",
+      "kind": "external",
+      "source": "cargo-metadata"
+    },
+    {
+      "from": "agent-spec-code-graph-provider",
+      "to": "thiserror",
+      "kind": "external",
+      "source": "cargo-metadata"
+    },
+    {
       "from": "rust-atlas",
       "to": "blake3",
       "kind": "external",
@@ -90,7 +140,25 @@
     },
     {
       "from": "rust-atlas",
+      "to": "fs2",
+      "kind": "external",
+      "source": "cargo-metadata"
+    },
+    {
+      "from": "rust-atlas",
+      "to": "getrandom",
+      "kind": "external",
+      "source": "cargo-metadata"
+    },
+    {
+      "from": "rust-atlas",
       "to": "ignore",
+      "kind": "external",
+      "source": "cargo-metadata"
+    },
+    {
+      "from": "rust-atlas",
+      "to": "notify",
       "kind": "external",
       "source": "cargo-metadata"
     },
@@ -145,8 +213,23 @@
   ],
   "modules": [
     {
+      "name": "atlas_agent_eval",
+      "path": "src/atlas_agent_eval.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "atlas_daemon",
+      "path": "src/atlas_daemon.rs",
+      "kind": "rust-module"
+    },
+    {
       "name": "atlas_eval",
       "path": "src/atlas_eval.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "atlas_query_service",
+      "path": "src/atlas_query_service.rs",
       "kind": "rust-module"
     },
     {
@@ -537,8 +620,32 @@
   ],
   "module_edges": [
     {
+      "from": "atlas_agent_eval",
+      "to": "atlas_eval",
+      "kind": "uses",
+      "source": "src/atlas_agent_eval.rs"
+    },
+    {
+      "from": "main",
+      "to": "atlas_agent_eval",
+      "kind": "declares",
+      "source": "src/main.rs"
+    },
+    {
+      "from": "main",
+      "to": "atlas_daemon",
+      "kind": "declares",
+      "source": "src/main.rs"
+    },
+    {
       "from": "main",
       "to": "atlas_eval",
+      "kind": "declares",
+      "source": "src/main.rs"
+    },
+    {
+      "from": "main",
+      "to": "atlas_query_service",
       "kind": "declares",
       "source": "src/main.rs"
     },
@@ -1450,6 +1557,11 @@
       "kind": "custom-build"
     },
     {
+      "name": "agent_spec_code_graph_provider",
+      "path": "crates/code-graph-provider/src/lib.rs",
+      "kind": "lib"
+    },
+    {
       "name": "rust_atlas",
       "path": "crates/rust-atlas/src/lib.rs",
       "kind": "lib"
@@ -1464,6 +1576,8 @@
     "Cargo.lock",
     "Cargo.toml",
     "build.rs",
+    "crates/code-graph-provider/Cargo.toml",
+    "crates/code-graph-provider/src/lib.rs",
     "crates/rust-atlas/Cargo.toml",
     "crates/rust-atlas/src/lib.rs",
     "src/main.rs"

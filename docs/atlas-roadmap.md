@@ -1,7 +1,7 @@
 # Rust Atlas Roadmap：从可信 Rust 图到意图感知的代码智能
 
-> 当前正典 roadmap，修订于 2026-07-21。状态基线：`agent-spec` 1.1.0、
-> `rust-atlas` 0.2.0、Atlas 查询基线 `44e2f71`。Wave 1 的 E0、A2/B1、D1，Wave 2 的
+> 当前正典 roadmap，修订于 2026-07-22。状态基线：`agent-spec` 1.2.0、
+> `rust-atlas` 0.3.0、Atlas 查询基线 `44e2f71`。Wave 1 的 E0、A2/B1、D1，Wave 2 的
 > B2/B3/B4、A3、A4 trait v1、A4.1、D2、D3、E3，以及 Track C 的 C1/C2/C3 已交付；后续
 > track 的实现状态仍以本文件各条目为准。
 >

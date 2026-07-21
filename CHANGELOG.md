@@ -6,6 +6,16 @@ All notable changes to `agent-spec` are documented here. Format follows
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-07-22
+
+The **evidence-aware Atlas** release: Rust Atlas grows from a symbol graph into
+an incrementally published, freshness-gated code evidence service, and
+agent-spec connects affected code back to requirements, scenarios, tests,
+quality policy, worktrees, and replayable failure evidence. External Code Graph
+providers now have a standalone adapter SDK and conformance gate. Advanced MCP
+and concurrent serving surfaces remain opt-in until real Agent A/B evidence is
+accepted.
+
 ### Added
 
 - Atlas F1 external Code Graph provider kit: a standalone Rust SDK defines
@@ -117,6 +127,18 @@ All notable changes to `agent-spec` are documented here. Format follows
   The harness records evaluation inputs and results but does not claim an
   executed real-model benchmark or an Atlas performance improvement. See
   `docs/atlas-evaluation.md`.
+
+### Changed
+
+- `agent-spec` is now **1.2.0** and depends on `rust-atlas` **0.3.0**. Atlas
+  graph storage advances from schema v4 to schema v6 to retain edge evidence,
+  graph identity, committed generations, and query-index integrity. Existing
+  `.agent-spec/graph` directories are rebuildable derived data: run
+  `agent-spec atlas build --full` after upgrading rather than migrating shards.
+- The provider-neutral SDK is published for the first time as
+  `agent-spec-code-graph-provider` **0.1.0**. Publish it before `agent-spec` so
+  the root crate's registry dependency is resolvable; `rust-atlas` remains an
+  independent package and is published before the root crate as well.
 
 ## [1.1.0] - 2026-07-19
 
@@ -359,7 +381,6 @@ specs and tests that still guard them.
   draft Task Contracts with `satisfies: [REQ-*]`.
 - SARIF output for knowledge lint findings.
 
-
 ### Deprecated
 
 - `brief` (legacy alias of `contract`) — removal planned for 1.0.
@@ -469,5 +490,11 @@ See git history. 0.2.x established the core contract pipeline: `parse`, `lint`,
 `verify`, `lifecycle`, `guard`, `explain`, `stamp`, `contract`, `plan`, `graph`,
 the four verifier layers, run logging, and VCS-aware checkpoints.
 
+[Unreleased]: https://github.com/ZhangHanDong/agent-spec/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/ZhangHanDong/agent-spec/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/ZhangHanDong/agent-spec/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/ZhangHanDong/agent-spec/compare/v0.6.0...v1.0.0
+[0.6.0]: https://github.com/ZhangHanDong/agent-spec/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/ZhangHanDong/agent-spec/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/ZhangHanDong/agent-spec/releases/tag/v0.4.0
 [0.3.0]: https://github.com/ZhangHanDong/agent-spec/releases/tag/v0.3.0

@@ -5,9 +5,12 @@ source_files:
   - Cargo.lock
   - Cargo.toml
   - build.rs
+  - crates/code-graph-provider/Cargo.toml
+  - crates/code-graph-provider/src/lib.rs
   - crates/rust-atlas/Cargo.toml
   - crates/rust-atlas/src/context.rs
   - crates/rust-atlas/src/lib.rs
+  - src/atlas_agent_eval.rs
   - src/main.rs
 ---
 # Architecture
@@ -18,10 +21,10 @@ source_files:
 - Project map data: [architecture/project-map.json](architecture/project-map.json)
 - Project map diagram: [architecture/project-map.mmd](architecture/project-map.mmd)
 - Provider: `rust-cargo`
-- Packages: 2
-- Dependencies: 17
-- Modules: 78
-- Module edges: 151
+- Packages: 3
+- Dependencies: 26
+- Modules: 81
+- Module edges: 155
 
 Reviewed for Atlas D2: committed generations change graph publication, not the
 workspace package or dependency topology summarized above.
@@ -35,3 +38,7 @@ and CLI surface. It adds no workspace package, transport, or default MCP tool.
 Reviewed for Atlas E1: `src/atlas_agent_eval.rs` is an additive binary-local
 evaluation module. It adds no provider/runtime dependency and changes no
 default query or MCP topology.
+
+Reviewed for Atlas F1 and the 1.2 release: the workspace now has three packages.
+The provider SDK is independently publishable and the root binary depends on
+it; `rust-atlas` remains independent from both the binary and provider SDK.
