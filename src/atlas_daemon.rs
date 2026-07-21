@@ -617,6 +617,26 @@ pub(crate) fn serve(
     )
 }
 
+#[cfg(test)]
+pub(crate) fn serve_test_instance(
+    code: &Path,
+    graph: &Path,
+    query_config: crate::atlas_query_service::QueryServiceConfig,
+    ready: Sender<DaemonIdentity>,
+) -> Result<(), DaemonError> {
+    serve_with_options(
+        code,
+        graph,
+        ServeOptions {
+            auto_sync: false,
+            watch: false,
+            poll_interval: Duration::from_millis(5),
+            query_config,
+        },
+        Some(ready),
+    )
+}
+
 fn serve_with_options(
     code: &Path,
     graph: &Path,

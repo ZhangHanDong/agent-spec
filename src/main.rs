@@ -14016,20 +14016,14 @@ Scenario: pass
         let config = crate::atlas_query_service::QueryServiceConfig::worker_profile();
         let server_code = code.clone();
         let server_graph = graph.clone();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
         let server = std::thread::spawn(move || {
-            crate::atlas_daemon::serve(&server_code, &server_graph, config).unwrap();
+            crate::atlas_daemon::serve_test_instance(&server_code, &server_graph, config, ready_tx)
+                .unwrap();
         });
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while !(crate::atlas_daemon::service_status(&code, &graph).is_ok()
-            && crate::atlas_daemon::daemon_status(&code, &graph)
-                .is_ok_and(|status| status.state == rust_atlas::live::LiveRuntimeState::Healthy))
-        {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "worker daemon did not become ready"
-            );
-            std::thread::yield_now();
-        }
+        ready_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("worker daemon did not become ready");
         let service_status = crate::atlas_daemon::service_status(&code, &graph).unwrap();
         assert!(config.matches_status(&service_status));
         let mismatch = crate::atlas_daemon::start(

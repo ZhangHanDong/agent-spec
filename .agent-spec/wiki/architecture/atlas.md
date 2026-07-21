@@ -120,6 +120,10 @@ remains the default; worker and fallback modes are explicit. The hidden MCP
 `atlas_context` route uses a fixed client lane and one stdout writer so ping and
 discovery remain responsive during slow context work.
 
+Direct/worker parity tests wait on the daemon's explicit ready notification and
+disable watcher and auto-sync work. This isolates query-service readiness from
+platform-specific watcher health without changing production serve options.
+
 ## Boundaries
 
 The graph and index are derived working data, not KLL truth. MCP Atlas reads
