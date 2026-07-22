@@ -30,13 +30,16 @@ Use this skill when a user wants to move from raw PRD/issue prose to governed KL
 6. Run `agent-spec requirements plan --knowledge knowledge --specs specs --format json --gate`.
 7. Run `agent-spec requirements test-obligations --knowledge knowledge --specs specs --format json --out .agent-spec/test_obligations.json`.
 8. Run `agent-spec requirements worktrees --knowledge knowledge --specs specs --base main --path-prefix ../agent-spec-worktrees --out .agent-spec/worktrees.json`.
-9. When debugging, run `agent-spec requirements replay REQ-*`, `requirements explain-failure REQ-*`, or `requirements trace-graph REQ-*`; replay returns all scenarios from the latest run, assigns all scenarios to a sole satisfied requirement, and uses KLL scenario names to disambiguate multi-requirement specs.
-10. Run `agent-spec requirements questions --knowledge knowledge --specs specs --format json`.
-11. Use the Reverse Interview Loop below to ask only the emitted blocking questions, grouped by requirement id.
-12. Use Answer Integration below to write accepted answers back into KLL requirements as requirement clauses, scenarios, source trace entries, or resolved open questions.
-13. Generate task specs with `satisfies: [REQ-*]`.
-14. Run `agent-spec lifecycle`, `agent-spec guard`, and `agent-spec trace`.
-15. For agent-spec itself, confirm dogfood evidence with `requirements replay`, `requirements explain-failure`, and `requirements trace-graph` for the repository requirement id.
+9. After code grounding or a change, run `agent-spec requirements affected` and save the provider-neutral intent-impact report.
+10. Run `agent-spec requirements affected-bundle` to apply the risk A/B/C evidence policy and select executable provider configs, justified checks, explicit tests, gates, guidance, and skill receipts; generated selector slugs remain non-authoritative candidates.
+11. After lifecycle and quality execution, run `agent-spec requirements affected-record` with the same stable `run_id` to store the report, optional bundle, and normalized outcomes in trace ledger v2.
+12. When debugging, run `agent-spec requirements replay REQ-*`, `requirements explain-failure REQ-*`, or `requirements trace-graph REQ-*`; all three read stored lifecycle and affected evidence only and never rerun providers, tools, skills, or models.
+13. Run `agent-spec requirements questions --knowledge knowledge --specs specs --format json`.
+14. Use the Reverse Interview Loop below to ask only the emitted blocking questions, grouped by requirement id.
+15. Use Answer Integration below to write accepted answers back into KLL requirements as requirement clauses, scenarios, source trace entries, or resolved open questions.
+16. Generate task specs with `satisfies: [REQ-*]`.
+17. Run `agent-spec lifecycle`, `agent-spec guard`, and `agent-spec trace`.
+18. For agent-spec itself, confirm dogfood evidence with `requirements replay`, `requirements explain-failure`, and `requirements trace-graph` for the repository requirement id.
 
 The skill text must preserve these exact terms for documentation tests: QA class, state-machine, reverse interview, active specs, dogfood.
 

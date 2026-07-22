@@ -3,10 +3,26 @@
   "root": ".",
   "packages": [
     {
-      "id": "path+.#0.4.0",
+      "id": "path+.#1.2.0",
       "name": "agent-spec",
-      "version": "0.4.0",
+      "version": "1.2.0",
       "path": ".",
+      "language": "rust",
+      "kind": "workspace-member"
+    },
+    {
+      "id": "path+crates/code-graph-provider#0.1.0",
+      "name": "agent-spec-code-graph-provider",
+      "version": "0.1.0",
+      "path": "crates/code-graph-provider",
+      "language": "rust",
+      "kind": "workspace-member"
+    },
+    {
+      "id": "path+crates/rust-atlas#0.3.0",
+      "name": "rust-atlas",
+      "version": "0.3.0",
+      "path": "crates/rust-atlas",
       "language": "rust",
       "kind": "workspace-member"
     }
@@ -17,13 +33,55 @@
       "name": "agent-spec",
       "kind": "bin",
       "src_path": "src/main.rs"
+    },
+    {
+      "package": "agent-spec",
+      "name": "build-script-build",
+      "kind": "custom-build",
+      "src_path": "build.rs"
+    },
+    {
+      "package": "agent-spec-code-graph-provider",
+      "name": "agent_spec_code_graph_provider",
+      "kind": "lib",
+      "src_path": "crates/code-graph-provider/src/lib.rs"
+    },
+    {
+      "package": "rust-atlas",
+      "name": "rust_atlas",
+      "kind": "lib",
+      "src_path": "crates/rust-atlas/src/lib.rs"
     }
   ],
   "dependencies": [
     {
       "from": "agent-spec",
+      "to": "agent-spec-code-graph-provider",
+      "kind": "local",
+      "source": "cargo-metadata"
+    },
+    {
+      "from": "agent-spec",
+      "to": "blake3",
+      "kind": "external",
+      "source": "cargo-metadata"
+    },
+    {
+      "from": "agent-spec",
       "to": "clap",
       "kind": "external",
+      "source": "cargo-metadata"
+    },
+    {
+      "from": "agent-spec",
+      "to": "getrandom",
+      "kind": "external",
+      "source": "cargo-metadata"
+    },
+    {
+      "from": "agent-spec",
+      "to": "rust-atlas",
+      "kind": "local",
       "source": "cargo-metadata"
     },
     {
@@ -49,9 +107,131 @@
       "to": "tokio",
       "kind": "external",
       "source": "cargo-metadata"
+    },
+    {
+      "from": "agent-spec-code-graph-provider",
+      "to": "blake3",
+      "kind": "external",
+      "source": "cargo-metadata"
+    },
+    {
+      "from": "agent-spec-code-graph-provider",
+      "to": "serde",
+      "kind": "external",
+      "source": "cargo-metadata"
+    },
+    {
+      "from": "agent-spec-code-graph-provider",
+      "to": "serde_json",
+      "kind": "external",
+      "source": "cargo-metadata"
+    },
+    {
+      "from": "agent-spec-code-graph-provider",
+      "to": "thiserror",
+      "kind": "external",
+      "source": "cargo-metadata"
+    },
+    {
+      "from": "rust-atlas",
+      "to": "blake3",
+      "kind": "external",
+      "source": "cargo-metadata"
+    },
+    {
+      "from": "rust-atlas",
+      "to": "fs2",
+      "kind": "external",
+      "source": "cargo-metadata"
+    },
+    {
+      "from": "rust-atlas",
+      "to": "getrandom",
+      "kind": "external",
+      "source": "cargo-metadata"
+    },
+    {
+      "from": "rust-atlas",
+      "to": "ignore",
+      "kind": "external",
+      "source": "cargo-metadata"
+    },
+    {
+      "from": "rust-atlas",
+      "to": "notify",
+      "kind": "external",
+      "source": "cargo-metadata"
+    },
+    {
+      "from": "rust-atlas",
+      "to": "proc-macro2",
+      "kind": "external",
+      "source": "cargo-metadata"
+    },
+    {
+      "from": "rust-atlas",
+      "to": "protobuf",
+      "kind": "external",
+      "source": "cargo-metadata"
+    },
+    {
+      "from": "rust-atlas",
+      "to": "quote",
+      "kind": "external",
+      "source": "cargo-metadata"
+    },
+    {
+      "from": "rust-atlas",
+      "to": "scip",
+      "kind": "external",
+      "source": "cargo-metadata"
+    },
+    {
+      "from": "rust-atlas",
+      "to": "serde",
+      "kind": "external",
+      "source": "cargo-metadata"
+    },
+    {
+      "from": "rust-atlas",
+      "to": "serde_json",
+      "kind": "external",
+      "source": "cargo-metadata"
+    },
+    {
+      "from": "rust-atlas",
+      "to": "syn",
+      "kind": "external",
+      "source": "cargo-metadata"
+    },
+    {
+      "from": "rust-atlas",
+      "to": "thiserror",
+      "kind": "external",
+      "source": "cargo-metadata"
     }
   ],
   "modules": [
+    {
+      "name": "atlas_agent_eval",
+      "path": "src/atlas_agent_eval.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "atlas_daemon",
+      "path": "src/atlas_daemon.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "atlas_eval",
+      "path": "src/atlas_eval.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "atlas_query_service",
+      "path": "src/atlas_query_service.rs",
+      "kind": "rust-module"
+    },
     {
       "name": "main",
       "path": "src/main.rs",
@@ -113,6 +293,16 @@
       "kind": "rust-module"
     },
     {
+      "name": "spec_knowledge::code_graph",
+      "path": "src/spec_knowledge/code_graph.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_knowledge::compile_bundle",
+      "path": "src/spec_knowledge/compile_bundle.rs",
+      "kind": "rust-module"
+    },
+    {
       "name": "spec_knowledge::context",
       "path": "src/spec_knowledge/context.rs",
       "kind": "rust-module"
@@ -140,6 +330,11 @@
     {
       "name": "spec_knowledge::intake",
       "path": "src/spec_knowledge/intake.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_knowledge::intent_impact",
+      "path": "src/spec_knowledge/intent_impact.rs",
       "kind": "rust-module"
     },
     {
@@ -173,6 +368,16 @@
       "kind": "rust-module"
     },
     {
+      "name": "spec_knowledge::provenance",
+      "path": "src/spec_knowledge/provenance.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_knowledge::quality",
+      "path": "src/spec_knowledge/quality.rs",
+      "kind": "rust-module"
+    },
+    {
       "name": "spec_knowledge::questions",
       "path": "src/spec_knowledge/questions.rs",
       "kind": "rust-module"
@@ -193,6 +398,11 @@
       "kind": "rust-module"
     },
     {
+      "name": "spec_knowledge::run_manifest",
+      "path": "src/spec_knowledge/run_manifest.rs",
+      "kind": "rust-module"
+    },
+    {
       "name": "spec_knowledge::sarif",
       "path": "src/spec_knowledge/sarif.rs",
       "kind": "rust-module"
@@ -200,6 +410,11 @@
     {
       "name": "spec_knowledge::scaffold",
       "path": "src/spec_knowledge/scaffold.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_knowledge::status",
+      "path": "src/spec_knowledge/status.rs",
       "kind": "rust-module"
     },
     {
@@ -218,6 +433,16 @@
       "kind": "rust-module"
     },
     {
+      "name": "spec_knowledge::traceability",
+      "path": "src/spec_knowledge/traceability.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_knowledge::transitions",
+      "path": "src/spec_knowledge/transitions.rs",
+      "kind": "rust-module"
+    },
+    {
       "name": "spec_knowledge::work_units",
       "path": "src/spec_knowledge/work_units.rs",
       "kind": "rust-module"
@@ -225,6 +450,16 @@
     {
       "name": "spec_knowledge::worktrees",
       "path": "src/spec_knowledge/worktrees.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_knowledge::yaml_export",
+      "path": "src/spec_knowledge/yaml_export.rs",
+      "kind": "rust-module"
+    },
+    {
+      "name": "spec_knowledge::yaml_frontend",
+      "path": "src/spec_knowledge/yaml_frontend.rs",
       "kind": "rust-module"
     },
     {
@@ -323,6 +558,11 @@
       "kind": "rust-module"
     },
     {
+      "name": "spec_verify::atlas_symbols",
+      "path": "src/spec_verify/atlas_symbols.rs",
+      "kind": "rust-module"
+    },
+    {
       "name": "spec_verify::boundaries",
       "path": "src/spec_verify/boundaries.rs",
       "kind": "rust-module"
@@ -353,26 +593,6 @@
       "kind": "rust-module"
     },
     {
-      "name": "spec_wiki::assets",
-      "path": "src/spec_wiki/assets.rs",
-      "kind": "rust-module"
-    },
-    {
-      "name": "spec_wiki::check",
-      "path": "src/spec_wiki/check.rs",
-      "kind": "rust-module"
-    },
-    {
-      "name": "spec_wiki::ci",
-      "path": "src/spec_wiki/ci.rs",
-      "kind": "rust-module"
-    },
-    {
-      "name": "spec_wiki::github",
-      "path": "src/spec_wiki/github.rs",
-      "kind": "rust-module"
-    },
-    {
       "name": "spec_wiki::live",
       "path": "src/spec_wiki/live.rs",
       "kind": "rust-module"
@@ -383,18 +603,8 @@
       "kind": "rust-module"
     },
     {
-      "name": "spec_wiki::plan",
-      "path": "src/spec_wiki/plan.rs",
-      "kind": "rust-module"
-    },
-    {
       "name": "spec_wiki::project_map",
       "path": "src/spec_wiki/project_map.rs",
-      "kind": "rust-module"
-    },
-    {
-      "name": "spec_wiki::render",
-      "path": "src/spec_wiki/render.rs",
       "kind": "rust-module"
     },
     {
@@ -409,6 +619,36 @@
     }
   ],
   "module_edges": [
+    {
+      "from": "atlas_agent_eval",
+      "to": "atlas_eval",
+      "kind": "uses",
+      "source": "src/atlas_agent_eval.rs"
+    },
+    {
+      "from": "main",
+      "to": "atlas_agent_eval",
+      "kind": "declares",
+      "source": "src/main.rs"
+    },
+    {
+      "from": "main",
+      "to": "atlas_daemon",
+      "kind": "declares",
+      "source": "src/main.rs"
+    },
+    {
+      "from": "main",
+      "to": "atlas_eval",
+      "kind": "declares",
+      "source": "src/main.rs"
+    },
+    {
+      "from": "main",
+      "to": "atlas_query_service",
+      "kind": "declares",
+      "source": "src/main.rs"
+    },
     {
       "from": "main",
       "to": "spec_archive",
@@ -591,6 +831,18 @@
     },
     {
       "from": "spec_knowledge",
+      "to": "spec_knowledge::code_graph",
+      "kind": "declares",
+      "source": "src/spec_knowledge/mod.rs"
+    },
+    {
+      "from": "spec_knowledge",
+      "to": "spec_knowledge::compile_bundle",
+      "kind": "declares",
+      "source": "src/spec_knowledge/mod.rs"
+    },
+    {
+      "from": "spec_knowledge",
       "to": "spec_knowledge::context",
       "kind": "declares",
       "source": "src/spec_knowledge/mod.rs"
@@ -622,6 +874,12 @@
     {
       "from": "spec_knowledge",
       "to": "spec_knowledge::intake",
+      "kind": "declares",
+      "source": "src/spec_knowledge/mod.rs"
+    },
+    {
+      "from": "spec_knowledge",
+      "to": "spec_knowledge::intent_impact",
       "kind": "declares",
       "source": "src/spec_knowledge/mod.rs"
     },
@@ -663,6 +921,18 @@
     },
     {
       "from": "spec_knowledge",
+      "to": "spec_knowledge::provenance",
+      "kind": "declares",
+      "source": "src/spec_knowledge/mod.rs"
+    },
+    {
+      "from": "spec_knowledge",
+      "to": "spec_knowledge::quality",
+      "kind": "declares",
+      "source": "src/spec_knowledge/mod.rs"
+    },
+    {
+      "from": "spec_knowledge",
       "to": "spec_knowledge::questions",
       "kind": "declares",
       "source": "src/spec_knowledge/mod.rs"
@@ -687,6 +957,12 @@
     },
     {
       "from": "spec_knowledge",
+      "to": "spec_knowledge::run_manifest",
+      "kind": "declares",
+      "source": "src/spec_knowledge/mod.rs"
+    },
+    {
+      "from": "spec_knowledge",
       "to": "spec_knowledge::sarif",
       "kind": "declares",
       "source": "src/spec_knowledge/mod.rs"
@@ -694,6 +970,12 @@
     {
       "from": "spec_knowledge",
       "to": "spec_knowledge::scaffold",
+      "kind": "declares",
+      "source": "src/spec_knowledge/mod.rs"
+    },
+    {
+      "from": "spec_knowledge",
+      "to": "spec_knowledge::status",
       "kind": "declares",
       "source": "src/spec_knowledge/mod.rs"
     },
@@ -717,6 +999,18 @@
     },
     {
       "from": "spec_knowledge",
+      "to": "spec_knowledge::traceability",
+      "kind": "declares",
+      "source": "src/spec_knowledge/mod.rs"
+    },
+    {
+      "from": "spec_knowledge",
+      "to": "spec_knowledge::transitions",
+      "kind": "declares",
+      "source": "src/spec_knowledge/mod.rs"
+    },
+    {
+      "from": "spec_knowledge",
       "to": "spec_knowledge::work_units",
       "kind": "declares",
       "source": "src/spec_knowledge/mod.rs"
@@ -724,6 +1018,18 @@
     {
       "from": "spec_knowledge",
       "to": "spec_knowledge::worktrees",
+      "kind": "declares",
+      "source": "src/spec_knowledge/mod.rs"
+    },
+    {
+      "from": "spec_knowledge",
+      "to": "spec_knowledge::yaml_export",
+      "kind": "declares",
+      "source": "src/spec_knowledge/mod.rs"
+    },
+    {
+      "from": "spec_knowledge",
+      "to": "spec_knowledge::yaml_frontend",
       "kind": "declares",
       "source": "src/spec_knowledge/mod.rs"
     },
@@ -750,6 +1056,18 @@
       "to": "spec_knowledge",
       "kind": "uses",
       "source": "src/spec_knowledge/guidance.rs"
+    },
+    {
+      "from": "spec_knowledge::intent_impact",
+      "to": "spec_knowledge",
+      "kind": "uses",
+      "source": "src/spec_knowledge/intent_impact.rs"
+    },
+    {
+      "from": "spec_knowledge::intent_impact",
+      "to": "vcs",
+      "kind": "uses",
+      "source": "src/spec_knowledge/intent_impact.rs"
     },
     {
       "from": "spec_knowledge::lint",
@@ -836,6 +1154,12 @@
       "source": "src/spec_knowledge/sarif.rs"
     },
     {
+      "from": "spec_knowledge::status",
+      "to": "spec_core",
+      "kind": "uses",
+      "source": "src/spec_knowledge/status.rs"
+    },
+    {
       "from": "spec_knowledge::test_obligations",
       "to": "spec_core",
       "kind": "uses",
@@ -882,6 +1206,18 @@
       "to": "vcs",
       "kind": "uses",
       "source": "src/spec_knowledge/trace_ledger.rs"
+    },
+    {
+      "from": "spec_knowledge::traceability",
+      "to": "spec_core",
+      "kind": "uses",
+      "source": "src/spec_knowledge/traceability.rs"
+    },
+    {
+      "from": "spec_knowledge::traceability",
+      "to": "spec_knowledge",
+      "kind": "uses",
+      "source": "src/spec_knowledge/traceability.rs"
     },
     {
       "from": "spec_knowledge::work_units",
@@ -1077,6 +1413,12 @@
     },
     {
       "from": "spec_verify",
+      "to": "spec_verify::atlas_symbols",
+      "kind": "declares",
+      "source": "src/spec_verify/mod.rs"
+    },
+    {
+      "from": "spec_verify",
       "to": "spec_verify::boundaries",
       "kind": "declares",
       "source": "src/spec_verify/mod.rs"
@@ -1104,6 +1446,18 @@
       "to": "spec_core",
       "kind": "uses",
       "source": "src/spec_verify/ai_verifier.rs"
+    },
+    {
+      "from": "spec_verify::atlas_symbols",
+      "to": "spec_core",
+      "kind": "uses",
+      "source": "src/spec_verify/atlas_symbols.rs"
+    },
+    {
+      "from": "spec_verify::atlas_symbols",
+      "to": "spec_gateway",
+      "kind": "uses",
+      "source": "src/spec_verify/atlas_symbols.rs"
     },
     {
       "from": "spec_verify::boundaries",
@@ -1149,30 +1503,6 @@
     },
     {
       "from": "spec_wiki",
-      "to": "spec_wiki::assets",
-      "kind": "declares",
-      "source": "src/spec_wiki/mod.rs"
-    },
-    {
-      "from": "spec_wiki",
-      "to": "spec_wiki::check",
-      "kind": "declares",
-      "source": "src/spec_wiki/mod.rs"
-    },
-    {
-      "from": "spec_wiki",
-      "to": "spec_wiki::ci",
-      "kind": "declares",
-      "source": "src/spec_wiki/mod.rs"
-    },
-    {
-      "from": "spec_wiki",
-      "to": "spec_wiki::github",
-      "kind": "declares",
-      "source": "src/spec_wiki/mod.rs"
-    },
-    {
-      "from": "spec_wiki",
       "to": "spec_wiki::live",
       "kind": "declares",
       "source": "src/spec_wiki/mod.rs"
@@ -1185,19 +1515,7 @@
     },
     {
       "from": "spec_wiki",
-      "to": "spec_wiki::plan",
-      "kind": "declares",
-      "source": "src/spec_wiki/mod.rs"
-    },
-    {
-      "from": "spec_wiki",
       "to": "spec_wiki::project_map",
-      "kind": "declares",
-      "source": "src/spec_wiki/mod.rs"
-    },
-    {
-      "from": "spec_wiki",
-      "to": "spec_wiki::render",
       "kind": "declares",
       "source": "src/spec_wiki/mod.rs"
     },
@@ -1214,52 +1532,16 @@
       "source": "src/spec_wiki/architecture.rs"
     },
     {
-      "from": "spec_wiki::assets",
-      "to": "spec_wiki",
-      "kind": "uses",
-      "source": "src/spec_wiki/assets.rs"
-    },
-    {
-      "from": "spec_wiki::check",
-      "to": "spec_wiki",
-      "kind": "uses",
-      "source": "src/spec_wiki/check.rs"
-    },
-    {
-      "from": "spec_wiki::ci",
-      "to": "spec_wiki",
-      "kind": "uses",
-      "source": "src/spec_wiki/ci.rs"
-    },
-    {
-      "from": "spec_wiki::github",
-      "to": "spec_wiki",
-      "kind": "uses",
-      "source": "src/spec_wiki/github.rs"
-    },
-    {
       "from": "spec_wiki::live",
       "to": "spec_wiki",
       "kind": "uses",
       "source": "src/spec_wiki/live.rs"
     },
     {
-      "from": "spec_wiki::plan",
-      "to": "spec_wiki",
-      "kind": "uses",
-      "source": "src/spec_wiki/plan.rs"
-    },
-    {
       "from": "spec_wiki::project_map",
       "to": "spec_wiki",
       "kind": "uses",
       "source": "src/spec_wiki/project_map.rs"
-    },
-    {
-      "from": "spec_wiki::render",
-      "to": "spec_wiki",
-      "kind": "uses",
-      "source": "src/spec_wiki/render.rs"
     },
     {
       "from": "spec_wiki::sources",
@@ -1270,6 +1552,21 @@
   ],
   "entrypoints": [
     {
+      "name": "build-script-build",
+      "path": "build.rs",
+      "kind": "custom-build"
+    },
+    {
+      "name": "agent_spec_code_graph_provider",
+      "path": "crates/code-graph-provider/src/lib.rs",
+      "kind": "lib"
+    },
+    {
+      "name": "rust_atlas",
+      "path": "crates/rust-atlas/src/lib.rs",
+      "kind": "lib"
+    },
+    {
       "name": "agent-spec",
       "path": "src/main.rs",
       "kind": "bin"
@@ -1278,6 +1575,11 @@
   "source_files": [
     "Cargo.lock",
     "Cargo.toml",
+    "build.rs",
+    "crates/code-graph-provider/Cargo.toml",
+    "crates/code-graph-provider/src/lib.rs",
+    "crates/rust-atlas/Cargo.toml",
+    "crates/rust-atlas/src/lib.rs",
     "src/main.rs"
   ],
   "diagnostics": []

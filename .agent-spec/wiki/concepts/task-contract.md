@@ -17,6 +17,51 @@ status: draft
 
 Human-authored task contract that defines intent, decisions, boundaries, and completion criteria.
 
+## Atlas Symbols
+
+When a contract declares Atlas symbols, the graph is derived input to lifecycle
+verification. Build the graph first, inspect `atlas status` for worktree and
+layer freshness, and rebuild after schema or query-index diagnostics. A stale
+available semantic layer or borrowed graph cannot support a definitive symbol
+verdict.
+
+`atlas impact` and `atlas affected` can identify code that deserves review,
+but they do not create Contract test selectors. Scenario-to-test obligations
+remain explicit in the Contract and are verified by lifecycle.
+Likewise, `flow.runtime_boundaries` may guide source inspection but cannot
+satisfy a Contract symbol, scenario, or test selector because it carries
+query-hint authority rather than graph provenance.
+
+`atlas context` can gather a bounded, hash-checked evidence view before code
+changes, but its receipt is a selection receipt rather than a scenario verdict.
+Only an explicit Contract selector executed by lifecycle, or another governed
+verifier named by the Contract, can satisfy completion criteria.
+
 ## Maintenance
 
 Update this page when any listed `source_files` change in a way that alters the project understanding an agent should reuse.
+
+Atlas D2 was reviewed here; generation and resource controls remain execution
+mechanics governed by explicit Task Contract scenarios.
+
+Atlas D3 was reviewed here; pending or degraded runtime state does not satisfy
+a scenario, and no-daemon lifecycle verification remains supported.
+
+Atlas B5 was reviewed here; context evidence helps inspect code but never
+substitutes for Contract acceptance or lifecycle output.
+
+Atlas D4 was dogfooded through its own accepted requirement and 19-scenario
+Task Contract. Worker receipts and fixture measurements support those explicit
+selectors; they do not create implicit acceptance criteria.
+
+Atlas E1 is dogfooded by `task-atlas-agent-ab-gate.spec.md`. Its deterministic
+selectors verify the harness; they do not claim that a real Agent experiment
+has run or that a default has been accepted.
+
+Atlas F1 is dogfooded by `task-code-graph-provider-kit.spec.md`. Its selectors
+prove the adapter SDK and fixture conformance contract, not a production F2
+language provider.
+
+Reviewed for the 1.2 release: active Atlas contracts remain the acceptance
+authority for versioned crate and documentation updates; a version bump does
+not substitute for lifecycle evidence.

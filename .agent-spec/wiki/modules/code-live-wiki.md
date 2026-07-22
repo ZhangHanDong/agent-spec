@@ -96,8 +96,29 @@ agent-spec wiki check --code . --wiki .agent-spec/wiki
 
 Do not rely on `wiki init` to write deep prose. It intentionally creates a
 small deterministic scaffold; agents add durable understanding over time.
+When Atlas adds a query-only capability such as runtime-boundary hints, update
+both its architecture and authority articles so the wiki records the mechanism
+without confusing heuristic working context with persisted graph facts.
+The same rule applies to B5 context results: an article may cite the command,
+graph fingerprint, or receipt, but `source_files` and Git worktree state remain
+the wiki freshness mechanism. Context output does not mark an article current.
 
 Old wiki content should be summarized into `learnings/` or `archive/` pages with
 source links instead of being deleted abruptly. Non-goals: no built-in LLM
 long-form generation, no web UI, and no replacement for KLL requirements or
 decisions.
+
+## Maintenance
+
+Atlas D2 was reviewed here; wiki freshness still tracks source changes and does
+not infer freshness from the Atlas generation pointer.
+
+Atlas D3 was reviewed here; wiki stale checks remain Git/source based and do
+not infer freshness from daemon health or pending watermarks.
+
+Atlas B5 was reviewed here; bounded context can accelerate source inspection
+but neither replaces article maintenance nor changes wiki authority.
+
+Atlas E1 was reviewed here; evaluation plans and results do not mark wiki
+articles current. Git source changes and maintained `source_files` remain the
+freshness mechanism.

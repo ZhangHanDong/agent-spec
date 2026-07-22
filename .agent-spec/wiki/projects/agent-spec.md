@@ -29,3 +29,7 @@ Contracts and traceable work, and hosts the deterministic code live wiki.
 
 The project map records selected design inputs from important external projects
 without scanning those repositories or treating them as local source truth.
+
+The 1.2 workspace contains `agent-spec` 1.2.0,
+`agent-spec-code-graph-provider` 0.1.0, and `rust-atlas` 0.3.0. The two library
+crates are independently publishable; the root binary consumes both.

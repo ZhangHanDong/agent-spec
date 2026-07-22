@@ -1,4 +1,8 @@
 graph TD
+  atlas_agent_eval["atlas_agent_eval"]
+  atlas_daemon["atlas_daemon"]
+  atlas_eval["atlas_eval"]
+  atlas_query_service["atlas_query_service"]
   main["main"]
   spec_archive["spec_archive"]
   spec_core["spec_core"]
@@ -11,29 +15,40 @@ graph TD
   spec_gateway__lifecycle["spec_gateway::lifecycle"]
   spec_gateway__plan["spec_gateway::plan"]
   spec_knowledge["spec_knowledge"]
+  spec_knowledge__code_graph["spec_knowledge::code_graph"]
+  spec_knowledge__compile_bundle["spec_knowledge::compile_bundle"]
   spec_knowledge__context["spec_knowledge::context"]
   spec_knowledge__draft_specs["spec_knowledge::draft_specs"]
   spec_knowledge__governance["spec_knowledge::governance"]
   spec_knowledge__guidance["spec_knowledge::guidance"]
   spec_knowledge__index["spec_knowledge::index"]
   spec_knowledge__intake["spec_knowledge::intake"]
+  spec_knowledge__intent_impact["spec_knowledge::intent_impact"]
   spec_knowledge__lint["spec_knowledge::lint"]
   spec_knowledge__liveness["spec_knowledge::liveness"]
   spec_knowledge__model["spec_knowledge::model"]
   spec_knowledge__parser["spec_knowledge::parser"]
   spec_knowledge__project["spec_knowledge::project"]
   spec_knowledge__proposal["spec_knowledge::proposal"]
+  spec_knowledge__provenance["spec_knowledge::provenance"]
+  spec_knowledge__quality["spec_knowledge::quality"]
   spec_knowledge__questions["spec_knowledge::questions"]
   spec_knowledge__requirement["spec_knowledge::requirement"]
   spec_knowledge__requirement_graph["spec_knowledge::requirement_graph"]
   spec_knowledge__requirement_plan["spec_knowledge::requirement_plan"]
+  spec_knowledge__run_manifest["spec_knowledge::run_manifest"]
   spec_knowledge__sarif["spec_knowledge::sarif"]
   spec_knowledge__scaffold["spec_knowledge::scaffold"]
+  spec_knowledge__status["spec_knowledge::status"]
   spec_knowledge__test_obligations["spec_knowledge::test_obligations"]
   spec_knowledge__trace["spec_knowledge::trace"]
   spec_knowledge__trace_ledger["spec_knowledge::trace_ledger"]
+  spec_knowledge__traceability["spec_knowledge::traceability"]
+  spec_knowledge__transitions["spec_knowledge::transitions"]
   spec_knowledge__work_units["spec_knowledge::work_units"]
   spec_knowledge__worktrees["spec_knowledge::worktrees"]
+  spec_knowledge__yaml_export["spec_knowledge::yaml_export"]
+  spec_knowledge__yaml_frontend["spec_knowledge::yaml_frontend"]
   spec_lint["spec_lint"]
   spec_lint__linters["spec_lint::linters"]
   spec_lint__pipeline["spec_lint::pipeline"]
@@ -53,23 +68,23 @@ graph TD
   spec_report__structural["spec_report::structural"]
   spec_verify["spec_verify"]
   spec_verify__ai_verifier["spec_verify::ai_verifier"]
+  spec_verify__atlas_symbols["spec_verify::atlas_symbols"]
   spec_verify__boundaries["spec_verify::boundaries"]
   spec_verify__complexity["spec_verify::complexity"]
   spec_verify__structural["spec_verify::structural"]
   spec_verify__test_verifier["spec_verify::test_verifier"]
   spec_wiki["spec_wiki"]
   spec_wiki__architecture["spec_wiki::architecture"]
-  spec_wiki__assets["spec_wiki::assets"]
-  spec_wiki__check["spec_wiki::check"]
-  spec_wiki__ci["spec_wiki::ci"]
-  spec_wiki__github["spec_wiki::github"]
   spec_wiki__live["spec_wiki::live"]
   spec_wiki__model["spec_wiki::model"]
-  spec_wiki__plan["spec_wiki::plan"]
   spec_wiki__project_map["spec_wiki::project_map"]
-  spec_wiki__render["spec_wiki::render"]
   spec_wiki__sources["spec_wiki::sources"]
   vcs["vcs"]
+  atlas_agent_eval --> atlas_eval
+  main --> atlas_agent_eval
+  main --> atlas_daemon
+  main --> atlas_eval
+  main --> atlas_query_service
   main --> spec_archive
   main --> spec_core
   main --> spec_core
@@ -100,33 +115,46 @@ graph TD
   spec_gateway__lifecycle --> spec_report
   spec_gateway__lifecycle --> spec_verify
   spec_gateway__plan --> spec_core
+  spec_knowledge --> spec_knowledge__code_graph
+  spec_knowledge --> spec_knowledge__compile_bundle
   spec_knowledge --> spec_knowledge__context
   spec_knowledge --> spec_knowledge__draft_specs
   spec_knowledge --> spec_knowledge__governance
   spec_knowledge --> spec_knowledge__guidance
   spec_knowledge --> spec_knowledge__index
   spec_knowledge --> spec_knowledge__intake
+  spec_knowledge --> spec_knowledge__intent_impact
   spec_knowledge --> spec_knowledge__lint
   spec_knowledge --> spec_knowledge__liveness
   spec_knowledge --> spec_knowledge__model
   spec_knowledge --> spec_knowledge__parser
   spec_knowledge --> spec_knowledge__project
   spec_knowledge --> spec_knowledge__proposal
+  spec_knowledge --> spec_knowledge__provenance
+  spec_knowledge --> spec_knowledge__quality
   spec_knowledge --> spec_knowledge__questions
   spec_knowledge --> spec_knowledge__requirement
   spec_knowledge --> spec_knowledge__requirement_graph
   spec_knowledge --> spec_knowledge__requirement_plan
+  spec_knowledge --> spec_knowledge__run_manifest
   spec_knowledge --> spec_knowledge__sarif
   spec_knowledge --> spec_knowledge__scaffold
+  spec_knowledge --> spec_knowledge__status
   spec_knowledge --> spec_knowledge__test_obligations
   spec_knowledge --> spec_knowledge__trace
   spec_knowledge --> spec_knowledge__trace_ledger
+  spec_knowledge --> spec_knowledge__traceability
+  spec_knowledge --> spec_knowledge__transitions
   spec_knowledge --> spec_knowledge__work_units
   spec_knowledge --> spec_knowledge__worktrees
+  spec_knowledge --> spec_knowledge__yaml_export
+  spec_knowledge --> spec_knowledge__yaml_frontend
   spec_knowledge__draft_specs --> spec_knowledge
   spec_knowledge__governance --> spec_core
   spec_knowledge__governance --> spec_knowledge
   spec_knowledge__guidance --> spec_knowledge
+  spec_knowledge__intent_impact --> spec_knowledge
+  spec_knowledge__intent_impact --> vcs
   spec_knowledge__lint --> spec_core
   spec_knowledge__lint --> spec_knowledge
   spec_knowledge__liveness --> spec_core
@@ -141,6 +169,7 @@ graph TD
   spec_knowledge__requirement_graph --> spec_knowledge
   spec_knowledge__requirement_plan --> spec_knowledge
   spec_knowledge__sarif --> spec_core
+  spec_knowledge__status --> spec_core
   spec_knowledge__test_obligations --> spec_core
   spec_knowledge__test_obligations --> spec_knowledge
   spec_knowledge__test_obligations --> spec_qa
@@ -149,6 +178,8 @@ graph TD
   spec_knowledge__trace_ledger --> spec_core
   spec_knowledge__trace_ledger --> spec_knowledge
   spec_knowledge__trace_ledger --> vcs
+  spec_knowledge__traceability --> spec_core
+  spec_knowledge__traceability --> spec_knowledge
   spec_knowledge__work_units --> spec_knowledge
   spec_knowledge__worktrees --> spec_knowledge
   spec_lint --> spec_lint__linters
@@ -181,11 +212,14 @@ graph TD
   spec_report__discover --> spec_parser
   spec_verify --> spec_core
   spec_verify --> spec_verify__ai_verifier
+  spec_verify --> spec_verify__atlas_symbols
   spec_verify --> spec_verify__boundaries
   spec_verify --> spec_verify__complexity
   spec_verify --> spec_verify__structural
   spec_verify --> spec_verify__test_verifier
   spec_verify__ai_verifier --> spec_core
+  spec_verify__atlas_symbols --> spec_core
+  spec_verify__atlas_symbols --> spec_gateway
   spec_verify__boundaries --> spec_core
   spec_verify__boundaries --> spec_verify
   spec_verify__complexity --> spec_core
@@ -193,23 +227,11 @@ graph TD
   spec_verify__structural --> spec_core
   spec_verify__test_verifier --> spec_core
   spec_wiki --> spec_wiki__architecture
-  spec_wiki --> spec_wiki__assets
-  spec_wiki --> spec_wiki__check
-  spec_wiki --> spec_wiki__ci
-  spec_wiki --> spec_wiki__github
   spec_wiki --> spec_wiki__live
   spec_wiki --> spec_wiki__model
-  spec_wiki --> spec_wiki__plan
   spec_wiki --> spec_wiki__project_map
-  spec_wiki --> spec_wiki__render
   spec_wiki --> spec_wiki__sources
   spec_wiki__architecture --> spec_wiki
-  spec_wiki__assets --> spec_wiki
-  spec_wiki__check --> spec_wiki
-  spec_wiki__ci --> spec_wiki
-  spec_wiki__github --> spec_wiki
   spec_wiki__live --> spec_wiki
-  spec_wiki__plan --> spec_wiki
   spec_wiki__project_map --> spec_wiki
-  spec_wiki__render --> spec_wiki
   spec_wiki__sources --> spec_wiki

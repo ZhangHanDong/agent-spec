@@ -18,3 +18,6 @@ Mechanical and inferential scenario verification.
 ## Maintenance
 
 Update this page when any listed `source_files` change in a way that alters the project understanding an agent should reuse.
+
+Atlas D2 was reviewed here; symbol verification uses the pinned generation and
+retains the existing stale/worktree fail-closed behavior.

@@ -1,0 +1,15 @@
+{
+  "schema": "rust-atlas/incremental-hardening-matrix-v1",
+  "cases": [
+    "cold",
+    "zero-change",
+    "single-file-edit",
+    "deletion",
+    "manifest-content-edit",
+    "frontier-overflow",
+    "overlay",
+    "cancellation",
+    "generation-commit-failure",
+    "orphan-recovery"
+  ]
+}

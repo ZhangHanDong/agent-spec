@@ -40,6 +40,8 @@
         "requirement_id",
         "scenario_name",
         "suggested_selector",
+        "explicit_selector",
+        "selector_authority",
         "verification_strength",
         "spec_path",
         "required_evidence"
@@ -56,6 +58,18 @@
         "suggested_selector": {
           "type": "string",
           "minLength": 1
+        },
+        "explicit_selector": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "selector_authority": {
+          "enum": [
+            "explicit",
+            "candidate"
+          ]
         },
         "verification_strength": {
           "type": "string",

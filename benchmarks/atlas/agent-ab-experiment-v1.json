@@ -1,0 +1,56 @@
+{
+  "schema": "agent-spec/atlas-eval/agent-experiment-v1",
+  "version": "atlas-e1-agent-ab-2026-07-21",
+  "controls": {
+    "prompt_hooks": {
+      "mode": "disabled"
+    },
+    "mcp_config": {
+      "mode": "disabled"
+    },
+    "user_skills": {
+      "mode": "disabled"
+    },
+    "tool_instructions": {
+      "mode": "disabled"
+    },
+    "judge": {
+      "mode": "rubric",
+      "version": "atlas-e0-rubric-v1"
+    }
+  },
+  "session_store": ".agent-spec/evaluation/agent-ab",
+  "surfaces": {
+    "baseline": [
+      "grep",
+      "read"
+    ],
+    "atlas_primitives": [
+      "atlas-explore",
+      "atlas-flow",
+      "atlas-impact",
+      "atlas-impls",
+      "atlas-query",
+      "atlas-refs",
+      "atlas-search",
+      "atlas-status",
+      "atlas-tree",
+      "grep",
+      "read"
+    ],
+    "atlas_context": [
+      "atlas-context",
+      "atlas-explore",
+      "atlas-flow",
+      "atlas-impact",
+      "atlas-impls",
+      "atlas-query",
+      "atlas-refs",
+      "atlas-search",
+      "atlas-status",
+      "atlas-tree",
+      "grep",
+      "read"
+    ]
+  }
+}

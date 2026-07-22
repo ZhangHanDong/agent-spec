@@ -1,0 +1,2107 @@
+//! Provider-neutral producer contract for external Code Graph adapters.
+
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
+use std::io::{Read, Write};
+use std::path::Path;
+use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
+
+pub const PROVIDER_IR_VERSION: u32 = 1;
+pub const PROVIDER_MANIFEST_SCHEMA: &str = "agent-spec/code-graph-provider/manifest-v1";
+pub const PROVIDER_REGISTRATION_SCHEMA: &str = "agent-spec/code-graph-provider/registration-v1";
+pub const EXTRACTION_PAYLOAD_SCHEMA: &str = "agent-spec/code-graph-provider/extraction-payload-v1";
+pub const EXTRACTION_ARTIFACT_SCHEMA: &str =
+    "agent-spec/code-graph-provider/extraction-artifact-v1";
+pub const ENRICHMENT_PAYLOAD_SCHEMA: &str = "agent-spec/code-graph-provider/enrichment-payload-v1";
+pub const ENRICHMENT_ARTIFACT_SCHEMA: &str =
+    "agent-spec/code-graph-provider/enrichment-artifact-v1";
+pub const PROVIDER_REQUEST_SCHEMA: &str = "agent-spec/code-graph-provider/request-v1";
+pub const PROVIDER_CONFORMANCE_FIXTURE_SCHEMA: &str =
+    "agent-spec/code-graph-provider/conformance-fixture-v1";
+pub const PROVIDER_CONFORMANCE_RECEIPT_SCHEMA: &str =
+    "agent-spec/code-graph-provider/conformance-receipt-v1";
+
+static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Debug, thiserror::Error)]
+#[error("{code}: {message}")]
+pub struct ProviderError {
+    code: &'static str,
+    message: String,
+}
+
+impl ProviderError {
+    fn new(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+        }
+    }
+
+    pub fn code(&self) -> &'static str {
+        self.code
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProviderRole {
+    Extractor,
+    SemanticEnricher,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProviderCapability {
+    Nodes,
+    Containment,
+    BasicReferences,
+    SemanticEdges,
+    QueryHints,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum StartupProtocol {
+    StdioJsonV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SchemaRange {
+    pub min: u32,
+    pub max: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResourceLimits {
+    pub timeout_ms: u64,
+    pub max_stdout_bytes: usize,
+    pub max_stderr_bytes: usize,
+    pub max_diagnostics: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderManifest {
+    pub schema: String,
+    pub provider_id: String,
+    pub provider_version: String,
+    pub language: String,
+    pub ir_schema: SchemaRange,
+    pub role: ProviderRole,
+    pub capabilities: BTreeSet<ProviderCapability>,
+    pub startup: StartupProtocol,
+    pub freshness_inputs: Vec<String>,
+    pub limits: ResourceLimits,
+    pub deterministic: bool,
+    pub supports_no_daemon: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderRegistration {
+    pub schema: String,
+    pub provider_id: String,
+    #[serde(default)]
+    pub enabled: bool,
+    pub executable: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    pub cwd: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EvidenceConfidence {
+    Exact,
+    Candidate,
+    Heuristic,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderEvidence {
+    pub extractor: String,
+    pub extractor_version: String,
+    pub evidence: String,
+    pub confidence: EvidenceConfidence,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FreshnessState {
+    Fresh,
+    Stale,
+    Partial,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FreshnessFact {
+    pub path: String,
+    pub fingerprint: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FreshnessReport {
+    pub state: FreshnessState,
+    pub inputs: Vec<FreshnessFact>,
+    #[serde(default)]
+    pub affected_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DiagnosticSeverity {
+    Warning,
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderDiagnostic {
+    pub code: String,
+    pub severity: DiagnosticSeverity,
+    pub message: String,
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceSpan {
+    pub line_start: u32,
+    pub column_start: u32,
+    pub line_end: u32,
+    pub column_end: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderNode {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub path: String,
+    pub span: Option<SourceSpan>,
+    pub provenance: ProviderEvidence,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderEdge {
+    pub from: String,
+    pub to: String,
+    pub kind: String,
+    pub provenance: ProviderEvidence,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderQueryHint {
+    pub node_id: String,
+    pub kind: String,
+    pub message: String,
+    pub provenance: ProviderEvidence,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractionPayload {
+    pub schema: String,
+    pub provider_id: String,
+    pub provider_version: String,
+    pub language: String,
+    pub worktree_id: String,
+    pub freshness: FreshnessReport,
+    #[serde(default)]
+    pub nodes: Vec<ProviderNode>,
+    #[serde(default)]
+    pub edges: Vec<ProviderEdge>,
+    #[serde(default)]
+    pub diagnostics: Vec<ProviderDiagnostic>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractionArtifact {
+    pub schema: String,
+    pub ir_version: u32,
+    pub graph_fingerprint: String,
+    pub payload: ExtractionPayload,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EnrichmentPayload {
+    pub schema: String,
+    pub provider_id: String,
+    pub provider_version: String,
+    pub language: String,
+    pub worktree_id: String,
+    pub base_graph_fingerprint: String,
+    #[serde(default)]
+    pub edges: Vec<ProviderEdge>,
+    #[serde(default)]
+    pub query_hints: Vec<ProviderQueryHint>,
+    #[serde(default)]
+    pub diagnostics: Vec<ProviderDiagnostic>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EnrichmentArtifact {
+    pub schema: String,
+    pub ir_version: u32,
+    pub enrichment_fingerprint: String,
+    pub payload: EnrichmentPayload,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProviderOperation {
+    Extract,
+    Enrich,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderRequest {
+    pub schema: String,
+    pub request_id: String,
+    pub operation: ProviderOperation,
+    pub repository_root: String,
+    pub worktree_id: String,
+    pub revision: Option<String>,
+    pub conformance_case: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderProcessOutput {
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CancellationToken {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl CancellationToken {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderConformanceFixture {
+    pub schema: String,
+    pub fixture_id: String,
+    pub repository_root: String,
+    pub worktree_id: String,
+    pub revision: String,
+    pub expected_node_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ConformanceState {
+    Passed,
+    Blocked,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConformanceCheck {
+    pub id: String,
+    pub passed: bool,
+    pub diagnostic_code: Option<String>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderConformanceReceipt {
+    pub schema: String,
+    pub provider_id: String,
+    pub provider_version: String,
+    pub manifest_fingerprint: String,
+    pub fixture_id: String,
+    pub state: ConformanceState,
+    pub checks: Vec<ConformanceCheck>,
+}
+
+pub fn validate_manifest(manifest: &ProviderManifest) -> Result<(), ProviderError> {
+    if manifest.schema != PROVIDER_MANIFEST_SCHEMA
+        || !valid_identifier(&manifest.provider_id)
+        || !valid_identifier(&manifest.language)
+        || manifest.provider_version.trim().is_empty()
+        || manifest.provider_version.len() > 64
+    {
+        return Err(ProviderError::new(
+            "provider-manifest",
+            "manifest schema, provider identity, language, or version is invalid",
+        ));
+    }
+    if manifest.ir_schema.min == 0
+        || manifest.ir_schema.min > manifest.ir_schema.max
+        || !(manifest.ir_schema.min..=manifest.ir_schema.max).contains(&PROVIDER_IR_VERSION)
+    {
+        return Err(ProviderError::new(
+            "provider-manifest-schema",
+            format!(
+                "provider schema range {}..={} does not include IR v{PROVIDER_IR_VERSION}",
+                manifest.ir_schema.min, manifest.ir_schema.max
+            ),
+        ));
+    }
+    let valid_capabilities = match manifest.role {
+        ProviderRole::Extractor => {
+            manifest.capabilities.contains(&ProviderCapability::Nodes)
+                && manifest
+                    .capabilities
+                    .contains(&ProviderCapability::Containment)
+                && manifest.capabilities.iter().all(|capability| {
+                    matches!(
+                        capability,
+                        ProviderCapability::Nodes
+                            | ProviderCapability::Containment
+                            | ProviderCapability::BasicReferences
+                    )
+                })
+        }
+        ProviderRole::SemanticEnricher => {
+            manifest.capabilities.iter().any(|capability| {
+                matches!(
+                    capability,
+                    ProviderCapability::SemanticEdges | ProviderCapability::QueryHints
+                )
+            }) && manifest.capabilities.iter().all(|capability| {
+                matches!(
+                    capability,
+                    ProviderCapability::SemanticEdges | ProviderCapability::QueryHints
+                )
+            })
+        }
+    };
+    if !valid_capabilities {
+        return Err(ProviderError::new(
+            "provider-manifest-capability",
+            "provider capabilities are missing or incompatible with its role",
+        ));
+    }
+    if manifest.freshness_inputs.is_empty()
+        || manifest
+            .freshness_inputs
+            .iter()
+            .any(|pattern| !valid_freshness_pattern(pattern))
+    {
+        return Err(ProviderError::new(
+            "provider-manifest-freshness",
+            "freshness inputs must be non-empty normalized repository-relative patterns",
+        ));
+    }
+    let limits = &manifest.limits;
+    if !(10..=300_000).contains(&limits.timeout_ms)
+        || !(256..=64 * 1024 * 1024).contains(&limits.max_stdout_bytes)
+        || !(256..=16 * 1024 * 1024).contains(&limits.max_stderr_bytes)
+        || !(1..=10_000).contains(&limits.max_diagnostics)
+    {
+        return Err(ProviderError::new(
+            "provider-manifest-limit",
+            "provider resource limits are outside the supported bounded range",
+        ));
+    }
+    if !manifest.deterministic || !manifest.supports_no_daemon {
+        return Err(ProviderError::new(
+            "provider-manifest-mode",
+            "F1 providers must declare deterministic and no-daemon support",
+        ));
+    }
+    Ok(())
+}
+
+pub fn validate_registration(
+    manifest: &ProviderManifest,
+    registration: &ProviderRegistration,
+) -> Result<(), ProviderError> {
+    validate_manifest(manifest)?;
+    if registration.schema != PROVIDER_REGISTRATION_SCHEMA
+        || registration.provider_id != manifest.provider_id
+    {
+        return Err(ProviderError::new(
+            "provider-registration",
+            "registration schema or provider identity does not match the manifest",
+        ));
+    }
+    if !registration.enabled {
+        return Err(ProviderError::new(
+            "provider-disabled",
+            format!(
+                "provider {} is not enabled for this project",
+                manifest.provider_id
+            ),
+        ));
+    }
+    if registration.executable.trim().is_empty()
+        || registration.executable.contains('\0')
+        || registration.args.iter().any(|arg| arg.contains('\0'))
+        || registration
+            .cwd
+            .as_deref()
+            .is_some_and(|cwd| cwd.trim().is_empty() || cwd.contains('\0'))
+    {
+        return Err(ProviderError::new(
+            "provider-registration",
+            "registration executable, argv, or cwd is invalid",
+        ));
+    }
+    Ok(())
+}
+
+pub fn project_extraction(
+    manifest: &ProviderManifest,
+    expected_worktree: &str,
+    mut payload: ExtractionPayload,
+) -> Result<ExtractionArtifact, ProviderError> {
+    validate_manifest(manifest)?;
+    if manifest.role != ProviderRole::Extractor {
+        return Err(ProviderError::new(
+            "provider-role",
+            "an extraction payload requires an extractor manifest",
+        ));
+    }
+    validate_payload_identity(
+        manifest,
+        expected_worktree,
+        &payload.schema,
+        EXTRACTION_PAYLOAD_SCHEMA,
+        &payload.provider_id,
+        &payload.provider_version,
+        &payload.language,
+        &payload.worktree_id,
+    )?;
+    validate_freshness(&mut payload.freshness, &payload.diagnostics)?;
+    validate_diagnostics(manifest, &mut payload.diagnostics)?;
+
+    payload.nodes.sort_by(|left, right| left.id.cmp(&right.id));
+    let mut node_ids = BTreeSet::new();
+    for node in &payload.nodes {
+        if !node.id.starts_with(&format!("{}:", manifest.provider_id))
+            || node.id.len() == manifest.provider_id.len() + 1
+            || !node_ids.insert(node.id.as_str())
+        {
+            return Err(ProviderError::new(
+                "provider-node-id",
+                format!("node id `{}` is not unique and provider-scoped", node.id),
+            ));
+        }
+        if node.name.trim().is_empty() || !valid_identifier(&node.kind) {
+            return Err(ProviderError::new(
+                "provider-node",
+                format!("node `{}` has an invalid name or kind", node.id),
+            ));
+        }
+        validate_repository_path(&node.path)?;
+        validate_span(node.span.as_ref())?;
+        validate_evidence(&node.provenance)?;
+    }
+
+    payload.edges.sort_by(edge_order);
+    let mut edge_keys = BTreeSet::new();
+    for edge in &payload.edges {
+        let key = (&edge.from, &edge.to, &edge.kind);
+        if !edge_keys.insert(key) {
+            return Err(ProviderError::new(
+                "provider-edge",
+                "duplicate extraction edge",
+            ));
+        }
+        if !node_ids.contains(edge.from.as_str())
+            || (!node_ids.contains(edge.to.as_str())
+                && !edge.to.starts_with("external:")
+                && !edge.to.starts_with("unresolved:"))
+            || !valid_identifier(&edge.kind)
+        {
+            return Err(ProviderError::new(
+                "provider-edge",
+                format!("edge {} -> {} is invalid", edge.from, edge.to),
+            ));
+        }
+        if edge.kind == "contains"
+            && !manifest
+                .capabilities
+                .contains(&ProviderCapability::Containment)
+            || edge.kind != "contains"
+                && !manifest
+                    .capabilities
+                    .contains(&ProviderCapability::BasicReferences)
+        {
+            return Err(ProviderError::new(
+                "provider-manifest-capability",
+                format!("edge kind `{}` was not declared", edge.kind),
+            ));
+        }
+        validate_evidence(&edge.provenance)?;
+    }
+
+    let graph_fingerprint = canonical_fingerprint(&(PROVIDER_IR_VERSION, &payload))?;
+    Ok(ExtractionArtifact {
+        schema: EXTRACTION_ARTIFACT_SCHEMA.to_string(),
+        ir_version: PROVIDER_IR_VERSION,
+        graph_fingerprint,
+        payload,
+    })
+}
+
+pub fn project_enrichment(
+    manifest: &ProviderManifest,
+    expected_worktree: &str,
+    mut payload: EnrichmentPayload,
+) -> Result<EnrichmentArtifact, ProviderError> {
+    validate_manifest(manifest)?;
+    if manifest.role != ProviderRole::SemanticEnricher {
+        return Err(ProviderError::new(
+            "provider-role",
+            "an enrichment payload requires a semantic-enricher manifest",
+        ));
+    }
+    validate_payload_identity(
+        manifest,
+        expected_worktree,
+        &payload.schema,
+        ENRICHMENT_PAYLOAD_SCHEMA,
+        &payload.provider_id,
+        &payload.provider_version,
+        &payload.language,
+        &payload.worktree_id,
+    )?;
+    if !is_lower_hex_fingerprint(&payload.base_graph_fingerprint) {
+        return Err(ProviderError::new(
+            "provider-fingerprint",
+            "enrichment payload has an invalid base graph fingerprint",
+        ));
+    }
+    if payload.edges.is_empty() && payload.query_hints.is_empty() {
+        return Err(ProviderError::new(
+            "provider-enrichment",
+            "enrichment payload must contain an edge or query hint",
+        ));
+    }
+    if !payload.edges.is_empty()
+        && !manifest
+            .capabilities
+            .contains(&ProviderCapability::SemanticEdges)
+        || !payload.query_hints.is_empty()
+            && !manifest
+                .capabilities
+                .contains(&ProviderCapability::QueryHints)
+    {
+        return Err(ProviderError::new(
+            "provider-manifest-capability",
+            "enrichment output was not declared by the manifest",
+        ));
+    }
+    payload.edges.sort_by(edge_order);
+    let mut edge_keys = BTreeSet::new();
+    for edge in &payload.edges {
+        if edge.from.trim().is_empty()
+            || edge.to.trim().is_empty()
+            || !valid_identifier(&edge.kind)
+            || !edge_keys.insert((&edge.from, &edge.to, &edge.kind))
+        {
+            return Err(ProviderError::new(
+                "provider-edge",
+                "enrichment edge is empty, malformed, or duplicated",
+            ));
+        }
+        validate_evidence(&edge.provenance)?;
+    }
+    payload.query_hints.sort_by(|left, right| {
+        (&left.node_id, &left.kind, &left.message).cmp(&(
+            &right.node_id,
+            &right.kind,
+            &right.message,
+        ))
+    });
+    let mut hints = BTreeSet::new();
+    for hint in &payload.query_hints {
+        if hint.node_id.trim().is_empty()
+            || !valid_identifier(&hint.kind)
+            || hint.message.trim().is_empty()
+            || !hints.insert((&hint.node_id, &hint.kind, &hint.message))
+        {
+            return Err(ProviderError::new(
+                "provider-query-hint",
+                "query hint is empty, malformed, or duplicated",
+            ));
+        }
+        validate_evidence(&hint.provenance)?;
+    }
+    validate_diagnostics(manifest, &mut payload.diagnostics)?;
+    let enrichment_fingerprint = canonical_fingerprint(&(PROVIDER_IR_VERSION, &payload))?;
+    Ok(EnrichmentArtifact {
+        schema: ENRICHMENT_ARTIFACT_SCHEMA.to_string(),
+        ir_version: PROVIDER_IR_VERSION,
+        enrichment_fingerprint,
+        payload,
+    })
+}
+
+pub fn run_provider_process(
+    manifest: &ProviderManifest,
+    registration: &ProviderRegistration,
+    request: &ProviderRequest,
+    cancellation: &CancellationToken,
+) -> Result<ProviderProcessOutput, ProviderError> {
+    validate_registration(manifest, registration)?;
+    validate_request(manifest, request)?;
+    if cancellation.is_cancelled() {
+        return Err(ProviderError::new(
+            "provider-cancelled",
+            "provider request was cancelled before startup",
+        ));
+    }
+    let request_bytes = serde_json::to_vec(request).map_err(|error| {
+        ProviderError::new(
+            "provider-request",
+            format!("failed to serialize provider request: {error}"),
+        )
+    })?;
+
+    let mut command = Command::new(&registration.executable);
+    command
+        .args(&registration.args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(cwd) = &registration.cwd {
+        command.current_dir(cwd);
+    }
+    let mut child = command.spawn().map_err(|error| {
+        ProviderError::new(
+            "provider-start",
+            format!(
+                "failed to start provider {} with explicit executable: {error}",
+                manifest.provider_id
+            ),
+        )
+    })?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| ProviderError::new("provider-io", "provider stdout pipe was unavailable"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| ProviderError::new("provider-io", "provider stderr pipe was unavailable"))?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| ProviderError::new("provider-io", "provider stdin pipe was unavailable"))?;
+    if let Err(error) = stdin
+        .write_all(&request_bytes)
+        .and_then(|()| stdin.write_all(b"\n"))
+    {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(ProviderError::new(
+            "provider-io",
+            format!("failed to write provider request: {error}"),
+        ));
+    }
+    drop(stdin);
+    let overflow = Arc::new(AtomicBool::new(false));
+    let stdout_reader = spawn_bounded_reader(
+        stdout,
+        manifest.limits.max_stdout_bytes,
+        Arc::clone(&overflow),
+    );
+    let stderr_reader = spawn_bounded_reader(
+        stderr,
+        manifest.limits.max_stderr_bytes,
+        Arc::clone(&overflow),
+    );
+
+    let started = Instant::now();
+    let terminal = loop {
+        if cancellation.is_cancelled() {
+            break Err(ProviderError::new(
+                "provider-cancelled",
+                "provider request was cancelled",
+            ));
+        }
+        if overflow.load(Ordering::SeqCst) {
+            break Err(ProviderError::new(
+                "provider-output-limit",
+                "provider stdout or stderr exceeded its manifest limit",
+            ));
+        }
+        if started.elapsed() >= Duration::from_millis(manifest.limits.timeout_ms) {
+            break Err(ProviderError::new(
+                "provider-timeout",
+                format!(
+                    "provider exceeded its {} ms timeout",
+                    manifest.limits.timeout_ms
+                ),
+            ));
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => break Ok(status),
+            Ok(None) => std::thread::sleep(Duration::from_millis(5)),
+            Err(error) => {
+                break Err(ProviderError::new(
+                    "provider-process",
+                    format!("failed while waiting for provider: {error}"),
+                ));
+            }
+        }
+    };
+
+    if terminal.is_err() {
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+    let stdout = join_bounded_reader(stdout_reader)?;
+    let stderr = join_bounded_reader(stderr_reader)?;
+    if overflow.load(Ordering::SeqCst) {
+        return Err(ProviderError::new(
+            "provider-output-limit",
+            "provider stdout or stderr exceeded its manifest limit",
+        ));
+    }
+    let status = terminal?;
+    if !status.success() {
+        let diagnostic = String::from_utf8_lossy(&stderr);
+        return Err(ProviderError::new(
+            "provider-process",
+            format!(
+                "provider exited with {status}; stderr: {}",
+                diagnostic.trim()
+            ),
+        ));
+    }
+    Ok(ProviderProcessOutput { stdout, stderr })
+}
+
+pub fn run_and_publish_extraction(
+    manifest: &ProviderManifest,
+    registration: &ProviderRegistration,
+    request: &ProviderRequest,
+    cancellation: &CancellationToken,
+    output: &Path,
+) -> Result<ExtractionArtifact, ProviderError> {
+    if request.operation != ProviderOperation::Extract {
+        return Err(ProviderError::new(
+            "provider-request",
+            "extraction publication requires an extract request",
+        ));
+    }
+    let process = run_provider_process(manifest, registration, request, cancellation)?;
+    let payload: ExtractionPayload = serde_json::from_slice(&process.stdout).map_err(|error| {
+        ProviderError::new(
+            "provider-response",
+            format!("failed to parse strict extraction payload: {error}"),
+        )
+    })?;
+    let artifact = project_extraction(manifest, &request.worktree_id, payload)?;
+    publish_json_atomic(output, &artifact)?;
+    Ok(artifact)
+}
+
+pub fn run_and_publish_enrichment(
+    manifest: &ProviderManifest,
+    registration: &ProviderRegistration,
+    request: &ProviderRequest,
+    cancellation: &CancellationToken,
+    output: &Path,
+) -> Result<EnrichmentArtifact, ProviderError> {
+    if request.operation != ProviderOperation::Enrich {
+        return Err(ProviderError::new(
+            "provider-request",
+            "enrichment publication requires an enrich request",
+        ));
+    }
+    let process = run_provider_process(manifest, registration, request, cancellation)?;
+    let payload: EnrichmentPayload = serde_json::from_slice(&process.stdout).map_err(|error| {
+        ProviderError::new(
+            "provider-response",
+            format!("failed to parse strict enrichment payload: {error}"),
+        )
+    })?;
+    let artifact = project_enrichment(manifest, &request.worktree_id, payload)?;
+    publish_json_atomic(output, &artifact)?;
+    Ok(artifact)
+}
+
+pub fn publish_json_atomic(output: &Path, value: &impl Serialize) -> Result<(), ProviderError> {
+    let parent = output
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent).map_err(|error| {
+        ProviderError::new(
+            "provider-publish",
+            format!(
+                "failed to create output directory {}: {error}",
+                parent.display()
+            ),
+        )
+    })?;
+    let file_name = output
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            ProviderError::new("provider-publish", "output path has no UTF-8 file name")
+        })?;
+    let sequence = TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let temporary = parent.join(format!(
+        ".{file_name}.tmp-{}-{sequence}",
+        std::process::id()
+    ));
+    let result = (|| -> Result<(), ProviderError> {
+        let mut bytes = serde_json::to_vec_pretty(value).map_err(|error| {
+            ProviderError::new(
+                "provider-serialization",
+                format!("failed to serialize provider artifact: {error}"),
+            )
+        })?;
+        bytes.push(b'\n');
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|error| {
+                ProviderError::new(
+                    "provider-publish",
+                    format!("failed to create {}: {error}", temporary.display()),
+                )
+            })?;
+        file.write_all(&bytes)
+            .and_then(|()| file.sync_all())
+            .map_err(|error| {
+                ProviderError::new(
+                    "provider-publish",
+                    format!("failed to write {}: {error}", temporary.display()),
+                )
+            })?;
+        std::fs::rename(&temporary, output).map_err(|error| {
+            ProviderError::new(
+                "provider-publish",
+                format!(
+                    "failed to atomically publish {} to {}: {error}",
+                    temporary.display(),
+                    output.display()
+                ),
+            )
+        })
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
+}
+
+pub fn load_provider_manifest(path: &Path) -> Result<ProviderManifest, ProviderError> {
+    let manifest: ProviderManifest = load_strict_json(path, "provider-manifest")?;
+    validate_manifest(&manifest)?;
+    Ok(manifest)
+}
+
+pub fn load_provider_registration(path: &Path) -> Result<ProviderRegistration, ProviderError> {
+    load_strict_json(path, "provider-registration")
+}
+
+pub fn load_conformance_fixture(path: &Path) -> Result<ProviderConformanceFixture, ProviderError> {
+    let mut fixture: ProviderConformanceFixture =
+        load_strict_json(path, "provider-conformance-fixture")?;
+    validate_conformance_fixture(&mut fixture)?;
+    Ok(fixture)
+}
+
+pub fn run_provider_conformance(
+    manifest: &ProviderManifest,
+    registration: &ProviderRegistration,
+    fixture: &ProviderConformanceFixture,
+    workspace_root: &Path,
+    scratch_dir: &Path,
+) -> Result<ProviderConformanceReceipt, ProviderError> {
+    validate_manifest(manifest)?;
+    validate_registration(manifest, registration)?;
+    let mut fixture = fixture.clone();
+    validate_conformance_fixture(&mut fixture)?;
+    if !workspace_root.is_dir() {
+        return Err(ProviderError::new(
+            "provider-conformance-fixture",
+            format!("workspace root {} does not exist", workspace_root.display()),
+        ));
+    }
+    let repository_root = workspace_root.join(&fixture.repository_root);
+    if !repository_root.is_dir() {
+        return Err(ProviderError::new(
+            "provider-conformance-fixture",
+            format!(
+                "fixture repository {} does not exist",
+                repository_root.display()
+            ),
+        ));
+    }
+    std::fs::create_dir_all(scratch_dir).map_err(|error| {
+        ProviderError::new(
+            "provider-conformance",
+            format!(
+                "failed to create conformance scratch directory {}: {error}",
+                scratch_dir.display()
+            ),
+        )
+    })?;
+    let registration = registration_for_workspace(registration, workspace_root);
+    validate_registration(manifest, &registration)?;
+    let artifact_path = scratch_dir.join("extraction-artifact.json");
+    let execute = |case_id: &str, cancellation: &CancellationToken| {
+        let request = conformance_request(&fixture, &repository_root, case_id);
+        run_and_publish_extraction(
+            manifest,
+            &registration,
+            &request,
+            cancellation,
+            &artifact_path,
+        )
+    };
+
+    let fresh = execute("fresh", &CancellationToken::new());
+    let stable_id = match &fresh {
+        Ok(artifact) => {
+            let actual = artifact
+                .payload
+                .nodes
+                .iter()
+                .map(|node| node.id.clone())
+                .collect::<Vec<_>>();
+            conformance_assert(
+                "stable-id",
+                actual == fixture.expected_node_ids,
+                None,
+                format!(
+                    "expected node ids {:?}, received {actual:?}",
+                    fixture.expected_node_ids
+                ),
+            )
+        }
+        Err(error) => conformance_error("stable-id", error),
+    };
+
+    let repeat = execute("repeat", &CancellationToken::new());
+    let deterministic = match (&fresh, &repeat) {
+        (Ok(first), Ok(second)) => conformance_assert(
+            "deterministic-repeat",
+            first.graph_fingerprint == second.graph_fingerprint,
+            None,
+            "repeated canonical graph fingerprints differ".to_string(),
+        ),
+        (Err(error), _) | (_, Err(error)) => conformance_error("deterministic-repeat", error),
+    };
+
+    let partial = execute("partial-parse", &CancellationToken::new());
+    let partial_parse = match partial {
+        Ok(artifact) => conformance_assert(
+            "partial-parse",
+            artifact.payload.freshness.state == FreshnessState::Partial
+                && !artifact.payload.freshness.affected_paths.is_empty()
+                && !artifact.payload.diagnostics.is_empty(),
+            None,
+            "partial response did not preserve affected paths and diagnostics".to_string(),
+        ),
+        Err(ref error) => conformance_error("partial-parse", error),
+    };
+
+    let stale = execute("stale", &CancellationToken::new());
+    let wrong = execute("wrong-worktree", &CancellationToken::new());
+    let stale_worktree = match (stale, wrong) {
+        (Ok(stale), Err(wrong)) => conformance_assert(
+            "stale-worktree",
+            stale.payload.freshness.state == FreshnessState::Stale
+                && !stale.payload.freshness.affected_paths.is_empty()
+                && wrong.code() == "provider-worktree-mismatch",
+            Some(wrong.code().to_string()),
+            "stale evidence or wrong-worktree rejection was not preserved".to_string(),
+        ),
+        (Err(ref error), _) => conformance_error("stale-worktree", error),
+        (_, Ok(_)) => conformance_assert(
+            "stale-worktree",
+            false,
+            None,
+            "wrong-worktree response was accepted".to_string(),
+        ),
+    };
+
+    let unknown = execute("unknown-schema", &CancellationToken::new());
+    let unknown_schema = expected_error_check("unknown-schema", unknown, "provider-schema");
+
+    let bounded_request = conformance_request(&fixture, &repository_root, "bounded-output");
+    let bounded = run_provider_process(
+        manifest,
+        &registration,
+        &bounded_request,
+        &CancellationToken::new(),
+    );
+    let bounded_output =
+        expected_process_error_check("bounded-output", bounded, "provider-output-limit");
+
+    let cancellation = CancellationToken::new();
+    let trigger = cancellation.clone();
+    let canceller = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(20));
+        trigger.cancel();
+    });
+    let cancel_request = conformance_request(&fixture, &repository_root, "cancellation");
+    let cancelled = run_provider_process(manifest, &registration, &cancel_request, &cancellation);
+    let cancellation_check = if canceller.join().is_err() {
+        conformance_assert(
+            "cancellation",
+            false,
+            None,
+            "conformance cancellation trigger panicked".to_string(),
+        )
+    } else {
+        expected_process_error_check("cancellation", cancelled, "provider-cancelled")
+    };
+
+    let atomic_publish = atomic_conformance_check(
+        manifest,
+        &registration,
+        &fixture,
+        &repository_root,
+        &artifact_path,
+    );
+    let checks = vec![
+        stable_id,
+        deterministic,
+        partial_parse,
+        stale_worktree,
+        unknown_schema,
+        bounded_output,
+        cancellation_check,
+        atomic_publish,
+    ];
+    let state = if checks.iter().all(|check| check.passed) {
+        ConformanceState::Passed
+    } else {
+        ConformanceState::Blocked
+    };
+    Ok(ProviderConformanceReceipt {
+        schema: PROVIDER_CONFORMANCE_RECEIPT_SCHEMA.to_string(),
+        provider_id: manifest.provider_id.clone(),
+        provider_version: manifest.provider_version.clone(),
+        manifest_fingerprint: canonical_fingerprint(manifest)?,
+        fixture_id: fixture.fixture_id,
+        state,
+        checks,
+    })
+}
+
+fn atomic_conformance_check(
+    manifest: &ProviderManifest,
+    registration: &ProviderRegistration,
+    fixture: &ProviderConformanceFixture,
+    repository_root: &Path,
+    artifact_path: &Path,
+) -> ConformanceCheck {
+    let fresh_request = conformance_request(fixture, repository_root, "fresh");
+    if let Err(error) = run_and_publish_extraction(
+        manifest,
+        registration,
+        &fresh_request,
+        &CancellationToken::new(),
+        artifact_path,
+    ) {
+        return conformance_error("atomic-publish", &error);
+    }
+    let before = match std::fs::read(artifact_path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            return conformance_assert(
+                "atomic-publish",
+                false,
+                None,
+                format!("failed to read seeded artifact: {error}"),
+            );
+        }
+    };
+    let invalid_request = conformance_request(fixture, repository_root, "unknown-schema");
+    let result = run_and_publish_extraction(
+        manifest,
+        registration,
+        &invalid_request,
+        &CancellationToken::new(),
+        artifact_path,
+    );
+    let after = std::fs::read(artifact_path);
+    let temporary_absent = artifact_path
+        .parent()
+        .and_then(|parent| std::fs::read_dir(parent).ok())
+        .is_some_and(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .all(|entry| !entry.file_name().to_string_lossy().contains(".tmp-"))
+        });
+    let diagnostic_code = result.as_ref().err().map(|error| error.code().to_string());
+    conformance_assert(
+        "atomic-publish",
+        result
+            .as_ref()
+            .is_err_and(|error| error.code() == "provider-schema")
+            && after.is_ok_and(|bytes| bytes == before)
+            && temporary_absent,
+        diagnostic_code,
+        "invalid response changed the prior artifact or left a temporary file".to_string(),
+    )
+}
+
+fn expected_error_check(
+    id: &str,
+    result: Result<ExtractionArtifact, ProviderError>,
+    expected: &str,
+) -> ConformanceCheck {
+    match result {
+        Err(error) => conformance_assert(
+            id,
+            error.code() == expected,
+            Some(error.code().to_string()),
+            format!("expected {expected}, received {}", error.code()),
+        ),
+        Ok(_) => conformance_assert(
+            id,
+            false,
+            None,
+            format!("expected {expected}, but provider output was accepted"),
+        ),
+    }
+}
+
+fn expected_process_error_check(
+    id: &str,
+    result: Result<ProviderProcessOutput, ProviderError>,
+    expected: &str,
+) -> ConformanceCheck {
+    match result {
+        Err(error) => conformance_assert(
+            id,
+            error.code() == expected,
+            Some(error.code().to_string()),
+            format!("expected {expected}, received {}", error.code()),
+        ),
+        Ok(_) => conformance_assert(
+            id,
+            false,
+            None,
+            format!("expected {expected}, but provider process succeeded"),
+        ),
+    }
+}
+
+fn conformance_assert(
+    id: &str,
+    passed: bool,
+    diagnostic_code: Option<String>,
+    failure_message: String,
+) -> ConformanceCheck {
+    ConformanceCheck {
+        id: id.to_string(),
+        passed,
+        diagnostic_code,
+        message: if passed {
+            "conformance invariant satisfied".to_string()
+        } else {
+            failure_message
+        },
+    }
+}
+
+fn conformance_error(id: &str, error: &ProviderError) -> ConformanceCheck {
+    conformance_assert(id, false, Some(error.code().to_string()), error.to_string())
+}
+
+fn conformance_request(
+    fixture: &ProviderConformanceFixture,
+    repository_root: &Path,
+    case_id: &str,
+) -> ProviderRequest {
+    ProviderRequest {
+        schema: PROVIDER_REQUEST_SCHEMA.to_string(),
+        request_id: format!("{}-{case_id}", fixture.fixture_id),
+        operation: ProviderOperation::Extract,
+        repository_root: repository_root.to_string_lossy().into_owned(),
+        worktree_id: fixture.worktree_id.clone(),
+        revision: Some(fixture.revision.clone()),
+        conformance_case: Some(case_id.to_string()),
+    }
+}
+
+fn registration_for_workspace(
+    registration: &ProviderRegistration,
+    workspace_root: &Path,
+) -> ProviderRegistration {
+    let mut registration = registration.clone();
+    if let Some(cwd) = registration.cwd.as_deref() {
+        let cwd = Path::new(cwd);
+        if cwd.is_relative() {
+            registration.cwd = Some(workspace_root.join(cwd).to_string_lossy().into_owned());
+        }
+    }
+    let executable = Path::new(&registration.executable);
+    if executable.components().count() > 1 && executable.is_relative() {
+        registration.executable = workspace_root
+            .join(executable)
+            .to_string_lossy()
+            .into_owned();
+    }
+    registration
+}
+
+fn validate_conformance_fixture(
+    fixture: &mut ProviderConformanceFixture,
+) -> Result<(), ProviderError> {
+    if fixture.schema != PROVIDER_CONFORMANCE_FIXTURE_SCHEMA
+        || !valid_identifier(&fixture.fixture_id)
+        || fixture.worktree_id.trim().is_empty()
+        || fixture.revision.trim().is_empty()
+        || fixture.expected_node_ids.is_empty()
+    {
+        return Err(ProviderError::new(
+            "provider-conformance-fixture",
+            "conformance fixture schema or identity is invalid",
+        ));
+    }
+    validate_repository_path(&fixture.repository_root)?;
+    fixture.expected_node_ids.sort();
+    if fixture
+        .expected_node_ids
+        .windows(2)
+        .any(|pair| pair[0] == pair[1])
+    {
+        return Err(ProviderError::new(
+            "provider-conformance-fixture",
+            "conformance expected node ids contain duplicates",
+        ));
+    }
+    Ok(())
+}
+
+fn load_strict_json<T: for<'de> Deserialize<'de>>(
+    path: &Path,
+    code: &'static str,
+) -> Result<T, ProviderError> {
+    let bytes = std::fs::read(path).map_err(|error| {
+        ProviderError::new(code, format!("failed to read {}: {error}", path.display()))
+    })?;
+    serde_json::from_slice(&bytes).map_err(|error| {
+        ProviderError::new(
+            code,
+            format!("failed to parse strict JSON {}: {error}", path.display()),
+        )
+    })
+}
+
+fn validate_request(
+    manifest: &ProviderManifest,
+    request: &ProviderRequest,
+) -> Result<(), ProviderError> {
+    let expected_operation = match manifest.role {
+        ProviderRole::Extractor => ProviderOperation::Extract,
+        ProviderRole::SemanticEnricher => ProviderOperation::Enrich,
+    };
+    if request.schema != PROVIDER_REQUEST_SCHEMA
+        || !valid_identifier(&request.request_id)
+        || request.operation != expected_operation
+        || request.repository_root.trim().is_empty()
+        || request.worktree_id.trim().is_empty()
+        || request
+            .revision
+            .as_deref()
+            .is_some_and(|revision| revision.trim().is_empty())
+        || request
+            .conformance_case
+            .as_deref()
+            .is_some_and(|case| !valid_identifier(case))
+    {
+        return Err(ProviderError::new(
+            "provider-request",
+            "provider request schema, operation, identity, or repository context is invalid",
+        ));
+    }
+    Ok(())
+}
+
+fn spawn_bounded_reader<R: Read + Send + 'static>(
+    mut reader: R,
+    limit: usize,
+    overflow: Arc<AtomicBool>,
+) -> std::thread::JoinHandle<std::io::Result<Vec<u8>>> {
+    std::thread::spawn(move || {
+        let mut bytes = Vec::with_capacity(limit.min(8 * 1024));
+        let mut buffer = [0_u8; 8 * 1024];
+        loop {
+            let read = reader.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            let remaining = limit.saturating_sub(bytes.len());
+            bytes.extend_from_slice(&buffer[..read.min(remaining)]);
+            if read > remaining {
+                overflow.store(true, Ordering::SeqCst);
+                break;
+            }
+        }
+        Ok(bytes)
+    })
+}
+
+fn join_bounded_reader(
+    reader: std::thread::JoinHandle<std::io::Result<Vec<u8>>>,
+) -> Result<Vec<u8>, ProviderError> {
+    reader
+        .join()
+        .map_err(|_| ProviderError::new("provider-io", "provider output reader panicked"))?
+        .map_err(|error| {
+            ProviderError::new(
+                "provider-io",
+                format!("failed to read provider output: {error}"),
+            )
+        })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_payload_identity(
+    manifest: &ProviderManifest,
+    expected_worktree: &str,
+    actual_schema: &str,
+    expected_schema: &str,
+    provider_id: &str,
+    provider_version: &str,
+    language: &str,
+    worktree_id: &str,
+) -> Result<(), ProviderError> {
+    if actual_schema != expected_schema {
+        return Err(ProviderError::new(
+            "provider-schema",
+            format!("unsupported provider payload schema `{actual_schema}`"),
+        ));
+    }
+    if provider_id != manifest.provider_id
+        || provider_version != manifest.provider_version
+        || language != manifest.language
+    {
+        return Err(ProviderError::new(
+            "provider-identity",
+            "payload provider identity does not match its manifest",
+        ));
+    }
+    if expected_worktree.trim().is_empty() || worktree_id != expected_worktree {
+        return Err(ProviderError::new(
+            "provider-worktree-mismatch",
+            format!("expected worktree `{expected_worktree}`, received `{worktree_id}`"),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_freshness(
+    freshness: &mut FreshnessReport,
+    diagnostics: &[ProviderDiagnostic],
+) -> Result<(), ProviderError> {
+    freshness
+        .inputs
+        .sort_by(|left, right| left.path.cmp(&right.path));
+    let mut input_paths = BTreeSet::new();
+    for input in &freshness.inputs {
+        validate_repository_path(&input.path)?;
+        if !is_lower_hex_fingerprint(&input.fingerprint) || !input_paths.insert(input.path.as_str())
+        {
+            return Err(ProviderError::new(
+                "provider-freshness",
+                "freshness inputs need unique paths and 64-character fingerprints",
+            ));
+        }
+    }
+    if freshness.inputs.is_empty() {
+        return Err(ProviderError::new(
+            "provider-freshness",
+            "freshness input facts must not be empty",
+        ));
+    }
+    freshness.affected_paths.sort();
+    freshness.affected_paths.dedup();
+    for path in &freshness.affected_paths {
+        validate_repository_path(path)?;
+    }
+    match freshness.state {
+        FreshnessState::Fresh if !freshness.affected_paths.is_empty() => Err(ProviderError::new(
+            "provider-freshness",
+            "fresh payload cannot declare affected stale or partial paths",
+        )),
+        FreshnessState::Stale | FreshnessState::Partial
+            if freshness.affected_paths.is_empty() || diagnostics.is_empty() =>
+        {
+            Err(ProviderError::new(
+                "provider-freshness",
+                "stale and partial payloads require affected paths and diagnostics",
+            ))
+        }
+        _ => Ok(()),
+    }
+}
+
+fn validate_diagnostics(
+    manifest: &ProviderManifest,
+    diagnostics: &mut Vec<ProviderDiagnostic>,
+) -> Result<(), ProviderError> {
+    if diagnostics.len() > manifest.limits.max_diagnostics {
+        return Err(ProviderError::new(
+            "provider-diagnostic-limit",
+            "provider emitted more diagnostics than its manifest allows",
+        ));
+    }
+    diagnostics.sort_by(|left, right| {
+        (&left.code, &left.path, &left.message, left.severity).cmp(&(
+            &right.code,
+            &right.path,
+            &right.message,
+            right.severity,
+        ))
+    });
+    for diagnostic in diagnostics {
+        if !valid_identifier(&diagnostic.code) || diagnostic.message.trim().is_empty() {
+            return Err(ProviderError::new(
+                "provider-diagnostic",
+                "provider diagnostic has an invalid code or empty message",
+            ));
+        }
+        if let Some(path) = &diagnostic.path {
+            validate_repository_path(path)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_evidence(evidence: &ProviderEvidence) -> Result<(), ProviderError> {
+    if !valid_identifier(&evidence.extractor)
+        || evidence.extractor_version.trim().is_empty()
+        || evidence.evidence.trim().is_empty()
+    {
+        return Err(ProviderError::new(
+            "provider-evidence",
+            "provider fact must carry extractor, version, evidence, and confidence",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_span(span: Option<&SourceSpan>) -> Result<(), ProviderError> {
+    if span.is_some_and(|span| {
+        span.line_start == 0
+            || span.line_end < span.line_start
+            || span.line_end == span.line_start && span.column_end < span.column_start
+    }) {
+        return Err(ProviderError::new(
+            "provider-span",
+            "source span is reversed or uses a zero line",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_repository_path(path: &str) -> Result<(), ProviderError> {
+    if path.trim().is_empty()
+        || path.starts_with('/')
+        || path.contains('\\')
+        || path
+            .split('/')
+            .any(|component| component.is_empty() || component == "." || component == "..")
+    {
+        return Err(ProviderError::new(
+            "provider-path",
+            format!("`{path}` is not a normalized repository-relative path"),
+        ));
+    }
+    Ok(())
+}
+
+fn edge_order(left: &ProviderEdge, right: &ProviderEdge) -> std::cmp::Ordering {
+    (&left.from, &left.to, &left.kind).cmp(&(&right.from, &right.to, &right.kind))
+}
+
+fn canonical_fingerprint(value: &impl Serialize) -> Result<String, ProviderError> {
+    let bytes = serde_json::to_vec(value).map_err(|error| {
+        ProviderError::new(
+            "provider-serialization",
+            format!("failed to serialize canonical provider artifact: {error}"),
+        )
+    })?;
+    Ok(blake3::hash(&bytes).to_hex().to_string())
+}
+
+fn is_lower_hex_fingerprint(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn valid_identifier(value: &str) -> bool {
+    let mut characters = value.chars();
+    characters
+        .next()
+        .is_some_and(|first| first.is_ascii_lowercase())
+        && characters.all(|character| {
+            character.is_ascii_lowercase()
+                || character.is_ascii_digit()
+                || character == '-'
+                || character == '_'
+        })
+}
+
+fn valid_freshness_pattern(pattern: &str) -> bool {
+    !pattern.trim().is_empty()
+        && !pattern.starts_with('/')
+        && !pattern.contains('\\')
+        && pattern
+            .split('/')
+            .all(|component| !component.is_empty() && component != "." && component != "..")
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+    use std::path::{Path, PathBuf};
+    use std::time::Duration;
+
+    fn limits() -> ResourceLimits {
+        ResourceLimits {
+            timeout_ms: 5_000,
+            max_stdout_bytes: 64 * 1024,
+            max_stderr_bytes: 16 * 1024,
+            max_diagnostics: 32,
+        }
+    }
+
+    fn extractor_manifest() -> ProviderManifest {
+        ProviderManifest {
+            schema: PROVIDER_MANIFEST_SCHEMA.to_string(),
+            provider_id: "fixture-extractor".to_string(),
+            provider_version: "1.0.0".to_string(),
+            language: "fixture".to_string(),
+            ir_schema: SchemaRange { min: 1, max: 1 },
+            role: ProviderRole::Extractor,
+            capabilities: BTreeSet::from([
+                ProviderCapability::Nodes,
+                ProviderCapability::Containment,
+                ProviderCapability::BasicReferences,
+            ]),
+            startup: StartupProtocol::StdioJsonV1,
+            freshness_inputs: vec!["src/**".to_string()],
+            limits: limits(),
+            deterministic: true,
+            supports_no_daemon: true,
+        }
+    }
+
+    fn evidence() -> ProviderEvidence {
+        ProviderEvidence {
+            extractor: "fixture-parser".to_string(),
+            extractor_version: "1.0.0".to_string(),
+            evidence: "fixture syntax".to_string(),
+            confidence: EvidenceConfidence::Exact,
+        }
+    }
+
+    fn extraction_payload() -> ExtractionPayload {
+        ExtractionPayload {
+            schema: EXTRACTION_PAYLOAD_SCHEMA.to_string(),
+            provider_id: "fixture-extractor".to_string(),
+            provider_version: "1.0.0".to_string(),
+            language: "fixture".to_string(),
+            worktree_id: "worktree-main".to_string(),
+            freshness: FreshnessReport {
+                state: FreshnessState::Fresh,
+                inputs: vec![FreshnessFact {
+                    path: "src/lib.fixture".to_string(),
+                    fingerprint: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                        .to_string(),
+                }],
+                affected_paths: Vec::new(),
+            },
+            nodes: vec![
+                ProviderNode {
+                    id: "fixture-extractor:module:root".to_string(),
+                    name: "root".to_string(),
+                    kind: "module".to_string(),
+                    path: "src/lib.fixture".to_string(),
+                    span: None,
+                    provenance: evidence(),
+                },
+                ProviderNode {
+                    id: "fixture-extractor:function:root/run".to_string(),
+                    name: "run".to_string(),
+                    kind: "function".to_string(),
+                    path: "src/lib.fixture".to_string(),
+                    span: Some(SourceSpan {
+                        line_start: 2,
+                        column_start: 1,
+                        line_end: 3,
+                        column_end: 2,
+                    }),
+                    provenance: evidence(),
+                },
+            ],
+            edges: vec![ProviderEdge {
+                from: "fixture-extractor:module:root".to_string(),
+                to: "fixture-extractor:function:root/run".to_string(),
+                kind: "contains".to_string(),
+                provenance: evidence(),
+            }],
+            diagnostics: Vec::new(),
+        }
+    }
+
+    fn request() -> ProviderRequest {
+        ProviderRequest {
+            schema: PROVIDER_REQUEST_SCHEMA.to_string(),
+            request_id: "fixture-request".to_string(),
+            operation: ProviderOperation::Extract,
+            repository_root: "/workspace/fixture".to_string(),
+            worktree_id: "worktree-main".to_string(),
+            revision: Some("0123456789abcdef0123456789abcdef01234567".to_string()),
+            conformance_case: None,
+        }
+    }
+
+    fn process_fixture(name: &str) -> (PathBuf, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir =
+            std::env::temp_dir().join(format!("agent-spec-provider-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("provider.sh");
+        std::fs::write(
+            &script,
+            r#"#!/bin/sh
+IFS= read -r request
+case "$1" in
+  emit) cat "$2" ;;
+  stdout) i=0; while [ "$i" -lt 300 ]; do printf x; i=$((i + 1)); done ;;
+  stderr) i=0; while [ "$i" -lt 300 ]; do printf x >&2; i=$((i + 1)); done ;;
+  sleep) while :; do :; done ;;
+  *) exit 17 ;;
+esac
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        (dir, script)
+    }
+
+    fn registration(script: &Path, args: Vec<String>) -> ProviderRegistration {
+        ProviderRegistration {
+            schema: PROVIDER_REGISTRATION_SCHEMA.to_string(),
+            provider_id: "fixture-extractor".to_string(),
+            enabled: true,
+            executable: script.to_string_lossy().into_owned(),
+            args,
+            cwd: None,
+        }
+    }
+
+    #[test]
+    fn test_provider_sdk_stays_rust_atlas_independent() {
+        let manifest = include_str!("../Cargo.toml");
+        assert!(!manifest.contains("rust-atlas"));
+        assert!(!manifest.contains("path = \"../..\""));
+    }
+
+    #[test]
+    fn test_manifest_validates_role_schema_capabilities_and_limits() {
+        validate_manifest(&extractor_manifest()).unwrap();
+
+        let mut invalid_role = extractor_manifest();
+        invalid_role
+            .capabilities
+            .insert(ProviderCapability::SemanticEdges);
+        assert_eq!(
+            validate_manifest(&invalid_role).unwrap_err().code(),
+            "provider-manifest-capability"
+        );
+
+        let mut invalid_schema = extractor_manifest();
+        invalid_schema.ir_schema = SchemaRange { min: 2, max: 3 };
+        assert_eq!(
+            validate_manifest(&invalid_schema).unwrap_err().code(),
+            "provider-manifest-schema"
+        );
+
+        let mut unbounded = extractor_manifest();
+        unbounded.limits.max_stdout_bytes = usize::MAX;
+        assert_eq!(
+            validate_manifest(&unbounded).unwrap_err().code(),
+            "provider-manifest-limit"
+        );
+    }
+
+    #[test]
+    fn test_registration_is_opt_in_and_uses_literal_argv() {
+        let manifest = extractor_manifest();
+        let mut registration = ProviderRegistration {
+            schema: PROVIDER_REGISTRATION_SCHEMA.to_string(),
+            provider_id: manifest.provider_id.clone(),
+            enabled: false,
+            executable: "/opt/provider/bin/extract".to_string(),
+            args: vec!["--flag=value with spaces".to_string()],
+            cwd: Some(".".to_string()),
+        };
+        assert_eq!(
+            validate_registration(&manifest, &registration)
+                .unwrap_err()
+                .code(),
+            "provider-disabled"
+        );
+
+        registration.enabled = true;
+        validate_registration(&manifest, &registration).unwrap();
+        assert_eq!(registration.args, ["--flag=value with spaces"]);
+
+        registration.executable.clear();
+        assert_eq!(
+            validate_registration(&manifest, &registration)
+                .unwrap_err()
+                .code(),
+            "provider-registration"
+        );
+    }
+
+    #[test]
+    fn test_extraction_projection_is_stable_and_provider_scoped() {
+        let manifest = extractor_manifest();
+        let mut original = extraction_payload();
+        original.freshness.state = FreshnessState::Partial;
+        original.freshness.affected_paths = vec!["src/lib.fixture".to_string()];
+        original.diagnostics = vec![
+            ProviderDiagnostic {
+                code: "fixture-diagnostic".to_string(),
+                severity: DiagnosticSeverity::Warning,
+                message: "same diagnostic identity".to_string(),
+                path: Some("src/lib.fixture".to_string()),
+            },
+            ProviderDiagnostic {
+                code: "fixture-diagnostic".to_string(),
+                severity: DiagnosticSeverity::Error,
+                message: "same diagnostic identity".to_string(),
+                path: Some("src/lib.fixture".to_string()),
+            },
+        ];
+        let first = project_extraction(&manifest, "worktree-main", original.clone()).unwrap();
+
+        let mut reordered = original;
+        reordered.nodes.reverse();
+        reordered.diagnostics.reverse();
+        let second = project_extraction(&manifest, "worktree-main", reordered).unwrap();
+
+        assert_eq!(first, second);
+        assert_eq!(first.schema, EXTRACTION_ARTIFACT_SCHEMA);
+        assert_eq!(first.ir_version, PROVIDER_IR_VERSION);
+        assert!(
+            first
+                .payload
+                .nodes
+                .iter()
+                .all(|node| node.id.starts_with("fixture-extractor:"))
+        );
+        assert_eq!(first.graph_fingerprint.len(), 64);
+    }
+
+    #[test]
+    fn test_extraction_rejects_unscoped_ids_and_unsafe_paths() {
+        let manifest = extractor_manifest();
+        let mut unscoped = extraction_payload();
+        unscoped.nodes[0].id = "other:module:root".to_string();
+        assert_eq!(
+            project_extraction(&manifest, "worktree-main", unscoped)
+                .unwrap_err()
+                .code(),
+            "provider-node-id"
+        );
+
+        for unsafe_path in ["/src/lib.fixture", "src\\lib.fixture", "src/../secret"] {
+            let mut payload = extraction_payload();
+            payload.nodes[0].path = unsafe_path.to_string();
+            assert_eq!(
+                project_extraction(&manifest, "worktree-main", payload)
+                    .unwrap_err()
+                    .code(),
+                "provider-path"
+            );
+        }
+    }
+
+    #[test]
+    fn test_projection_preserves_partial_and_stale_diagnostics() {
+        let manifest = extractor_manifest();
+        for state in [FreshnessState::Partial, FreshnessState::Stale] {
+            let mut payload = extraction_payload();
+            payload.freshness.state = state;
+            payload.freshness.affected_paths = vec!["src/broken.fixture".to_string()];
+            payload.diagnostics.push(ProviderDiagnostic {
+                code: "fixture-parse".to_string(),
+                severity: DiagnosticSeverity::Warning,
+                message: "fixture parser retained partial facts".to_string(),
+                path: Some("src/broken.fixture".to_string()),
+            });
+            let artifact = project_extraction(&manifest, "worktree-main", payload).unwrap();
+            assert_eq!(artifact.payload.freshness.state, state);
+            assert_eq!(
+                artifact.payload.freshness.affected_paths,
+                ["src/broken.fixture"]
+            );
+            assert_eq!(artifact.payload.diagnostics.len(), 1);
+        }
+    }
+
+    #[test]
+    fn test_projection_rejects_wrong_worktree() {
+        let error = project_extraction(
+            &extractor_manifest(),
+            "worktree-other",
+            extraction_payload(),
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), "provider-worktree-mismatch");
+    }
+
+    #[test]
+    fn test_enricher_schema_is_additive_and_evidence_bearing() {
+        let mut manifest = extractor_manifest();
+        manifest.provider_id = "fixture-enricher".to_string();
+        manifest.role = ProviderRole::SemanticEnricher;
+        manifest.capabilities = BTreeSet::from([
+            ProviderCapability::SemanticEdges,
+            ProviderCapability::QueryHints,
+        ]);
+        let payload = EnrichmentPayload {
+            schema: ENRICHMENT_PAYLOAD_SCHEMA.to_string(),
+            provider_id: manifest.provider_id.clone(),
+            provider_version: manifest.provider_version.clone(),
+            language: manifest.language.clone(),
+            worktree_id: "worktree-main".to_string(),
+            base_graph_fingerprint:
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
+            edges: vec![ProviderEdge {
+                from: "fixture-extractor:function:root/run".to_string(),
+                to: "external:runtime:dispatch".to_string(),
+                kind: "dispatch-candidate".to_string(),
+                provenance: ProviderEvidence {
+                    confidence: EvidenceConfidence::Candidate,
+                    ..evidence()
+                },
+            }],
+            query_hints: vec![ProviderQueryHint {
+                node_id: "fixture-extractor:function:root/run".to_string(),
+                kind: "runtime-boundary".to_string(),
+                message: "runtime dispatch continues beyond the static graph".to_string(),
+                provenance: ProviderEvidence {
+                    confidence: EvidenceConfidence::Heuristic,
+                    ..evidence()
+                },
+            }],
+            diagnostics: Vec::new(),
+        };
+
+        let artifact = project_enrichment(&manifest, "worktree-main", payload).unwrap();
+        let value = serde_json::to_value(&artifact).unwrap();
+        assert!(value["payload"].get("nodes").is_none());
+        assert!(value["payload"].get("requirements").is_none());
+        assert_eq!(artifact.enrichment_fingerprint.len(), 64);
+
+        let mut missing_evidence = artifact.payload;
+        missing_evidence.edges[0].provenance.evidence.clear();
+        assert_eq!(
+            project_enrichment(&manifest, "worktree-main", missing_evidence)
+                .unwrap_err()
+                .code(),
+            "provider-evidence"
+        );
+    }
+
+    #[test]
+    fn test_adapter_rejects_unknown_wire_schema() {
+        let (dir, script) = process_fixture("unknown-schema");
+        let response = dir.join("response.json");
+        let mut payload = extraction_payload();
+        payload.schema = "agent-spec/code-graph-provider/extraction-payload-v99".to_string();
+        std::fs::write(&response, serde_json::to_vec(&payload).unwrap()).unwrap();
+        let target = dir.join("graph.json");
+        std::fs::write(&target, b"old-graph\n").unwrap();
+
+        let error = run_and_publish_extraction(
+            &extractor_manifest(),
+            &registration(
+                &script,
+                vec!["emit".to_string(), response.to_string_lossy().into_owned()],
+            ),
+            &request(),
+            &CancellationToken::new(),
+            &target,
+        )
+        .unwrap_err();
+
+        assert_eq!(error.code(), "provider-schema");
+        assert_eq!(std::fs::read(&target).unwrap(), b"old-graph\n");
+    }
+
+    #[test]
+    fn test_process_adapter_enforces_output_limits() {
+        let (dir, script) = process_fixture("output-limits");
+        let mut manifest = extractor_manifest();
+        manifest.limits.max_stdout_bytes = 256;
+        manifest.limits.max_stderr_bytes = 256;
+        for mode in ["stdout", "stderr"] {
+            let error = run_provider_process(
+                &manifest,
+                &registration(&script, vec![mode.to_string()]),
+                &request(),
+                &CancellationToken::new(),
+            )
+            .unwrap_err();
+            assert_eq!(error.code(), "provider-output-limit", "{mode}");
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn test_process_adapter_honors_timeout_and_cancellation() {
+        let (dir, script) = process_fixture("stop");
+        let mut timeout_manifest = extractor_manifest();
+        timeout_manifest.limits.timeout_ms = 20;
+        let sleep_registration = registration(&script, vec!["sleep".to_string()]);
+        let error = run_provider_process(
+            &timeout_manifest,
+            &sleep_registration,
+            &request(),
+            &CancellationToken::new(),
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), "provider-timeout");
+
+        let token = CancellationToken::new();
+        let trigger = token.clone();
+        let canceller = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            trigger.cancel();
+        });
+        let error = run_provider_process(
+            &extractor_manifest(),
+            &sleep_registration,
+            &request(),
+            &token,
+        )
+        .unwrap_err();
+        canceller.join().unwrap();
+        assert_eq!(error.code(), "provider-cancelled");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn test_atomic_publish_preserves_previous_artifact_on_failure() {
+        let (dir, script) = process_fixture("atomic");
+        let response = dir.join("response.json");
+        std::fs::write(&response, b"{not-json\n").unwrap();
+        let target = dir.join("graph.json");
+        let previous = b"previous-canonical-artifact\n";
+        std::fs::write(&target, previous).unwrap();
+
+        let error = run_and_publish_extraction(
+            &extractor_manifest(),
+            &registration(
+                &script,
+                vec!["emit".to_string(), response.to_string_lossy().into_owned()],
+            ),
+            &request(),
+            &CancellationToken::new(),
+            &target,
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), "provider-response");
+        assert_eq!(std::fs::read(&target).unwrap(), previous);
+        assert!(
+            std::fs::read_dir(&dir)
+                .unwrap()
+                .filter_map(Result::ok)
+                .all(|entry| !entry.file_name().to_string_lossy().contains(".tmp-"))
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn test_provider_conformance_fixture_covers_roadmap_matrix() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let fixture_root = root.join("fixtures/code-graph-provider/basic");
+        let manifest = load_provider_manifest(&fixture_root.join("manifest.json")).unwrap();
+        let registration =
+            load_provider_registration(&fixture_root.join("registration.json")).unwrap();
+        let fixture = load_conformance_fixture(&fixture_root.join("conformance.json")).unwrap();
+        let scratch = std::env::temp_dir().join(format!(
+            "agent-spec-provider-conformance-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&scratch);
+
+        let receipt =
+            run_provider_conformance(&manifest, &registration, &fixture, &root, &scratch).unwrap();
+
+        assert_eq!(receipt.schema, PROVIDER_CONFORMANCE_RECEIPT_SCHEMA);
+        assert_eq!(
+            receipt.state,
+            ConformanceState::Passed,
+            "{:#?}",
+            receipt.checks
+        );
+        assert_eq!(
+            receipt
+                .checks
+                .iter()
+                .map(|check| check.id.as_str())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([
+                "atomic-publish",
+                "bounded-output",
+                "cancellation",
+                "deterministic-repeat",
+                "partial-parse",
+                "stable-id",
+                "stale-worktree",
+                "unknown-schema",
+            ])
+        );
+        assert!(receipt.checks.iter().all(|check| check.passed));
+        std::fs::remove_dir_all(scratch).unwrap();
+    }
+}

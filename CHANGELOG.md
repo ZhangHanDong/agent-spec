@@ -4,6 +4,142 @@ All notable changes to `agent-spec` are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+## [1.2.0] - 2026-07-22
+
+The **evidence-aware Atlas** release: Rust Atlas grows from a symbol graph into
+an incrementally published, freshness-gated code evidence service, and
+agent-spec connects affected code back to requirements, scenarios, tests,
+quality policy, worktrees, and replayable failure evidence. External Code Graph
+providers now have a standalone adapter SDK and conformance gate. Advanced MCP
+and concurrent serving surfaces remain opt-in until real Agent A/B evidence is
+accepted.
+
+### Added
+
+- Atlas F1 external Code Graph provider kit: a standalone Rust SDK defines
+  strict provider manifests, opt-in project registrations, separate extraction
+  and semantic-enrichment schemas, canonical projection, worktree/freshness
+  validation, host-derived fingerprints, literal-argv bounded process execution,
+  cancellation, and atomic publication. `atlas provider validate|conformance`
+  exposes an eight-check local matrix without adding a non-Rust provider or
+  changing Rust Atlas defaults.
+- Atlas E1 adoption harness: strict versioned experiment, Agent A/B/C plan,
+  receipt, and gate schemas separate Atlas primitive value from B5 context
+  value; an independent four-profile direct/worker burst gate covers D4.
+  Environment symmetry, at least three trials, failed-run retention,
+  correctness/freshness-first decisions, raw-session hashes, complete query
+  metrics, and baseline median/MAD comparisons are enforced. External runners
+  require explicit executables and remain outside default tests. No real E1
+  receipt is checked in and no MCP, B5, or worker default is promoted.
+- Atlas D4 concurrent query serving: an opt-in fixed worker pool, bounded queue
+  and memory admission, pinned generation leases, cooperative timeout/cancel,
+  one panic retry plus circuit state, isolated maintenance/control lanes,
+  daemon protocol v2, direct/worker/fallback CLI modes, and a hidden concurrent
+  MCP `atlas_context` route. A strict 20-run fixture receipt covers four B5
+  load profiles, all seven typed outcomes, publish/stop behavior, and two
+  worktrees. Correctness gates semantic parity, snapshot identity, bounds, and
+  lease cleanup; latency, heartbeat, CPU, RSS, and response bytes remain
+  measurements. Direct execution and default MCP discovery remain unchanged
+  pending E1 real Agent A/B.
+- Atlas B5 query context compiler: additive `atlas context` profiles separate
+  scored retrieval from relevance and byte-bounded projection. Results carry
+  hash-verified source spans, required-evidence protection, omission manifests,
+  fingerprint-bound continuation argv, dual-loss receipts, and deterministic
+  D4 load profiles. E3 now validates context receipts and rebuilds all four
+  profiles plus projection pressure offline; default MCP remains unchanged.
+- Atlas D3 optional live runtime: a shared build/watch scope, bounded platform
+  watcher, persisted pending watermark, separate writer/ordinary retry budgets,
+  typed `warming`/`healthy`/`pending`/`degraded`/`unavailable` states, and a
+  loopback identity handshake provide explicit local daemon supervision. Every
+  query pins its immutable generation with a reader lease; single-writer
+  reclamation retains active or ambiguous generations and cleans abandoned
+  staging idempotently. MCP discovery remains static and no-daemon queries read
+  the same graph facts. Live state remains derived and cannot replace graph
+  freshness, KLL, Task Contract, or lifecycle authority.
+- Atlas D2 incremental hardening: builds now publish immutable committed
+  generations behind one atomic pointer; read surfaces pin and report the same
+  generation. A content-addressed Cargo input plan, source-owned module
+  reconstruction, bounded reverse-dependent frontier, explicit overflow
+  fallback, recoverable orphan queue, batch cancellation, working-byte limit,
+  and byte-inert zero-change fast path replace in-place graph refresh. A
+  deterministic 10-case fixture matrix covers cold, zero, edit, delete,
+  manifest, overflow, overlay, cancellation, commit failure, and recovery.
+  Automatic refresh preserves committed Cargo inputs; capability changes use
+  explicit full frontiers, shard phases stream by batch, and byte admission
+  covers source, serialized graph, and overlays. Failed post-commit orphan
+  cleanup remains recoverable. D3 composes these primitives without changing
+  their publication contract.
+- Atlas disconnected `flow` queries now explain fresh Rust runtime boundaries
+  for async tasks, channels, callback registries, reflection, and framework
+  routes. The bounded AST-derived results are explicitly heuristic query hints:
+  they do not mutate graph shards or participate in impact, affected, binding,
+  lifecycle, or archive authority. The E3 live fixture scores their expected
+  continuation, source evidence, and exact diagnostic. Scans bind to a unique
+  function AST so same-line siblings cannot leak sites, and Rust-relative
+  candidate paths resolve from their source package, module, or impl context.
+  Qualified signatures share canonicalization; qualified-self candidates retain
+  type, trait, and generic identity. Receiver roles inspect only the AST access
+  chain that produces the receiver, ignoring arguments, index values, and
+  literals while requiring token boundaries. This avoids silent misses and
+  suffix lookalikes such as `ctx`/`tx`. Stale source nodes and stale SCIP/MIR
+  edges cannot expand the scan frontier, and default trait methods resolve
+  lowercase `self`/`super` plus qualified `Self` candidates from the trait
+  declaration. Framework-route hints preserve handlers from both two-argument
+  `route` calls and one-argument `service` calls; generic reflection text
+  resolves to its indexed type declaration without losing the displayed type.
+  Bare candidates prefer source-module exact matches, and a shared per-file
+  source cache applies node and byte limits before additional frontier reads.
+  Callable associated paths resolve through canonical inherent-impl symbols;
+  Rust type/value namespace filtering excludes impossible same-symbol nodes
+  before candidate fan-out is measured.
+- Atlas query-quality regression gate: a strict two-tier corpus combines
+  deterministic fixtures with immutable true-repository revisions and scores
+  ranked symbols, exact paths, required evidence, forbidden hits, ambiguity,
+  stale/capability diagnostics, response bytes, latency, read-backs, and
+  follow-up queries. `atlas benchmark score` emits a fingerprinted receipt and
+  exits non-zero after preserving any failed cases. Default tests rebuild the
+  Rust fixture and score current search/flow output without network access;
+  fresh pinned-repository observations and real Agent A/B remain opt-in.
+- Atlas Wave 2: deterministic compact/deep `atlas explore`, explainable
+  `atlas flow`, reverse `atlas impact`, and changed-file `atlas affected`
+  queries share bounded traversal, evidence paths, layered freshness, and
+  worktree authority. Source excerpts require matching graph hashes, affected
+  results do not infer tests from filenames, and `atlas_explore` is frozen and
+  unavailable over MCP unless `AGENT_SPEC_MCP_ATLAS_EXPLORE=1`. Evaluation
+  receipts now record response bytes, read-backs, follow-up queries, and
+  truncation counts; no real Agent A/B improvement is claimed.
+- Atlas Wave 1: schema v6 preserves edge occurrence/evidence facts, an atomic
+  derived query index powers deterministic `atlas search`, and `atlas status`
+  reports graph identity plus independent syn/SCIP/MIR freshness. Worktree
+  mismatch and stale available semantic authority fail closed for definitive
+  provider, binding, lifecycle-symbol, and typed trace evidence. Users rebuild
+  with `atlas build` after schema or query-index diagnostics; `atlas check`
+  remains the syn stale-file gate. MCP keeps `atlas_search` hidden by default;
+  start `agent-spec mcp` with `AGENT_SPEC_MCP_ATLAS_SEARCH=1` to list it.
+- Atlas evaluation baseline: versioned offline corpus and paired run-plan
+  compilation, typed correctness receipts, robust per-arm and aggregate median/
+  MAD summaries, and `atlas benchmark validate|plan|summarize`. `plan` and
+  `summarize` honor an atomic `--out` contract. The separate opt-in runner
+  requires `jq` and an explicit single executable in
+  `ATLAS_EVAL_AGENT_COMMAND`; default commands do not invoke a model or network.
+  The harness records evaluation inputs and results but does not claim an
+  executed real-model benchmark or an Atlas performance improvement. See
+  `docs/atlas-evaluation.md`.
+
+### Changed
+
+- `agent-spec` is now **1.2.0** and depends on `rust-atlas` **0.3.0**. Atlas
+  graph storage advances from schema v4 to schema v6 to retain edge evidence,
+  graph identity, committed generations, and query-index integrity. Existing
+  `.agent-spec/graph` directories are rebuildable derived data: run
+  `agent-spec atlas build --full` after upgrading rather than migrating shards.
+- The provider-neutral SDK is published for the first time as
+  `agent-spec-code-graph-provider` **0.1.0**. Publish it before `agent-spec` so
+  the root crate's registry dependency is resolvable; `rust-atlas` remains an
+  independent package and is published before the root crate as well.
+
 ## [1.1.0] - 2026-07-19
 
 The **interop deepening** release: compiled requirements now flow both ways
@@ -245,7 +381,6 @@ specs and tests that still guard them.
   draft Task Contracts with `satisfies: [REQ-*]`.
 - SARIF output for knowledge lint findings.
 
-
 ### Deprecated
 
 - `brief` (legacy alias of `contract`) — removal planned for 1.0.
@@ -355,5 +490,11 @@ See git history. 0.2.x established the core contract pipeline: `parse`, `lint`,
 `verify`, `lifecycle`, `guard`, `explain`, `stamp`, `contract`, `plan`, `graph`,
 the four verifier layers, run logging, and VCS-aware checkpoints.
 
+[Unreleased]: https://github.com/ZhangHanDong/agent-spec/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/ZhangHanDong/agent-spec/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/ZhangHanDong/agent-spec/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/ZhangHanDong/agent-spec/compare/v0.6.0...v1.0.0
+[0.6.0]: https://github.com/ZhangHanDong/agent-spec/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/ZhangHanDong/agent-spec/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/ZhangHanDong/agent-spec/releases/tag/v0.4.0
 [0.3.0]: https://github.com/ZhangHanDong/agent-spec/releases/tag/v0.3.0

@@ -1,0 +1,3668 @@
+{
+  "schema": "agent-spec/atlas-eval/agent-plan-v1",
+  "experiment_version": "atlas-e1-agent-ab-2026-07-21",
+  "corpus_fingerprint": "69fb08a6a749ef3f103dbccf5bc54cce9b83b9e08a100e243995014f24fc39f0",
+  "experiment_fingerprint": "51644ed58e4ad92dbd8b2a58dc834a1274a674acbf09665ee98415419ce7ea18",
+  "runs": [
+    {
+      "run_id": "dc2feba0dd94526f11fc095a5f0da5f5d81df44d9afbca67beb96dae93c7fb61",
+      "case_id": "symbol-lookup",
+      "arm": "baseline",
+      "trial": 1,
+      "size": "small",
+      "task_class": "symbol",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Identifies the requested symbol by canonical path.",
+        "Cites the defining source file."
+      ],
+      "rubric_fingerprint": "3b2216a2616ffdaf4008ae5cfd3a9f5f4a6f39fee4a8fd404ea73562c38d9110",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "be57ee1f644612eb553269862d4704a7f8a6093592de71f49d194badbe9c1861",
+      "case_id": "symbol-lookup",
+      "arm": "atlas-primitives",
+      "trial": 1,
+      "size": "small",
+      "task_class": "symbol",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Identifies the requested symbol by canonical path.",
+        "Cites the defining source file."
+      ],
+      "rubric_fingerprint": "3b2216a2616ffdaf4008ae5cfd3a9f5f4a6f39fee4a8fd404ea73562c38d9110",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "ffa0b2df767f365edf9e713f97db9ee8bddeb755662601901bc78764500f7c67",
+      "case_id": "symbol-lookup",
+      "arm": "atlas-context",
+      "trial": 1,
+      "size": "small",
+      "task_class": "symbol",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Identifies the requested symbol by canonical path.",
+        "Cites the defining source file."
+      ],
+      "rubric_fingerprint": "3b2216a2616ffdaf4008ae5cfd3a9f5f4a6f39fee4a8fd404ea73562c38d9110",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "atlas-context",
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "b4fa9a4a54a7e92432298d1f8357983e5559b4663adfb54dc57331838cd5951a",
+      "case_id": "symbol-lookup",
+      "arm": "baseline",
+      "trial": 2,
+      "size": "small",
+      "task_class": "symbol",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Identifies the requested symbol by canonical path.",
+        "Cites the defining source file."
+      ],
+      "rubric_fingerprint": "3b2216a2616ffdaf4008ae5cfd3a9f5f4a6f39fee4a8fd404ea73562c38d9110",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "54b6da265f038d58be0f7571afd8fbb57397467415c906b779abef2d8b028efe",
+      "case_id": "symbol-lookup",
+      "arm": "atlas-primitives",
+      "trial": 2,
+      "size": "small",
+      "task_class": "symbol",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Identifies the requested symbol by canonical path.",
+        "Cites the defining source file."
+      ],
+      "rubric_fingerprint": "3b2216a2616ffdaf4008ae5cfd3a9f5f4a6f39fee4a8fd404ea73562c38d9110",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "3f155aacd2dd6fe920966cbea752a925a7d55750b1a0cd5756134e463aaa0612",
+      "case_id": "symbol-lookup",
+      "arm": "atlas-context",
+      "trial": 2,
+      "size": "small",
+      "task_class": "symbol",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Identifies the requested symbol by canonical path.",
+        "Cites the defining source file."
+      ],
+      "rubric_fingerprint": "3b2216a2616ffdaf4008ae5cfd3a9f5f4a6f39fee4a8fd404ea73562c38d9110",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "atlas-context",
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "731dd6c626e348f27c3f738bd69a13c7cb82b21b50a720d6fb631c328d0fab2c",
+      "case_id": "symbol-lookup",
+      "arm": "baseline",
+      "trial": 3,
+      "size": "small",
+      "task_class": "symbol",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Identifies the requested symbol by canonical path.",
+        "Cites the defining source file."
+      ],
+      "rubric_fingerprint": "3b2216a2616ffdaf4008ae5cfd3a9f5f4a6f39fee4a8fd404ea73562c38d9110",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "c8d3a56fc5ac6bc2a5d4b5572f6deeefb86425e9bd95927d260d8105abcc5f3d",
+      "case_id": "symbol-lookup",
+      "arm": "atlas-primitives",
+      "trial": 3,
+      "size": "small",
+      "task_class": "symbol",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Identifies the requested symbol by canonical path.",
+        "Cites the defining source file."
+      ],
+      "rubric_fingerprint": "3b2216a2616ffdaf4008ae5cfd3a9f5f4a6f39fee4a8fd404ea73562c38d9110",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "7887e2358ba0d19b854806ca98c980f24423ccb8690cbcb25437fd3dbdb8cd5a",
+      "case_id": "symbol-lookup",
+      "arm": "atlas-context",
+      "trial": 3,
+      "size": "small",
+      "task_class": "symbol",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Identifies the requested symbol by canonical path.",
+        "Cites the defining source file."
+      ],
+      "rubric_fingerprint": "3b2216a2616ffdaf4008ae5cfd3a9f5f4a6f39fee4a8fd404ea73562c38d9110",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "atlas-context",
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "fb7b9fab945c754a2135a359a694df74f15ca29fffa1829979a04977751ab836",
+      "case_id": "flow-trace",
+      "arm": "baseline",
+      "trial": 1,
+      "size": "small",
+      "task_class": "flow",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "warm",
+      "rubric": [
+        "Traces a source-level caller to callee flow.",
+        "Names the intermediate symbols in order.",
+        "Provides a complete source-evidence path for every reported flow.",
+        "Discloses whether traversal or response limits truncated the result."
+      ],
+      "rubric_fingerprint": "2511cbd7f9130026f37c63b6b19f690c49c935e01f935ccae0e134770ff54084",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "d3928f016c7476bb318f73ecc7f6434a211fbe48d8bac6586f56cf4ba2ca2b67",
+      "tools": [
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "3e78e0cf8c615abfd9bac8fcb89942f06c3c9755f939d6c918b52dfd849ba2a2",
+      "case_id": "flow-trace",
+      "arm": "atlas-primitives",
+      "trial": 1,
+      "size": "small",
+      "task_class": "flow",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "warm",
+      "rubric": [
+        "Traces a source-level caller to callee flow.",
+        "Names the intermediate symbols in order.",
+        "Provides a complete source-evidence path for every reported flow.",
+        "Discloses whether traversal or response limits truncated the result."
+      ],
+      "rubric_fingerprint": "2511cbd7f9130026f37c63b6b19f690c49c935e01f935ccae0e134770ff54084",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "d3928f016c7476bb318f73ecc7f6434a211fbe48d8bac6586f56cf4ba2ca2b67",
+      "tools": [
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "d31ab6d1ae59aff56a7ee414540e27cf26a5e3f5c5b1941a35180e1274eae3f1",
+      "case_id": "flow-trace",
+      "arm": "atlas-context",
+      "trial": 1,
+      "size": "small",
+      "task_class": "flow",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "warm",
+      "rubric": [
+        "Traces a source-level caller to callee flow.",
+        "Names the intermediate symbols in order.",
+        "Provides a complete source-evidence path for every reported flow.",
+        "Discloses whether traversal or response limits truncated the result."
+      ],
+      "rubric_fingerprint": "2511cbd7f9130026f37c63b6b19f690c49c935e01f935ccae0e134770ff54084",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "d3928f016c7476bb318f73ecc7f6434a211fbe48d8bac6586f56cf4ba2ca2b67",
+      "tools": [
+        "atlas-context",
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "fb31667e0f4b90a96afad982d7c7d023211c39d59fedfa0d533ca91dd970c39e",
+      "case_id": "flow-trace",
+      "arm": "baseline",
+      "trial": 2,
+      "size": "small",
+      "task_class": "flow",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "warm",
+      "rubric": [
+        "Traces a source-level caller to callee flow.",
+        "Names the intermediate symbols in order.",
+        "Provides a complete source-evidence path for every reported flow.",
+        "Discloses whether traversal or response limits truncated the result."
+      ],
+      "rubric_fingerprint": "2511cbd7f9130026f37c63b6b19f690c49c935e01f935ccae0e134770ff54084",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "d3928f016c7476bb318f73ecc7f6434a211fbe48d8bac6586f56cf4ba2ca2b67",
+      "tools": [
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "0f47058777fe62a80c106a82d978efbd0ce8dcd5098b99bd1d9eb53a05ba60de",
+      "case_id": "flow-trace",
+      "arm": "atlas-primitives",
+      "trial": 2,
+      "size": "small",
+      "task_class": "flow",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "warm",
+      "rubric": [
+        "Traces a source-level caller to callee flow.",
+        "Names the intermediate symbols in order.",
+        "Provides a complete source-evidence path for every reported flow.",
+        "Discloses whether traversal or response limits truncated the result."
+      ],
+      "rubric_fingerprint": "2511cbd7f9130026f37c63b6b19f690c49c935e01f935ccae0e134770ff54084",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "d3928f016c7476bb318f73ecc7f6434a211fbe48d8bac6586f56cf4ba2ca2b67",
+      "tools": [
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "e7a93f21251d2661f52162c9193b9c8a73f2205a99f6f0f05f06b72d15056b15",
+      "case_id": "flow-trace",
+      "arm": "atlas-context",
+      "trial": 2,
+      "size": "small",
+      "task_class": "flow",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "warm",
+      "rubric": [
+        "Traces a source-level caller to callee flow.",
+        "Names the intermediate symbols in order.",
+        "Provides a complete source-evidence path for every reported flow.",
+        "Discloses whether traversal or response limits truncated the result."
+      ],
+      "rubric_fingerprint": "2511cbd7f9130026f37c63b6b19f690c49c935e01f935ccae0e134770ff54084",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "d3928f016c7476bb318f73ecc7f6434a211fbe48d8bac6586f56cf4ba2ca2b67",
+      "tools": [
+        "atlas-context",
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "5a7fe9330767e4100df68aa12e0913b1b0defc1ab75731d8fcdb9133bb5b1281",
+      "case_id": "flow-trace",
+      "arm": "baseline",
+      "trial": 3,
+      "size": "small",
+      "task_class": "flow",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "warm",
+      "rubric": [
+        "Traces a source-level caller to callee flow.",
+        "Names the intermediate symbols in order.",
+        "Provides a complete source-evidence path for every reported flow.",
+        "Discloses whether traversal or response limits truncated the result."
+      ],
+      "rubric_fingerprint": "2511cbd7f9130026f37c63b6b19f690c49c935e01f935ccae0e134770ff54084",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "d3928f016c7476bb318f73ecc7f6434a211fbe48d8bac6586f56cf4ba2ca2b67",
+      "tools": [
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "8941db600b000cf7c90009581c76839c83b6999605e9e1679cb5da4378e3f553",
+      "case_id": "flow-trace",
+      "arm": "atlas-primitives",
+      "trial": 3,
+      "size": "small",
+      "task_class": "flow",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "warm",
+      "rubric": [
+        "Traces a source-level caller to callee flow.",
+        "Names the intermediate symbols in order.",
+        "Provides a complete source-evidence path for every reported flow.",
+        "Discloses whether traversal or response limits truncated the result."
+      ],
+      "rubric_fingerprint": "2511cbd7f9130026f37c63b6b19f690c49c935e01f935ccae0e134770ff54084",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "d3928f016c7476bb318f73ecc7f6434a211fbe48d8bac6586f56cf4ba2ca2b67",
+      "tools": [
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "0079ff901a2b241780f1f44b32f96ca742cfdf48375a620c5aa5583b9a1fe6dd",
+      "case_id": "flow-trace",
+      "arm": "atlas-context",
+      "trial": 3,
+      "size": "small",
+      "task_class": "flow",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "warm",
+      "rubric": [
+        "Traces a source-level caller to callee flow.",
+        "Names the intermediate symbols in order.",
+        "Provides a complete source-evidence path for every reported flow.",
+        "Discloses whether traversal or response limits truncated the result."
+      ],
+      "rubric_fingerprint": "2511cbd7f9130026f37c63b6b19f690c49c935e01f935ccae0e134770ff54084",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "d3928f016c7476bb318f73ecc7f6434a211fbe48d8bac6586f56cf4ba2ca2b67",
+      "tools": [
+        "atlas-context",
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "313ac17f1a31d08859a253c6c58f90dc6dabe81fec3e3f3695fbfe0cf45daf10",
+      "case_id": "impact-analysis",
+      "arm": "baseline",
+      "trial": 1,
+      "size": "medium",
+      "task_class": "impact",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Identifies directly affected callers.",
+        "Separates source evidence from inference.",
+        "Provides a complete evidence path from the changed symbol to every reported impact.",
+        "Discloses whether traversal or response limits truncated the result."
+      ],
+      "rubric_fingerprint": "f2ae41a0a45cd1d958bdb163bf5a0c257dfe7fb7ef522e06624b4b769a0a7968",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "2da7a482d86bab7aa91671b6aaaa185af72577f4513d566b26f552a054fc50de",
+      "case_id": "impact-analysis",
+      "arm": "atlas-primitives",
+      "trial": 1,
+      "size": "medium",
+      "task_class": "impact",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Identifies directly affected callers.",
+        "Separates source evidence from inference.",
+        "Provides a complete evidence path from the changed symbol to every reported impact.",
+        "Discloses whether traversal or response limits truncated the result."
+      ],
+      "rubric_fingerprint": "f2ae41a0a45cd1d958bdb163bf5a0c257dfe7fb7ef522e06624b4b769a0a7968",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "e83f95615cfa4380e8beb7057b506a27359528cd46794bedb3e27a77d2039250",
+      "case_id": "impact-analysis",
+      "arm": "atlas-context",
+      "trial": 1,
+      "size": "medium",
+      "task_class": "impact",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Identifies directly affected callers.",
+        "Separates source evidence from inference.",
+        "Provides a complete evidence path from the changed symbol to every reported impact.",
+        "Discloses whether traversal or response limits truncated the result."
+      ],
+      "rubric_fingerprint": "f2ae41a0a45cd1d958bdb163bf5a0c257dfe7fb7ef522e06624b4b769a0a7968",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "atlas-context",
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "cd830528ac24ba47954e48745d69abcd7f839f28250184f4ea6846ccca64f3a3",
+      "case_id": "impact-analysis",
+      "arm": "baseline",
+      "trial": 2,
+      "size": "medium",
+      "task_class": "impact",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Identifies directly affected callers.",
+        "Separates source evidence from inference.",
+        "Provides a complete evidence path from the changed symbol to every reported impact.",
+        "Discloses whether traversal or response limits truncated the result."
+      ],
+      "rubric_fingerprint": "f2ae41a0a45cd1d958bdb163bf5a0c257dfe7fb7ef522e06624b4b769a0a7968",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "7517ced659cd716ef4cf589d7d8ffb45c6d7c17052abc0b680e7af1483a4e74d",
+      "case_id": "impact-analysis",
+      "arm": "atlas-primitives",
+      "trial": 2,
+      "size": "medium",
+      "task_class": "impact",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Identifies directly affected callers.",
+        "Separates source evidence from inference.",
+        "Provides a complete evidence path from the changed symbol to every reported impact.",
+        "Discloses whether traversal or response limits truncated the result."
+      ],
+      "rubric_fingerprint": "f2ae41a0a45cd1d958bdb163bf5a0c257dfe7fb7ef522e06624b4b769a0a7968",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "1f8ee804fbf6f776a5e3a8e30e554069bbcbd12f4fab17e7c6500892947a1ac3",
+      "case_id": "impact-analysis",
+      "arm": "atlas-context",
+      "trial": 2,
+      "size": "medium",
+      "task_class": "impact",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Identifies directly affected callers.",
+        "Separates source evidence from inference.",
+        "Provides a complete evidence path from the changed symbol to every reported impact.",
+        "Discloses whether traversal or response limits truncated the result."
+      ],
+      "rubric_fingerprint": "f2ae41a0a45cd1d958bdb163bf5a0c257dfe7fb7ef522e06624b4b769a0a7968",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "atlas-context",
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "470a5b88914b4fd901b87f24223a43df7683faa03d76c31fedb28d919884a3ec",
+      "case_id": "impact-analysis",
+      "arm": "baseline",
+      "trial": 3,
+      "size": "medium",
+      "task_class": "impact",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Identifies directly affected callers.",
+        "Separates source evidence from inference.",
+        "Provides a complete evidence path from the changed symbol to every reported impact.",
+        "Discloses whether traversal or response limits truncated the result."
+      ],
+      "rubric_fingerprint": "f2ae41a0a45cd1d958bdb163bf5a0c257dfe7fb7ef522e06624b4b769a0a7968",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "d7004230eb004465d625c137fb279c018715b54940935c9140f51459f4914242",
+      "case_id": "impact-analysis",
+      "arm": "atlas-primitives",
+      "trial": 3,
+      "size": "medium",
+      "task_class": "impact",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Identifies directly affected callers.",
+        "Separates source evidence from inference.",
+        "Provides a complete evidence path from the changed symbol to every reported impact.",
+        "Discloses whether traversal or response limits truncated the result."
+      ],
+      "rubric_fingerprint": "f2ae41a0a45cd1d958bdb163bf5a0c257dfe7fb7ef522e06624b4b769a0a7968",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "85d4ee62a6a2ecc8c8e4f4f5b6b9457baa8c1644d1428b773ff51b4f2853c1e2",
+      "case_id": "impact-analysis",
+      "arm": "atlas-context",
+      "trial": 3,
+      "size": "medium",
+      "task_class": "impact",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Identifies directly affected callers.",
+        "Separates source evidence from inference.",
+        "Provides a complete evidence path from the changed symbol to every reported impact.",
+        "Discloses whether traversal or response limits truncated the result."
+      ],
+      "rubric_fingerprint": "f2ae41a0a45cd1d958bdb163bf5a0c257dfe7fb7ef522e06624b4b769a0a7968",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "atlas-context",
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "685f5673b0f25e0794133b867e4a312a4ad997fc0dcfe05ae7b8d3e0ee524e3e",
+      "case_id": "implementation-plan",
+      "arm": "baseline",
+      "trial": 1,
+      "size": "medium",
+      "task_class": "implementation",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "workspace-write",
+      "cache_condition": "warm",
+      "rubric": [
+        "Names the implementation files to change.",
+        "Lists relevant tests or verification steps."
+      ],
+      "rubric_fingerprint": "d2dd062e13027e1e77f8d44b76cc34636ef529ce0809187d6d0fba810423961c",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
+      "tools": [
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "766237014cf048114557d04a1b248a9ab497ed1fa9a6cca2088271a68b62ed16",
+      "case_id": "implementation-plan",
+      "arm": "atlas-primitives",
+      "trial": 1,
+      "size": "medium",
+      "task_class": "implementation",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "workspace-write",
+      "cache_condition": "warm",
+      "rubric": [
+        "Names the implementation files to change.",
+        "Lists relevant tests or verification steps."
+      ],
+      "rubric_fingerprint": "d2dd062e13027e1e77f8d44b76cc34636ef529ce0809187d6d0fba810423961c",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
+      "tools": [
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "280437542bfeba2be4bae40c9056b9fff347e851605788c15426a2d44ef8e6d0",
+      "case_id": "implementation-plan",
+      "arm": "atlas-context",
+      "trial": 1,
+      "size": "medium",
+      "task_class": "implementation",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "workspace-write",
+      "cache_condition": "warm",
+      "rubric": [
+        "Names the implementation files to change.",
+        "Lists relevant tests or verification steps."
+      ],
+      "rubric_fingerprint": "d2dd062e13027e1e77f8d44b76cc34636ef529ce0809187d6d0fba810423961c",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
+      "tools": [
+        "atlas-context",
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "eb605861c72b2642a58a34deca1174d4db9e0bcf8a6f067753d539391c886988",
+      "case_id": "implementation-plan",
+      "arm": "baseline",
+      "trial": 2,
+      "size": "medium",
+      "task_class": "implementation",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "workspace-write",
+      "cache_condition": "warm",
+      "rubric": [
+        "Names the implementation files to change.",
+        "Lists relevant tests or verification steps."
+      ],
+      "rubric_fingerprint": "d2dd062e13027e1e77f8d44b76cc34636ef529ce0809187d6d0fba810423961c",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
+      "tools": [
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "59f29b12d42d4c3cb475428ce0ff9e6045430a49ef9142ac2cafed343ad1ae17",
+      "case_id": "implementation-plan",
+      "arm": "atlas-primitives",
+      "trial": 2,
+      "size": "medium",
+      "task_class": "implementation",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "workspace-write",
+      "cache_condition": "warm",
+      "rubric": [
+        "Names the implementation files to change.",
+        "Lists relevant tests or verification steps."
+      ],
+      "rubric_fingerprint": "d2dd062e13027e1e77f8d44b76cc34636ef529ce0809187d6d0fba810423961c",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
+      "tools": [
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "93c4e2e5164ba592a34100defaa745c260ac989ce84f2a6e7bdd1f2c1cfaed71",
+      "case_id": "implementation-plan",
+      "arm": "atlas-context",
+      "trial": 2,
+      "size": "medium",
+      "task_class": "implementation",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "workspace-write",
+      "cache_condition": "warm",
+      "rubric": [
+        "Names the implementation files to change.",
+        "Lists relevant tests or verification steps."
+      ],
+      "rubric_fingerprint": "d2dd062e13027e1e77f8d44b76cc34636ef529ce0809187d6d0fba810423961c",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
+      "tools": [
+        "atlas-context",
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "101270678f6b35343a90f10a4475642b734ad7c096e6ee7b1a1d9c65bd7822eb",
+      "case_id": "implementation-plan",
+      "arm": "baseline",
+      "trial": 3,
+      "size": "medium",
+      "task_class": "implementation",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "workspace-write",
+      "cache_condition": "warm",
+      "rubric": [
+        "Names the implementation files to change.",
+        "Lists relevant tests or verification steps."
+      ],
+      "rubric_fingerprint": "d2dd062e13027e1e77f8d44b76cc34636ef529ce0809187d6d0fba810423961c",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
+      "tools": [
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "a140547eb4035c831fa25a9a091c50135351b97c47e9427081abc3b88664c79b",
+      "case_id": "implementation-plan",
+      "arm": "atlas-primitives",
+      "trial": 3,
+      "size": "medium",
+      "task_class": "implementation",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "workspace-write",
+      "cache_condition": "warm",
+      "rubric": [
+        "Names the implementation files to change.",
+        "Lists relevant tests or verification steps."
+      ],
+      "rubric_fingerprint": "d2dd062e13027e1e77f8d44b76cc34636ef529ce0809187d6d0fba810423961c",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
+      "tools": [
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "6961fe88f32d1bd99b57dbdfbd474c887c4a83fee40e96b7dada23079ece237a",
+      "case_id": "implementation-plan",
+      "arm": "atlas-context",
+      "trial": 3,
+      "size": "medium",
+      "task_class": "implementation",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "workspace-write",
+      "cache_condition": "warm",
+      "rubric": [
+        "Names the implementation files to change.",
+        "Lists relevant tests or verification steps."
+      ],
+      "rubric_fingerprint": "d2dd062e13027e1e77f8d44b76cc34636ef529ce0809187d6d0fba810423961c",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
+      "tools": [
+        "atlas-context",
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "f1c65ee68836f90d081ddc625b149c8a57fa74f6f030a576c2f8d65c69b27f4f",
+      "case_id": "stale-graph-diagnosis",
+      "arm": "baseline",
+      "trial": 1,
+      "size": "medium",
+      "task_class": "stale",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Recognizes that the graph is stale.",
+        "Names the required graph refresh action."
+      ],
+      "rubric_fingerprint": "feac7295084cbd18510ad255cb76ef07cda8c86ddf5f8c7ccecd67b0d1c1de1f",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "6854e49448e98658220f1aaaf5dc620109e39c5cf1d3030b2c475faee216464d",
+      "case_id": "stale-graph-diagnosis",
+      "arm": "atlas-primitives",
+      "trial": 1,
+      "size": "medium",
+      "task_class": "stale",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Recognizes that the graph is stale.",
+        "Names the required graph refresh action."
+      ],
+      "rubric_fingerprint": "feac7295084cbd18510ad255cb76ef07cda8c86ddf5f8c7ccecd67b0d1c1de1f",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "fb70e7ad1d2d60f9e7cea4090ca3a4f6e005c4c9e98c04e645e68d7ec8dbb03e",
+      "case_id": "stale-graph-diagnosis",
+      "arm": "atlas-context",
+      "trial": 1,
+      "size": "medium",
+      "task_class": "stale",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Recognizes that the graph is stale.",
+        "Names the required graph refresh action."
+      ],
+      "rubric_fingerprint": "feac7295084cbd18510ad255cb76ef07cda8c86ddf5f8c7ccecd67b0d1c1de1f",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "atlas-context",
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "9d003f24124d760a87e4a88646aac693d852b2e0976205828367a172fd5aded8",
+      "case_id": "stale-graph-diagnosis",
+      "arm": "baseline",
+      "trial": 2,
+      "size": "medium",
+      "task_class": "stale",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Recognizes that the graph is stale.",
+        "Names the required graph refresh action."
+      ],
+      "rubric_fingerprint": "feac7295084cbd18510ad255cb76ef07cda8c86ddf5f8c7ccecd67b0d1c1de1f",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "c84ef97f4eee986131bc39ced752030d5ca669cea7e0e4bf74814bb9bbf8888f",
+      "case_id": "stale-graph-diagnosis",
+      "arm": "atlas-primitives",
+      "trial": 2,
+      "size": "medium",
+      "task_class": "stale",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Recognizes that the graph is stale.",
+        "Names the required graph refresh action."
+      ],
+      "rubric_fingerprint": "feac7295084cbd18510ad255cb76ef07cda8c86ddf5f8c7ccecd67b0d1c1de1f",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "380a619c1dc821f76df6dfa590585e7dbc741c59945d1ecffabf7590e5b605d6",
+      "case_id": "stale-graph-diagnosis",
+      "arm": "atlas-context",
+      "trial": 2,
+      "size": "medium",
+      "task_class": "stale",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Recognizes that the graph is stale.",
+        "Names the required graph refresh action."
+      ],
+      "rubric_fingerprint": "feac7295084cbd18510ad255cb76ef07cda8c86ddf5f8c7ccecd67b0d1c1de1f",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "atlas-context",
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "85ab9fe34a445273d4e69b249d8f2e753f63e545ab9769cd670401a54a8e957b",
+      "case_id": "stale-graph-diagnosis",
+      "arm": "baseline",
+      "trial": 3,
+      "size": "medium",
+      "task_class": "stale",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Recognizes that the graph is stale.",
+        "Names the required graph refresh action."
+      ],
+      "rubric_fingerprint": "feac7295084cbd18510ad255cb76ef07cda8c86ddf5f8c7ccecd67b0d1c1de1f",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "d3c17b1d60ad071b9c363a594023bc59aa6b9b4822cca71c33a47c923f839168",
+      "case_id": "stale-graph-diagnosis",
+      "arm": "atlas-primitives",
+      "trial": 3,
+      "size": "medium",
+      "task_class": "stale",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Recognizes that the graph is stale.",
+        "Names the required graph refresh action."
+      ],
+      "rubric_fingerprint": "feac7295084cbd18510ad255cb76ef07cda8c86ddf5f8c7ccecd67b0d1c1de1f",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "ce3e611b8d66f3490e5fde0b60c4e03fcec932b284792885d6cef7c16b446b5a",
+      "case_id": "stale-graph-diagnosis",
+      "arm": "atlas-context",
+      "trial": 3,
+      "size": "medium",
+      "task_class": "stale",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Recognizes that the graph is stale.",
+        "Names the required graph refresh action."
+      ],
+      "rubric_fingerprint": "feac7295084cbd18510ad255cb76ef07cda8c86ddf5f8c7ccecd67b0d1c1de1f",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "atlas-context",
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "dc0b984ef9efe421b10972cec12d40bf18c81353430846bf769ba172dc618056",
+      "case_id": "scip-unavailable-fallback",
+      "arm": "baseline",
+      "trial": 1,
+      "size": "large",
+      "task_class": "scip-unavailable",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Reports the unavailable SCIP capability clearly.",
+        "Preserves the available source-derived graph evidence."
+      ],
+      "rubric_fingerprint": "2127e23680aa7df71f7abf11742d91121452e3a0bbda05635200d6c9f8c35191",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "76b65da255fded3612e0d4faa0726fd5b13884620990b69ce31d4a8b4a0d441c",
+      "case_id": "scip-unavailable-fallback",
+      "arm": "atlas-primitives",
+      "trial": 1,
+      "size": "large",
+      "task_class": "scip-unavailable",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Reports the unavailable SCIP capability clearly.",
+        "Preserves the available source-derived graph evidence."
+      ],
+      "rubric_fingerprint": "2127e23680aa7df71f7abf11742d91121452e3a0bbda05635200d6c9f8c35191",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "f6042510c02c0f6a0ae8eb01c328716a7ffc1e07e304046fb3841383b6c5e876",
+      "case_id": "scip-unavailable-fallback",
+      "arm": "atlas-context",
+      "trial": 1,
+      "size": "large",
+      "task_class": "scip-unavailable",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Reports the unavailable SCIP capability clearly.",
+        "Preserves the available source-derived graph evidence."
+      ],
+      "rubric_fingerprint": "2127e23680aa7df71f7abf11742d91121452e3a0bbda05635200d6c9f8c35191",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "atlas-context",
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "9a22fdd277de1701abd1584eb59df131d250b224c7071a4e7455fef5c03ed04d",
+      "case_id": "scip-unavailable-fallback",
+      "arm": "baseline",
+      "trial": 2,
+      "size": "large",
+      "task_class": "scip-unavailable",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Reports the unavailable SCIP capability clearly.",
+        "Preserves the available source-derived graph evidence."
+      ],
+      "rubric_fingerprint": "2127e23680aa7df71f7abf11742d91121452e3a0bbda05635200d6c9f8c35191",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "355ddf260dfc2a003bf35dd9376f89e145b2a8a33315d6d6252623c48cc88fdd",
+      "case_id": "scip-unavailable-fallback",
+      "arm": "atlas-primitives",
+      "trial": 2,
+      "size": "large",
+      "task_class": "scip-unavailable",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Reports the unavailable SCIP capability clearly.",
+        "Preserves the available source-derived graph evidence."
+      ],
+      "rubric_fingerprint": "2127e23680aa7df71f7abf11742d91121452e3a0bbda05635200d6c9f8c35191",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "ac38f050f77c422ea6f0357d55ace92b9b1f52ef11e64020ac712cbff3df3e64",
+      "case_id": "scip-unavailable-fallback",
+      "arm": "atlas-context",
+      "trial": 2,
+      "size": "large",
+      "task_class": "scip-unavailable",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Reports the unavailable SCIP capability clearly.",
+        "Preserves the available source-derived graph evidence."
+      ],
+      "rubric_fingerprint": "2127e23680aa7df71f7abf11742d91121452e3a0bbda05635200d6c9f8c35191",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "atlas-context",
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "7979ecd7a294ee0fba8bec9a5dd8c7c92a3c1c3734b00735c9b258f7240f004c",
+      "case_id": "scip-unavailable-fallback",
+      "arm": "baseline",
+      "trial": 3,
+      "size": "large",
+      "task_class": "scip-unavailable",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Reports the unavailable SCIP capability clearly.",
+        "Preserves the available source-derived graph evidence."
+      ],
+      "rubric_fingerprint": "2127e23680aa7df71f7abf11742d91121452e3a0bbda05635200d6c9f8c35191",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "51542cc07e37f20758db95d679cb08f5c4a1971a5ef3b1d087a8b8094f08d3e4",
+      "case_id": "scip-unavailable-fallback",
+      "arm": "atlas-primitives",
+      "trial": 3,
+      "size": "large",
+      "task_class": "scip-unavailable",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Reports the unavailable SCIP capability clearly.",
+        "Preserves the available source-derived graph evidence."
+      ],
+      "rubric_fingerprint": "2127e23680aa7df71f7abf11742d91121452e3a0bbda05635200d6c9f8c35191",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "e4f86cd38f14abcd983f56fe61da0a0fe0954a30b36a2fd014410decc3de6270",
+      "case_id": "scip-unavailable-fallback",
+      "arm": "atlas-context",
+      "trial": 3,
+      "size": "large",
+      "task_class": "scip-unavailable",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "read-only",
+      "cache_condition": "cold",
+      "rubric": [
+        "Reports the unavailable SCIP capability clearly.",
+        "Preserves the available source-derived graph evidence."
+      ],
+      "rubric_fingerprint": "2127e23680aa7df71f7abf11742d91121452e3a0bbda05635200d6c9f8c35191",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "3015c0b6ac900023d51ffef1bb22344b4eca1cbcb08e072745cecb79b7fc5665",
+      "tools": [
+        "atlas-context",
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "975599faa598fa7139002f0a510aa501fa7c5e0012aafa0e81fc5f9003ce50ec",
+      "case_id": "compile-failing-workspace",
+      "arm": "baseline",
+      "trial": 1,
+      "size": "large",
+      "task_class": "compile-failing",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "workspace-write",
+      "cache_condition": "cold",
+      "rubric": [
+        "Reports compilation failure without inventing results.",
+        "Retains source-level findings that remain valid."
+      ],
+      "rubric_fingerprint": "1cb15b9bff2aa8595f3c809b1eb6def21f47ccb48591440b021a178c4e04d9c8",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "94383aeafa116d7dd244168f1920973edfd03d3f3c7a57e1b2562399bd1fc5e7",
+      "tools": [
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "c8053763394d5fe48ace73dd69c716dda73338053d8fce0b1d1ce109c71606bd",
+      "case_id": "compile-failing-workspace",
+      "arm": "atlas-primitives",
+      "trial": 1,
+      "size": "large",
+      "task_class": "compile-failing",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "workspace-write",
+      "cache_condition": "cold",
+      "rubric": [
+        "Reports compilation failure without inventing results.",
+        "Retains source-level findings that remain valid."
+      ],
+      "rubric_fingerprint": "1cb15b9bff2aa8595f3c809b1eb6def21f47ccb48591440b021a178c4e04d9c8",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "94383aeafa116d7dd244168f1920973edfd03d3f3c7a57e1b2562399bd1fc5e7",
+      "tools": [
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "2e7f52284855af99bbdb3db5c3e38c639b8a589e55fd92534ceea17552e18197",
+      "case_id": "compile-failing-workspace",
+      "arm": "atlas-context",
+      "trial": 1,
+      "size": "large",
+      "task_class": "compile-failing",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "workspace-write",
+      "cache_condition": "cold",
+      "rubric": [
+        "Reports compilation failure without inventing results.",
+        "Retains source-level findings that remain valid."
+      ],
+      "rubric_fingerprint": "1cb15b9bff2aa8595f3c809b1eb6def21f47ccb48591440b021a178c4e04d9c8",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "94383aeafa116d7dd244168f1920973edfd03d3f3c7a57e1b2562399bd1fc5e7",
+      "tools": [
+        "atlas-context",
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "79403608d68926fc16e2691feef2b4fdd9ac7f759feea82052461c316a6c3db0",
+      "case_id": "compile-failing-workspace",
+      "arm": "baseline",
+      "trial": 2,
+      "size": "large",
+      "task_class": "compile-failing",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "workspace-write",
+      "cache_condition": "cold",
+      "rubric": [
+        "Reports compilation failure without inventing results.",
+        "Retains source-level findings that remain valid."
+      ],
+      "rubric_fingerprint": "1cb15b9bff2aa8595f3c809b1eb6def21f47ccb48591440b021a178c4e04d9c8",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "94383aeafa116d7dd244168f1920973edfd03d3f3c7a57e1b2562399bd1fc5e7",
+      "tools": [
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "c483a4734e6ec5cfeaea0e7254ec413e396f3bf5eb1418f645a469d5ff872d35",
+      "case_id": "compile-failing-workspace",
+      "arm": "atlas-primitives",
+      "trial": 2,
+      "size": "large",
+      "task_class": "compile-failing",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "workspace-write",
+      "cache_condition": "cold",
+      "rubric": [
+        "Reports compilation failure without inventing results.",
+        "Retains source-level findings that remain valid."
+      ],
+      "rubric_fingerprint": "1cb15b9bff2aa8595f3c809b1eb6def21f47ccb48591440b021a178c4e04d9c8",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "94383aeafa116d7dd244168f1920973edfd03d3f3c7a57e1b2562399bd1fc5e7",
+      "tools": [
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "abec760c01201e72ba5bc9f1642a7b2e55ee3433648ca73f4fe8bf6420ae8c8b",
+      "case_id": "compile-failing-workspace",
+      "arm": "atlas-context",
+      "trial": 2,
+      "size": "large",
+      "task_class": "compile-failing",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "workspace-write",
+      "cache_condition": "cold",
+      "rubric": [
+        "Reports compilation failure without inventing results.",
+        "Retains source-level findings that remain valid."
+      ],
+      "rubric_fingerprint": "1cb15b9bff2aa8595f3c809b1eb6def21f47ccb48591440b021a178c4e04d9c8",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "94383aeafa116d7dd244168f1920973edfd03d3f3c7a57e1b2562399bd1fc5e7",
+      "tools": [
+        "atlas-context",
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "b5169c290a0b9b6b4f97700192ccf533fbeeba5892ce4277f0c3a22d51031a1b",
+      "case_id": "compile-failing-workspace",
+      "arm": "baseline",
+      "trial": 3,
+      "size": "large",
+      "task_class": "compile-failing",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "workspace-write",
+      "cache_condition": "cold",
+      "rubric": [
+        "Reports compilation failure without inventing results.",
+        "Retains source-level findings that remain valid."
+      ],
+      "rubric_fingerprint": "1cb15b9bff2aa8595f3c809b1eb6def21f47ccb48591440b021a178c4e04d9c8",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "94383aeafa116d7dd244168f1920973edfd03d3f3c7a57e1b2562399bd1fc5e7",
+      "tools": [
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "edc1888a6ee6b930b7b292e281385bede1bd773c9230f92f9d8c56043dc730b9",
+      "case_id": "compile-failing-workspace",
+      "arm": "atlas-primitives",
+      "trial": 3,
+      "size": "large",
+      "task_class": "compile-failing",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "workspace-write",
+      "cache_condition": "cold",
+      "rubric": [
+        "Reports compilation failure without inventing results.",
+        "Retains source-level findings that remain valid."
+      ],
+      "rubric_fingerprint": "1cb15b9bff2aa8595f3c809b1eb6def21f47ccb48591440b021a178c4e04d9c8",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "94383aeafa116d7dd244168f1920973edfd03d3f3c7a57e1b2562399bd1fc5e7",
+      "tools": [
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "f151061002e8992ab5f519755062a15588097e8b13131a714b7285056b9d634d",
+      "case_id": "compile-failing-workspace",
+      "arm": "atlas-context",
+      "trial": 3,
+      "size": "large",
+      "task_class": "compile-failing",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "workspace-write",
+      "cache_condition": "cold",
+      "rubric": [
+        "Reports compilation failure without inventing results.",
+        "Retains source-level findings that remain valid."
+      ],
+      "rubric_fingerprint": "1cb15b9bff2aa8595f3c809b1eb6def21f47ccb48591440b021a178c4e04d9c8",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "94383aeafa116d7dd244168f1920973edfd03d3f3c7a57e1b2562399bd1fc5e7",
+      "tools": [
+        "atlas-context",
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "d8c0c374dd663acad188a6345fb4c9e79d35d5a8f0e49f3bc6fb3e6b097c1cdb",
+      "case_id": "worktree-scope",
+      "arm": "baseline",
+      "trial": 1,
+      "size": "large",
+      "task_class": "worktree",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "workspace-write",
+      "cache_condition": "warm",
+      "rubric": [
+        "Identifies the working tree files relevant to the task.",
+        "Distinguishes owned changes from unrelated modifications."
+      ],
+      "rubric_fingerprint": "f698ff7ca9d34b171b5e2ac6a7ed738a034cd998c741ad1d9c074bbac06a0d8e",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
+      "tools": [
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "0b5edd234f62eb0a116a055f46f1249d31f9221bd532e5ff86b14b92c53ea125",
+      "case_id": "worktree-scope",
+      "arm": "atlas-primitives",
+      "trial": 1,
+      "size": "large",
+      "task_class": "worktree",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "workspace-write",
+      "cache_condition": "warm",
+      "rubric": [
+        "Identifies the working tree files relevant to the task.",
+        "Distinguishes owned changes from unrelated modifications."
+      ],
+      "rubric_fingerprint": "f698ff7ca9d34b171b5e2ac6a7ed738a034cd998c741ad1d9c074bbac06a0d8e",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
+      "tools": [
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "72f6e66c7dc9622de0908eef55b557c2a4b002e73f162e59d7c27addce8420ed",
+      "case_id": "worktree-scope",
+      "arm": "atlas-context",
+      "trial": 1,
+      "size": "large",
+      "task_class": "worktree",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "workspace-write",
+      "cache_condition": "warm",
+      "rubric": [
+        "Identifies the working tree files relevant to the task.",
+        "Distinguishes owned changes from unrelated modifications."
+      ],
+      "rubric_fingerprint": "f698ff7ca9d34b171b5e2ac6a7ed738a034cd998c741ad1d9c074bbac06a0d8e",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
+      "tools": [
+        "atlas-context",
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "61ad4082a09c7dea767e79caa95effc155b0ef9adaef957a178943809796c6e4",
+      "case_id": "worktree-scope",
+      "arm": "baseline",
+      "trial": 2,
+      "size": "large",
+      "task_class": "worktree",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "workspace-write",
+      "cache_condition": "warm",
+      "rubric": [
+        "Identifies the working tree files relevant to the task.",
+        "Distinguishes owned changes from unrelated modifications."
+      ],
+      "rubric_fingerprint": "f698ff7ca9d34b171b5e2ac6a7ed738a034cd998c741ad1d9c074bbac06a0d8e",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
+      "tools": [
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "1edfe9e72686e06102aaf6c54fabd0ce9b6d20b2f0ca43d0911973d9f01c0614",
+      "case_id": "worktree-scope",
+      "arm": "atlas-primitives",
+      "trial": 2,
+      "size": "large",
+      "task_class": "worktree",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "workspace-write",
+      "cache_condition": "warm",
+      "rubric": [
+        "Identifies the working tree files relevant to the task.",
+        "Distinguishes owned changes from unrelated modifications."
+      ],
+      "rubric_fingerprint": "f698ff7ca9d34b171b5e2ac6a7ed738a034cd998c741ad1d9c074bbac06a0d8e",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
+      "tools": [
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "ddfa1b6f3e63102aadb5799ef19ac8419da24b92a63db73ee08dacda0e8b1fcc",
+      "case_id": "worktree-scope",
+      "arm": "atlas-context",
+      "trial": 2,
+      "size": "large",
+      "task_class": "worktree",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "workspace-write",
+      "cache_condition": "warm",
+      "rubric": [
+        "Identifies the working tree files relevant to the task.",
+        "Distinguishes owned changes from unrelated modifications."
+      ],
+      "rubric_fingerprint": "f698ff7ca9d34b171b5e2ac6a7ed738a034cd998c741ad1d9c074bbac06a0d8e",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
+      "tools": [
+        "atlas-context",
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "aed1f47f5e35675bd488e158c610d12cc4ccafa137fcd8395a428cdb6af917fa",
+      "case_id": "worktree-scope",
+      "arm": "baseline",
+      "trial": 3,
+      "size": "large",
+      "task_class": "worktree",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "workspace-write",
+      "cache_condition": "warm",
+      "rubric": [
+        "Identifies the working tree files relevant to the task.",
+        "Distinguishes owned changes from unrelated modifications."
+      ],
+      "rubric_fingerprint": "f698ff7ca9d34b171b5e2ac6a7ed738a034cd998c741ad1d9c074bbac06a0d8e",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
+      "tools": [
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "2f7fd0220bb767d261defd774d110e272a1c2225ba4af971798a957573ce0219",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "1abae621ed18b8827e11f15bc1effdd1fc350df6367704fe3afe8ccf2615dc64",
+      "case_id": "worktree-scope",
+      "arm": "atlas-primitives",
+      "trial": 3,
+      "size": "large",
+      "task_class": "worktree",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "workspace-write",
+      "cache_condition": "warm",
+      "rubric": [
+        "Identifies the working tree files relevant to the task.",
+        "Distinguishes owned changes from unrelated modifications."
+      ],
+      "rubric_fingerprint": "f698ff7ca9d34b171b5e2ac6a7ed738a034cd998c741ad1d9c074bbac06a0d8e",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
+      "tools": [
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "85342c969d767c7bc0443564311f6aea3d064f8d0d989ec1ec44b48106006711",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    },
+    {
+      "run_id": "04190c14b715da42eabeb413bb9f863a979ff0c854365858e9f280a9133b0148",
+      "case_id": "worktree-scope",
+      "arm": "atlas-context",
+      "trial": 3,
+      "size": "large",
+      "task_class": "worktree",
+      "model": "offline-fixture-model",
+      "prompt": "Produce a concise, evidence-backed answer using only the supplied workspace.",
+      "repository": "fixtures/atlas/basic",
+      "revision": "a2d4282",
+      "permissions": "workspace-write",
+      "cache_condition": "warm",
+      "rubric": [
+        "Identifies the working tree files relevant to the task.",
+        "Distinguishes owned changes from unrelated modifications."
+      ],
+      "rubric_fingerprint": "f698ff7ca9d34b171b5e2ac6a7ed738a034cd998c741ad1d9c074bbac06a0d8e",
+      "controls": {
+        "prompt_hooks": {
+          "mode": "disabled"
+        },
+        "mcp_config": {
+          "mode": "disabled"
+        },
+        "user_skills": {
+          "mode": "disabled"
+        },
+        "tool_instructions": {
+          "mode": "disabled"
+        },
+        "judge": {
+          "mode": "rubric",
+          "version": "atlas-e0-rubric-v1"
+        }
+      },
+      "environment_fingerprint": "772927a421ed002aca1069b8a38fe18f6a08d18db5bce72d766be5766252a878",
+      "tools": [
+        "atlas-context",
+        "atlas-explore",
+        "atlas-flow",
+        "atlas-impact",
+        "atlas-impls",
+        "atlas-query",
+        "atlas-refs",
+        "atlas-search",
+        "atlas-status",
+        "atlas-tree",
+        "grep",
+        "read"
+      ],
+      "surface_fingerprint": "1b97515d62f004ceae8661b862b9ffff6b8abd04dd18564af935a6fc32ad9610",
+      "session_store": ".agent-spec/evaluation/agent-ab"
+    }
+  ]
+}

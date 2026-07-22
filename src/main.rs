@@ -2,6 +2,10 @@
 #![deny(unsafe_code)]
 #![allow(dead_code)]
 
+mod atlas_agent_eval;
+mod atlas_daemon;
+mod atlas_eval;
+mod atlas_query_service;
 mod spec_archive;
 mod spec_core;
 mod spec_gateway;
@@ -16,8 +20,10 @@ mod spec_knowledge;
 mod spec_mcp;
 mod vcs;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::collections::BTreeSet;
+use std::ffi::OsString;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::process::ExitCode;
@@ -408,6 +414,21 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum AtlasCommands {
+    /// Reproducible Atlas agent evaluation utilities
+    Benchmark {
+        #[command(subcommand)]
+        action: AtlasBenchmarkCommands,
+    },
+    /// Validate and conformance-test optional external Code Graph providers
+    Provider {
+        #[command(subcommand)]
+        action: AtlasProviderCommands,
+    },
+    /// Optional local watcher and synchronization daemon
+    Daemon {
+        #[command(subcommand)]
+        action: AtlasDaemonCommands,
+    },
     /// Build or incrementally refresh the graph
     Build {
         #[arg(long, default_value = ".")]
@@ -419,6 +440,35 @@ enum AtlasCommands {
         /// Optional SCIP index (rust-analyzer protobuf or JSON) for resolved references
         #[arg(long)]
         scip: Option<PathBuf>,
+        /// Add bounded trait implementation candidates from resolved SCIP call anchors
+        #[arg(long)]
+        dynamic_dispatch: bool,
+        /// Cargo features that participate in target discovery and cache identity
+        #[arg(long, value_delimiter = ',')]
+        features: Vec<String>,
+        /// Cargo target triple used for metadata filtering and cache identity
+        #[arg(long)]
+        target: Option<String>,
+        /// Additional cfg values that participate in cache identity
+        #[arg(long = "cfg")]
+        cfg: Vec<String>,
+        /// Maximum number of shards in an incremental resolution frontier
+        #[arg(long, default_value_t = 2048)]
+        frontier_limit: usize,
+        /// Number of source files processed between cancellation checks
+        #[arg(long, default_value_t = 256)]
+        batch_size: usize,
+        /// Maximum source bytes admitted by one build
+        #[arg(long, default_value_t = 536_870_912)]
+        working_byte_limit: usize,
+        /// Optional versioned rust-atlas MIR overlay (requires Cargo feature `mir`)
+        #[cfg(feature = "mir")]
+        #[arg(long, conflicts_with = "mir_driver")]
+        mir: Option<PathBuf>,
+        /// Optional MIR producer executable invoked with fixed --code/--out argv
+        #[cfg(feature = "mir")]
+        #[arg(long, conflicts_with = "mir")]
+        mir_driver: Option<PathBuf>,
     },
     /// Generate a SCIP index via rust-analyzer (opt-in semantic layer)
     ScipGen {
@@ -453,6 +503,134 @@ enum AtlasCommands {
         #[arg(long, default_value = "json")]
         format: String,
     },
+    /// Deterministic indexed symbol search
+    Search {
+        query: String,
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+        #[arg(long)]
+        frozen: bool,
+    },
+    /// Ranked, bounded code context for an agent query
+    Explore {
+        query: String,
+        #[arg(long, default_value = "compact", value_parser = ["compact", "deep"])]
+        profile: String,
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+        #[arg(long)]
+        frozen: bool,
+    },
+    /// Compile a deterministic, bounded evidence context for an agent query
+    Context {
+        query: String,
+        #[arg(long, value_enum, default_value_t = AtlasContextExecution::Direct)]
+        execution: AtlasContextExecution,
+        #[arg(long)]
+        fallback_direct: bool,
+        #[arg(
+            long,
+            default_value = "symbol",
+            value_parser = ["symbol", "flow", "architecture", "impact"]
+        )]
+        profile: String,
+        /// Resume after a stable evidence id (`START` denotes the beginning)
+        #[arg(long)]
+        after: Option<String>,
+        /// Reject continuation when the selected graph fingerprint changed
+        #[arg(long)]
+        expect_graph: Option<String>,
+        /// Override the profile byte ceiling (1024..=1000000)
+        #[arg(long)]
+        max_bytes: Option<usize>,
+        /// Override the profile relevance threshold
+        #[arg(long)]
+        min_score: Option<u16>,
+        /// Explicit failure evidence that projection must retain
+        #[arg(long = "failure-evidence")]
+        failure_evidence: Vec<String>,
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+        #[arg(long)]
+        frozen: bool,
+    },
+    /// Explain a path between symbols or through one symbol
+    #[command(group(
+        clap::ArgGroup::new("flow-input")
+            .required(true)
+            .multiple(false)
+            .args(["from", "through"])
+    ))]
+    Flow {
+        #[arg(long, requires = "to")]
+        from: Option<String>,
+        #[arg(long, requires = "from")]
+        to: Option<String>,
+        #[arg(long)]
+        through: Option<String>,
+        #[arg(long, default_value_t = 8)]
+        max_depth: usize,
+        #[arg(long, default_value_t = 2_000)]
+        max_expansions: usize,
+        #[arg(long, default_value_t = 8)]
+        max_paths: usize,
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+        #[arg(long)]
+        frozen: bool,
+    },
+    /// Reverse dependency impact for one symbol
+    Impact {
+        symbol: String,
+        #[arg(long, default_value_t = 3)]
+        depth: usize,
+        #[arg(long, default_value_t = 200)]
+        max_nodes: usize,
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+        #[arg(long)]
+        frozen: bool,
+    },
+    /// Map changed files to impacted code nodes
+    #[command(group(
+        clap::ArgGroup::new("affected-input")
+            .required(true)
+            .multiple(false)
+            .args(["paths", "stdin", "staged", "worktree", "commit"])
+    ))]
+    Affected {
+        paths: Vec<PathBuf>,
+        #[arg(long)]
+        stdin: bool,
+        #[arg(long)]
+        staged: bool,
+        #[arg(long)]
+        worktree: bool,
+        #[arg(long)]
+        commit: Option<String>,
+        #[arg(long, default_value_t = 3)]
+        depth: usize,
+        #[arg(long, default_value_t = 200)]
+        max_nodes: usize,
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+        #[arg(long)]
+        frozen: bool,
+    },
     /// Incoming reference/call edges for a symbol
     Refs {
         symbol: String,
@@ -477,12 +655,248 @@ enum AtlasCommands {
         #[arg(long, default_value = "json")]
         format: String,
     },
+    /// Graph identity and independent syn/SCIP/MIR freshness
+    Status {
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+        #[arg(long, default_value = "json")]
+        format: String,
+    },
     /// Freshness check; exits non-zero when any shard is stale
     Check {
         #[arg(long, default_value = ".")]
         code: PathBuf,
         #[arg(long, default_value = ".agent-spec/graph")]
         graph: PathBuf,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum AtlasContextExecution {
+    Direct,
+    Worker,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::Args)]
+struct AtlasQueryServiceArgs {
+    #[arg(long, default_value_t = 0, value_parser = parse_query_workers)]
+    query_workers: usize,
+    #[arg(long, default_value_t = 4, value_parser = parse_query_queue_capacity)]
+    query_queue_capacity: usize,
+    #[arg(long, default_value_t = 2_000, value_parser = parse_query_queue_timeout)]
+    query_queue_timeout_ms: u64,
+    #[arg(long, default_value_t = 20_000, value_parser = parse_query_deadline)]
+    query_deadline_ms: u64,
+    #[arg(
+        long,
+        default_value_t = 268_435_456,
+        value_parser = parse_query_memory_budget
+    )]
+    query_memory_budget_bytes: u64,
+    #[arg(long, default_value_t = 100, value_parser = parse_query_retry_after)]
+    query_retry_after_ms: u64,
+}
+
+fn parse_bounded_u64(value: &str, field: &str, minimum: u64, maximum: u64) -> Result<u64, String> {
+    let parsed = value
+        .parse::<u64>()
+        .map_err(|error| format!("{field} must be an integer: {error}"))?;
+    if (minimum..=maximum).contains(&parsed) {
+        Ok(parsed)
+    } else {
+        Err(format!("{field}={parsed} is outside {minimum}..={maximum}"))
+    }
+}
+
+fn parse_query_workers(value: &str) -> Result<usize, String> {
+    parse_bounded_u64(value, "query-workers", 0, 4).map(|value| value as usize)
+}
+
+fn parse_query_queue_capacity(value: &str) -> Result<usize, String> {
+    parse_bounded_u64(value, "query-queue-capacity", 1, 64).map(|value| value as usize)
+}
+
+fn parse_query_queue_timeout(value: &str) -> Result<u64, String> {
+    parse_bounded_u64(value, "query-queue-timeout-ms", 10, 30_000)
+}
+
+fn parse_query_deadline(value: &str) -> Result<u64, String> {
+    parse_bounded_u64(value, "query-deadline-ms", 100, 60_000)
+}
+
+fn parse_query_memory_budget(value: &str) -> Result<u64, String> {
+    parse_bounded_u64(
+        value,
+        "query-memory-budget-bytes",
+        16_777_216,
+        2_147_483_648,
+    )
+}
+
+fn parse_query_retry_after(value: &str) -> Result<u64, String> {
+    parse_bounded_u64(value, "query-retry-after-ms", 1, 10_000)
+}
+
+impl AtlasQueryServiceArgs {
+    fn into_config(
+        self,
+    ) -> Result<crate::atlas_query_service::QueryServiceConfig, Box<dyn std::error::Error>> {
+        let config = crate::atlas_query_service::QueryServiceConfig {
+            workers: self.query_workers,
+            queue_capacity: self.query_queue_capacity,
+            queue_timeout_ms: self.query_queue_timeout_ms,
+            deadline_ms: self.query_deadline_ms,
+            memory_budget_bytes: self.query_memory_budget_bytes,
+            retry_after_ms: self.query_retry_after_ms,
+        };
+        config.validate()?;
+        Ok(config)
+    }
+}
+
+#[derive(Subcommand)]
+enum AtlasDaemonCommands {
+    /// Start a detached daemon or attach to the verified existing owner
+    Start {
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+        #[command(flatten)]
+        query: AtlasQueryServiceArgs,
+    },
+    /// Run the daemon in the foreground for process supervision
+    Serve {
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+        #[command(flatten)]
+        query: AtlasQueryServiceArgs,
+    },
+    /// Read verified daemon runtime status without querying graph facts
+    Status {
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+    },
+    /// Read worker limits, queue counters and circuit state
+    ServiceStatus {
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+    },
+    /// Request one immediate synchronization through the live daemon
+    Sync {
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+    },
+    /// Stop the verified daemon owner
+    Stop {
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum AtlasBenchmarkCommands {
+    /// Validate an evaluation corpus
+    Validate {
+        #[arg(long)]
+        corpus: PathBuf,
+    },
+    /// Compile an evaluation corpus into a paired run plan
+    Plan {
+        #[arg(long)]
+        corpus: PathBuf,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Compile a symmetric three-arm real Agent evaluation plan
+    AgentPlan {
+        #[arg(long)]
+        corpus: PathBuf,
+        #[arg(long)]
+        experiment: PathBuf,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Gate complete real Agent receipts against a symmetric three-arm plan
+    AgentGate {
+        #[arg(long)]
+        plan: PathBuf,
+        #[arg(long)]
+        receipts: PathBuf,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Compile a real-repository direct-versus-worker burst plan
+    ServingPlan {
+        #[arg(long)]
+        experiment: PathBuf,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Gate complete direct-versus-worker burst receipts
+    ServingGate {
+        #[arg(long)]
+        plan: PathBuf,
+        #[arg(long)]
+        receipts: PathBuf,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Summarize JSON-array or NDJSON run receipts
+    Summarize {
+        #[arg(long)]
+        receipts: PathBuf,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Score ranked query observations against a versioned golden corpus
+    Score {
+        #[arg(long)]
+        corpus: PathBuf,
+        #[arg(long)]
+        results: PathBuf,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum AtlasProviderCommands {
+    /// Validate a provider manifest and optional project registration
+    Validate {
+        #[arg(long)]
+        manifest: PathBuf,
+        #[arg(long)]
+        registration: Option<PathBuf>,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Run the provider-neutral F1 conformance matrix
+    Conformance {
+        #[arg(long)]
+        manifest: PathBuf,
+        #[arg(long)]
+        registration: PathBuf,
+        #[arg(long)]
+        fixture: PathBuf,
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/provider-conformance")]
+        scratch: PathBuf,
+        #[arg(long)]
+        out: Option<PathBuf>,
     },
 }
 
@@ -688,6 +1102,36 @@ enum RequirementCommands {
         #[arg(long, default_value = ".agent-spec/code-bindings.json")]
         out: PathBuf,
     },
+    /// Join provider-neutral code impact to requirements, work units,
+    /// contracts, scenarios, explicit tests, worktrees, and VCS evidence
+    Affected {
+        /// Changed repository path; repeat for multiple paths
+        #[arg(long = "path")]
+        paths: Vec<PathBuf>,
+        /// Changed canonical symbol; mutually exclusive with --path
+        #[arg(long)]
+        symbol: Option<String>,
+        #[arg(long, default_value = "knowledge")]
+        knowledge: PathBuf,
+        #[arg(long, default_value = "specs")]
+        specs: PathBuf,
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long, default_value = ".agent-spec/graph")]
+        graph: PathBuf,
+        #[arg(long, default_value = ".agent-spec/code-bindings.json")]
+        bindings: PathBuf,
+        #[arg(long, default_value = ".agent-spec/worktrees.json")]
+        worktrees: PathBuf,
+        #[arg(long, default_value_t = 3)]
+        max_depth: usize,
+        #[arg(long, default_value_t = 200)]
+        max_nodes: usize,
+        #[arg(long, default_value = "json")]
+        format: String,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
     /// Compile per-requirement bundles (requirement doc, draft spec,
     /// traceability, compilation manifest) into a target directory
     Compile {
@@ -725,6 +1169,35 @@ enum RequirementCommands {
         /// Bundle target (.json)
         #[arg(long)]
         out: PathBuf,
+    },
+    /// Compile an intent-impact report into justified checks, tests, gates,
+    /// scoped guidance, and immutable skill receipts
+    AffectedBundle {
+        /// Saved intent-impact-v1 JSON from `requirements affected`
+        #[arg(long)]
+        impact: PathBuf,
+        #[arg(long, default_value = "knowledge")]
+        knowledge: PathBuf,
+        #[arg(long, default_value = ".")]
+        code: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Persist a saved affected report, bundle, and normalized quality outcomes
+    /// as trace schema v2 without rerunning any provider or tool
+    AffectedRecord {
+        #[arg(long)]
+        impact: PathBuf,
+        #[arg(long)]
+        bundle: Option<PathBuf>,
+        #[arg(long)]
+        quality_outcomes: Option<PathBuf>,
+        #[arg(long)]
+        run_id: String,
+        #[arg(long)]
+        timestamp: u64,
+        #[arg(long, default_value = ".agent-spec/trace")]
+        trace_dir: PathBuf,
     },
     /// Replay a recorded compilation-run manifest and byte-compare outputs
     VerifyRun {
@@ -3265,6 +3738,273 @@ fn cmd_lint_knowledge(
     Ok(())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AffectedCliInput {
+    paths: Vec<PathBuf>,
+    stdin: bool,
+    staged: bool,
+    worktree: bool,
+    commit: Option<String>,
+}
+
+impl AffectedCliInput {
+    fn new(paths: Vec<PathBuf>) -> Self {
+        Self {
+            paths,
+            stdin: false,
+            staged: false,
+            worktree: false,
+            commit: None,
+        }
+    }
+
+    fn stdin(mut self) -> Self {
+        self.stdin = true;
+        self
+    }
+
+    fn staged(mut self) -> Self {
+        self.staged = true;
+        self
+    }
+
+    fn worktree(mut self) -> Self {
+        self.worktree = true;
+        self
+    }
+
+    fn commit(mut self, range: impl Into<String>) -> Self {
+        self.commit = Some(range.into());
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AffectedInputMode {
+    Explicit(Vec<PathBuf>),
+    Stdin,
+    Staged,
+    Worktree,
+    Commit(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GitDiffRequest {
+    program: &'static str,
+    args: Vec<OsString>,
+}
+
+type GitRunResult = Result<Vec<u8>, Box<dyn std::error::Error>>;
+type GitRunner<'a> = dyn FnMut(&GitDiffRequest) -> GitRunResult + 'a;
+
+fn affected_input_error(detail: impl Into<String>) -> Box<dyn std::error::Error> {
+    std::io::Error::other(format!("atlas-affected-input-mode: {}", detail.into())).into()
+}
+
+fn resolve_affected_input_mode(
+    input: &AffectedCliInput,
+) -> Result<AffectedInputMode, Box<dyn std::error::Error>> {
+    let mode_count = usize::from(!input.paths.is_empty())
+        + usize::from(input.stdin)
+        + usize::from(input.staged)
+        + usize::from(input.worktree)
+        + usize::from(input.commit.is_some());
+    if mode_count != 1 {
+        return Err(affected_input_error(
+            "choose exactly one of explicit paths, --stdin, --staged, --worktree, or --commit",
+        ));
+    }
+    if !input.paths.is_empty() {
+        Ok(AffectedInputMode::Explicit(input.paths.clone()))
+    } else if input.stdin {
+        Ok(AffectedInputMode::Stdin)
+    } else if input.staged {
+        Ok(AffectedInputMode::Staged)
+    } else if input.worktree {
+        Ok(AffectedInputMode::Worktree)
+    } else if let Some(range) = &input.commit {
+        Ok(AffectedInputMode::Commit(range.clone()))
+    } else {
+        Err(affected_input_error("affected input mode disappeared"))
+    }
+}
+
+fn git_diff_request(
+    code: &Path,
+    mode: &AffectedInputMode,
+) -> Result<Option<GitDiffRequest>, Box<dyn std::error::Error>> {
+    let mut args = vec![
+        OsString::from("-C"),
+        code.as_os_str().to_os_string(),
+        OsString::from("diff"),
+        OsString::from("--name-only"),
+    ];
+    match mode {
+        AffectedInputMode::Explicit(_) | AffectedInputMode::Stdin => return Ok(None),
+        AffectedInputMode::Staged => args.push(OsString::from("--cached")),
+        AffectedInputMode::Worktree => {}
+        AffectedInputMode::Commit(range) => {
+            if range.trim().is_empty() || range.starts_with('-') {
+                return Err(affected_input_error(
+                    "--commit range must be non-empty and must not begin with '-'",
+                ));
+            }
+            args.push(OsString::from(range));
+        }
+    }
+    args.push(OsString::from("--"));
+    Ok(Some(GitDiffRequest {
+        program: "git",
+        args,
+    }))
+}
+
+fn run_git_name_only(request: &GitDiffRequest) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let output = Command::new(request.program).args(&request.args).output()?;
+    if !output.status.success() {
+        return Err(std::io::Error::other(format!(
+            "atlas-affected-git: git diff failed ({}): {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+        .into());
+    }
+    Ok(output.stdout)
+}
+
+fn path_lines(bytes: &[u8], source: &str) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
+    if bytes.contains(&0) {
+        return Err(std::io::Error::other(format!(
+            "atlas-affected-{source}: path input contains NUL"
+        ))
+        .into());
+    }
+    let text = std::str::from_utf8(bytes).map_err(|error| {
+        std::io::Error::other(format!(
+            "atlas-affected-{source}: path input is not UTF-8: {error}"
+        ))
+    })?;
+    Ok(text
+        .lines()
+        .map(|line| line.strip_suffix('\r').unwrap_or(line))
+        .filter(|line| !line.is_empty())
+        .map(PathBuf::from)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect())
+}
+
+fn resolve_affected_inputs(
+    code: &Path,
+    mode: AffectedInputMode,
+    stdin: &mut dyn Read,
+    run_git: &mut GitRunner<'_>,
+) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
+    match mode {
+        AffectedInputMode::Explicit(paths) => Ok(paths),
+        AffectedInputMode::Stdin => {
+            let mut bytes = Vec::new();
+            stdin.read_to_end(&mut bytes)?;
+            path_lines(&bytes, "input")
+        }
+        mode => {
+            let request = git_diff_request(code, &mode)?
+                .ok_or_else(|| affected_input_error("VCS mode did not produce a Git request"))?;
+            let bytes = run_git(&request)?;
+            path_lines(&bytes, "git")
+        }
+    }
+}
+
+fn cmd_atlas_affected_with_io(
+    code: &Path,
+    graph: &Path,
+    input: AffectedCliInput,
+    options: &rust_atlas::AffectedOptions,
+    stdin: &mut dyn Read,
+    run_git: &mut GitRunner<'_>,
+    stdout: &mut dyn Write,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mode = resolve_affected_input_mode(&input)?;
+    let paths = resolve_affected_inputs(code, mode, stdin, run_git)?;
+    let result = rust_atlas::affected_paths(code, graph, &paths, options)?;
+    let bytes = serde_json::to_vec_pretty(&result)?;
+    stdout.write_all(&bytes)?;
+    stdout.write_all(b"\n")?;
+    Ok(())
+}
+
+fn parse_explore_profile(
+    profile: &str,
+) -> Result<rust_atlas::ExploreProfile, Box<dyn std::error::Error>> {
+    match profile {
+        "compact" => Ok(rust_atlas::ExploreProfile::Compact),
+        "deep" => Ok(rust_atlas::ExploreProfile::Deep),
+        _ => Err(std::io::Error::other(format!(
+            "atlas-explore-profile: unsupported profile `{profile}`"
+        ))
+        .into()),
+    }
+}
+
+fn parse_context_profile(
+    profile: &str,
+) -> Result<rust_atlas::ContextProfile, Box<dyn std::error::Error>> {
+    match profile {
+        "symbol" => Ok(rust_atlas::ContextProfile::Symbol),
+        "flow" => Ok(rust_atlas::ContextProfile::Flow),
+        "architecture" => Ok(rust_atlas::ContextProfile::Architecture),
+        "impact" => Ok(rust_atlas::ContextProfile::Impact),
+        _ => Err(std::io::Error::other(format!(
+            "atlas-context-profile: unsupported profile `{profile}`"
+        ))
+        .into()),
+    }
+}
+
+fn resolve_flow_query(
+    from: Option<String>,
+    to: Option<String>,
+    through: Option<String>,
+) -> Result<rust_atlas::FlowQuery, Box<dyn std::error::Error>> {
+    match (from, to, through) {
+        (Some(from), Some(to), None) => Ok(rust_atlas::FlowQuery::Between { from, to }),
+        (None, None, Some(symbol)) => Ok(rust_atlas::FlowQuery::Through { symbol }),
+        _ => Err(std::io::Error::other(
+            "atlas-flow-input-mode: use both --from/--to or only --through",
+        )
+        .into()),
+    }
+}
+
+fn cmd_atlas_explore_with_writer(
+    code: &Path,
+    graph: &Path,
+    query: &str,
+    options: &rust_atlas::ExploreOptions,
+    stdout: &mut dyn Write,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let result = rust_atlas::explore(code, graph, query, options)?;
+    let bytes = serde_json::to_vec(&result)?;
+    stdout.write_all(&bytes)?;
+    stdout.write_all(b"\n")?;
+    Ok(())
+}
+
+fn cmd_atlas_context_with_writer(
+    code: &Path,
+    graph: &Path,
+    query: &str,
+    options: &rust_atlas::ContextOptions,
+    stdout: &mut dyn Write,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let result = rust_atlas::compile_context(code, graph, query, options)?;
+    let bytes = serde_json::to_vec(&result)?;
+    stdout.write_all(&bytes)?;
+    stdout.write_all(b"\n")?;
+    Ok(())
+}
+
 fn cmd_atlas(action: AtlasCommands) -> Result<(), Box<dyn std::error::Error>> {
     fn print_value<T: serde::Serialize>(
         value: &T,
@@ -3279,20 +4019,60 @@ fn cmd_atlas(action: AtlasCommands) -> Result<(), Box<dyn std::error::Error>> {
     }
     let frozen_opts = |frozen: bool| rust_atlas::QueryOptions { frozen };
     match action {
+        AtlasCommands::Benchmark { action } => cmd_atlas_benchmark(action),
+        AtlasCommands::Provider { action } => cmd_atlas_provider(action),
+        AtlasCommands::Daemon { action } => cmd_atlas_daemon(action),
         AtlasCommands::Build {
             code,
             graph,
             full,
             scip,
+            dynamic_dispatch,
+            features,
+            target,
+            cfg,
+            frontier_limit,
+            batch_size,
+            working_byte_limit,
+            #[cfg(feature = "mir")]
+            mir,
+            #[cfg(feature = "mir")]
+            mir_driver,
         } => {
-            let report = rust_atlas::build(
-                &code,
-                &graph,
-                &rust_atlas::BuildOptions {
-                    full,
-                    scip_index: scip,
-                },
-            )?;
+            let options = rust_atlas::BuildOptions {
+                full,
+                scip_index: scip,
+                dynamic_dispatch,
+                features,
+                target,
+                cfg,
+                frontier_limit,
+                batch_size,
+                working_byte_limit,
+                cancellation: None,
+            };
+            let report = {
+                #[cfg(feature = "mir")]
+                {
+                    if mir.is_some() || mir_driver.is_some() {
+                        rust_atlas::build_with_mir(
+                            &code,
+                            &graph,
+                            &options,
+                            &rust_atlas::MirBuildOptions {
+                                overlay: mir,
+                                driver: mir_driver,
+                            },
+                        )?
+                    } else {
+                        rust_atlas::build(&code, &graph, &options)?
+                    }
+                }
+                #[cfg(not(feature = "mir"))]
+                {
+                    rust_atlas::build(&code, &graph, &options)?
+                }
+            };
             print_value(&report, "json")
         }
         AtlasCommands::ScipGen { code, graph, ra } => {
@@ -3321,6 +4101,175 @@ fn cmd_atlas(action: AtlasCommands) -> Result<(), Box<dyn std::error::Error>> {
             let result = rust_atlas::query(&code, &graph, &symbol, &frozen_opts(frozen))?;
             print_value(&result, &format)
         }
+        AtlasCommands::Search {
+            query,
+            limit,
+            code,
+            graph,
+            frozen,
+        } => {
+            let result = rust_atlas::search(
+                &code,
+                &graph,
+                &query,
+                &rust_atlas::SearchOptions { limit, frozen },
+            )?;
+            print_value(&result, "json")
+        }
+        AtlasCommands::Explore {
+            query,
+            profile,
+            code,
+            graph,
+            frozen,
+        } => {
+            let stdout = std::io::stdout();
+            cmd_atlas_explore_with_writer(
+                &code,
+                &graph,
+                &query,
+                &rust_atlas::ExploreOptions {
+                    profile: parse_explore_profile(&profile)?,
+                    frozen,
+                },
+                &mut stdout.lock(),
+            )
+        }
+        AtlasCommands::Context {
+            query,
+            execution,
+            fallback_direct,
+            profile,
+            after,
+            expect_graph,
+            max_bytes,
+            min_score,
+            failure_evidence,
+            code,
+            graph,
+            frozen,
+        } => {
+            validate_atlas_context_execution(execution, fallback_direct)?;
+            let options = rust_atlas::ContextOptions {
+                profile: parse_context_profile(&profile)?,
+                frozen,
+                max_serialized_bytes: max_bytes,
+                min_score,
+                after,
+                expected_graph_fingerprint: expect_graph,
+                failure_evidence,
+            };
+            let stdout = std::io::stdout();
+            match execution {
+                AtlasContextExecution::Direct => cmd_atlas_context_with_writer(
+                    &code,
+                    &graph,
+                    &query,
+                    &options,
+                    &mut stdout.lock(),
+                ),
+                AtlasContextExecution::Worker => {
+                    let reply = execute_atlas_context_worker(
+                        &code,
+                        &graph,
+                        &next_atlas_context_request_id(),
+                        &query,
+                        &options,
+                        fallback_direct,
+                    )?;
+                    let mut stdout = stdout.lock();
+                    serde_json::to_writer(&mut stdout, &reply)?;
+                    stdout.write_all(b"\n")?;
+                    Ok(())
+                }
+            }
+        }
+        AtlasCommands::Flow {
+            from,
+            to,
+            through,
+            max_depth,
+            max_expansions,
+            max_paths,
+            code,
+            graph,
+            frozen,
+        } => {
+            let query = resolve_flow_query(from, to, through)?;
+            let result = rust_atlas::flow(
+                &code,
+                &graph,
+                query,
+                &rust_atlas::FlowOptions {
+                    limits: rust_atlas::TraversalLimits {
+                        max_depth,
+                        max_expansions,
+                        max_paths,
+                    },
+                    frozen,
+                },
+            )?;
+            print_value(&result, "json")
+        }
+        AtlasCommands::Impact {
+            symbol,
+            depth,
+            max_nodes,
+            code,
+            graph,
+            frozen,
+        } => {
+            let result = rust_atlas::impact(
+                &code,
+                &graph,
+                &symbol,
+                &rust_atlas::ImpactOptions {
+                    max_depth: depth,
+                    max_nodes,
+                    frozen,
+                },
+            )?;
+            print_value(&result, "json")
+        }
+        AtlasCommands::Affected {
+            paths,
+            stdin,
+            staged,
+            worktree,
+            commit,
+            depth,
+            max_nodes,
+            code,
+            graph,
+            frozen,
+        } => {
+            let input = AffectedCliInput {
+                paths,
+                stdin,
+                staged,
+                worktree,
+                commit,
+            };
+            let options = rust_atlas::AffectedOptions {
+                impact: rust_atlas::ImpactOptions {
+                    max_depth: depth,
+                    max_nodes,
+                    frozen,
+                },
+            };
+            let stdin = std::io::stdin();
+            let stdout = std::io::stdout();
+            let mut run_git = |request: &GitDiffRequest| run_git_name_only(request);
+            cmd_atlas_affected_with_io(
+                &code,
+                &graph,
+                input,
+                &options,
+                &mut stdin.lock(),
+                &mut run_git,
+                &mut stdout.lock(),
+            )
+        }
         AtlasCommands::Refs {
             symbol,
             code,
@@ -3341,8 +4290,16 @@ fn cmd_atlas(action: AtlasCommands) -> Result<(), Box<dyn std::error::Error>> {
             let report = rust_atlas::impls(&code, &graph, &name, &frozen_opts(frozen))?;
             print_value(&report, &format)
         }
+        AtlasCommands::Status {
+            code,
+            graph,
+            format,
+        } => {
+            let stdout = std::io::stdout();
+            cmd_atlas_status_with_writer(&code, &graph, &format, &mut stdout.lock())
+        }
         AtlasCommands::Check { code, graph } => {
-            let stale = rust_atlas::check(&code, &graph)?;
+            let stale = rust_atlas::status(&code, &graph)?.syn.stale_files;
             let payload = serde_json::json!({ "stale": stale });
             println!("{}", serde_json::to_string_pretty(&payload)?);
             if stale.is_empty() {
@@ -3350,6 +4307,280 @@ fn cmd_atlas(action: AtlasCommands) -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 Err(format!("atlas graph is stale: {}", stale.join(", ")).into())
             }
+        }
+    }
+}
+
+fn cmd_atlas_daemon(action: AtlasDaemonCommands) -> Result<(), Box<dyn std::error::Error>> {
+    match action {
+        AtlasDaemonCommands::Start { code, graph, query } => {
+            let status = crate::atlas_daemon::start(&code, &graph, query.into_config()?)?;
+            println!("{}", serde_json::to_string_pretty(&status)?);
+        }
+        AtlasDaemonCommands::Serve { code, graph, query } => {
+            crate::atlas_daemon::serve(&code, &graph, query.into_config()?)?;
+        }
+        AtlasDaemonCommands::Status { code, graph } => {
+            let status = crate::atlas_daemon::daemon_status(&code, &graph)?;
+            println!("{}", serde_json::to_string_pretty(&status)?);
+        }
+        AtlasDaemonCommands::ServiceStatus { code, graph } => {
+            let status = crate::atlas_daemon::service_status(&code, &graph)?;
+            println!("{}", serde_json::to_string_pretty(&status)?);
+        }
+        AtlasDaemonCommands::Sync { code, graph } => {
+            let response = crate::atlas_daemon::sync(&code, &graph)?;
+            println!("{}", serde_json::to_string_pretty(&response)?);
+        }
+        AtlasDaemonCommands::Stop { code, graph } => {
+            let response = crate::atlas_daemon::stop(&code, &graph)?;
+            println!("{}", serde_json::to_string_pretty(&response)?);
+        }
+    }
+    Ok(())
+}
+
+fn validate_atlas_context_execution(
+    execution: AtlasContextExecution,
+    fallback_direct: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if fallback_direct && execution != AtlasContextExecution::Worker {
+        return Err(std::io::Error::other(
+            "atlas-context-fallback: --fallback-direct requires --execution worker",
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn next_atlas_context_request_id() -> String {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    format!(
+        "atlas-cli-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    )
+}
+
+fn execute_atlas_context_worker(
+    code: &Path,
+    graph: &Path,
+    request_id: &str,
+    query: &str,
+    direct_options: &rust_atlas::ContextOptions,
+    fallback_direct: bool,
+) -> Result<crate::atlas_query_service::QueryServiceWireReply, Box<dyn std::error::Error>> {
+    let mut worker_options = direct_options.clone();
+    worker_options.frozen = true;
+    let attempt =
+        match crate::atlas_daemon::context(code, graph, request_id, query, &worker_options) {
+            Ok(reply) => reply,
+            Err(crate::atlas_daemon::DaemonError::Unavailable(error)) => {
+                crate::atlas_query_service::QueryServiceWireReply::unavailable_attempt(
+                    request_id.to_string(),
+                    format!("atlas-query-unavailable: {error}"),
+                )
+            }
+            Err(error) => return Err(error.into()),
+        };
+    if fallback_direct
+        && matches!(
+            attempt.outcome,
+            crate::atlas_query_service::QueryOutcome::Busy
+                | crate::atlas_query_service::QueryOutcome::Degraded
+                | crate::atlas_query_service::QueryOutcome::Unavailable
+        )
+    {
+        let context = rust_atlas::compile_context(code, graph, query, direct_options)?;
+        return attempt
+            .with_fallback(context)
+            .map_err(|error| std::io::Error::other(error).into());
+    }
+    Ok(attempt)
+}
+
+fn cmd_atlas_status_with_writer(
+    code: &Path,
+    graph: &Path,
+    format: &str,
+    stdout: &mut dyn std::io::Write,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let status = rust_atlas::status(code, graph)?;
+    if format == "json" {
+        writeln!(stdout, "{}", serde_json::to_string_pretty(&status)?)?;
+    } else {
+        writeln!(stdout, "{}", serde_json::to_string(&status)?)?;
+    }
+    Ok(())
+}
+
+fn cmd_atlas_benchmark(action: AtlasBenchmarkCommands) -> Result<(), Box<dyn std::error::Error>> {
+    let stdout = std::io::stdout();
+    cmd_atlas_benchmark_with_writer(action, &mut stdout.lock())
+}
+
+fn cmd_atlas_provider(action: AtlasProviderCommands) -> Result<(), Box<dyn std::error::Error>> {
+    let stdout = std::io::stdout();
+    cmd_atlas_provider_with_writer(action, &mut stdout.lock())
+}
+
+fn cmd_atlas_provider_with_writer(
+    action: AtlasProviderCommands,
+    stdout: &mut dyn std::io::Write,
+) -> Result<(), Box<dyn std::error::Error>> {
+    fn emit<T: serde::Serialize>(
+        value: &T,
+        out: Option<&Path>,
+        stdout: &mut dyn std::io::Write,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(path) = out {
+            agent_spec_code_graph_provider::publish_json_atomic(path, value)?;
+        } else {
+            let bytes = serde_json::to_vec_pretty(value)?;
+            stdout.write_all(&bytes)?;
+            stdout.write_all(b"\n")?;
+        }
+        Ok(())
+    }
+
+    match action {
+        AtlasProviderCommands::Validate {
+            manifest,
+            registration,
+            out,
+        } => {
+            let manifest = agent_spec_code_graph_provider::load_provider_manifest(&manifest)?;
+            if let Some(path) = &registration {
+                let registration =
+                    agent_spec_code_graph_provider::load_provider_registration(path)?;
+                agent_spec_code_graph_provider::validate_registration(&manifest, &registration)?;
+            }
+            let receipt = serde_json::json!({
+                "schema": "agent-spec/code-graph-provider/validation-receipt-v1",
+                "valid": true,
+                "provider_id": manifest.provider_id,
+                "provider_version": manifest.provider_version,
+                "role": manifest.role,
+                "registration_checked": registration.is_some(),
+            });
+            emit(&receipt, out.as_deref(), stdout)
+        }
+        AtlasProviderCommands::Conformance {
+            manifest,
+            registration,
+            fixture,
+            code,
+            scratch,
+            out,
+        } => {
+            let manifest = agent_spec_code_graph_provider::load_provider_manifest(&manifest)?;
+            let registration =
+                agent_spec_code_graph_provider::load_provider_registration(&registration)?;
+            let fixture = agent_spec_code_graph_provider::load_conformance_fixture(&fixture)?;
+            let receipt = agent_spec_code_graph_provider::run_provider_conformance(
+                &manifest,
+                &registration,
+                &fixture,
+                &code,
+                &scratch,
+            )?;
+            emit(&receipt, out.as_deref(), stdout)?;
+            if receipt.state == agent_spec_code_graph_provider::ConformanceState::Blocked {
+                return Err(std::io::Error::other("provider-conformance-blocked").into());
+            }
+            Ok(())
+        }
+    }
+}
+
+fn cmd_atlas_benchmark_with_writer(
+    action: AtlasBenchmarkCommands,
+    stdout: &mut dyn std::io::Write,
+) -> Result<(), Box<dyn std::error::Error>> {
+    fn emit<T: serde::Serialize>(
+        value: &T,
+        out: Option<&Path>,
+        stdout: &mut dyn std::io::Write,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(path) = out {
+            crate::atlas_eval::write_json_atomic(path, value)?;
+        } else {
+            let bytes = serde_json::to_vec_pretty(value)?;
+            stdout.write_all(&bytes)?;
+            stdout.write_all(b"\n")?;
+        }
+        Ok(())
+    }
+
+    match action {
+        AtlasBenchmarkCommands::Validate { corpus } => {
+            let corpus = crate::atlas_eval::load_corpus(&corpus)?;
+            emit(
+                &serde_json::json!({ "valid": true, "cases": corpus.cases.len() }),
+                None,
+                stdout,
+            )
+        }
+        AtlasBenchmarkCommands::Plan { corpus, out } => {
+            let corpus = crate::atlas_eval::load_corpus(&corpus)?;
+            let plan = crate::atlas_eval::compile_plan(&corpus)?;
+            emit(&plan, out.as_deref(), stdout)
+        }
+        AtlasBenchmarkCommands::AgentPlan {
+            corpus,
+            experiment,
+            out,
+        } => {
+            let corpus = crate::atlas_eval::load_corpus(&corpus)?;
+            let experiment = crate::atlas_agent_eval::load_agent_experiment(&experiment)?;
+            let plan = crate::atlas_agent_eval::compile_agent_plan(&corpus, &experiment)?;
+            emit(&plan, out.as_deref(), stdout)
+        }
+        AtlasBenchmarkCommands::AgentGate {
+            plan,
+            receipts,
+            out,
+        } => {
+            let plan = crate::atlas_agent_eval::load_agent_plan(&plan)?;
+            let receipts = crate::atlas_agent_eval::load_agent_receipts(&receipts)?;
+            let gate = crate::atlas_agent_eval::gate_agent_receipts(&plan, &receipts)?;
+            emit(&gate, out.as_deref(), stdout)?;
+            crate::atlas_agent_eval::enforce_agent_gate(&gate)?;
+            Ok(())
+        }
+        AtlasBenchmarkCommands::ServingPlan { experiment, out } => {
+            let experiment = crate::atlas_agent_eval::load_serving_experiment(&experiment)?;
+            let plan = crate::atlas_agent_eval::compile_serving_plan(&experiment)?;
+            emit(&plan, out.as_deref(), stdout)
+        }
+        AtlasBenchmarkCommands::ServingGate {
+            plan,
+            receipts,
+            out,
+        } => {
+            let plan = crate::atlas_agent_eval::load_serving_plan(&plan)?;
+            let receipts = crate::atlas_agent_eval::load_serving_receipts(&receipts)?;
+            let gate = crate::atlas_agent_eval::gate_serving_receipts(&plan, &receipts)?;
+            emit(&gate, out.as_deref(), stdout)?;
+            crate::atlas_agent_eval::enforce_serving_gate(&gate)?;
+            Ok(())
+        }
+        AtlasBenchmarkCommands::Summarize { receipts, out } => {
+            let receipts = crate::atlas_eval::load_receipts(&receipts)?;
+            let summary = crate::atlas_eval::summarize(&receipts)?;
+            emit(&summary, out.as_deref(), stdout)
+        }
+        AtlasBenchmarkCommands::Score {
+            corpus,
+            results,
+            out,
+        } => {
+            let corpus = crate::atlas_eval::load_query_corpus(&corpus)?;
+            let results = crate::atlas_eval::load_query_results(&results)?;
+            let receipt = crate::atlas_eval::score_query_results(&corpus, &results)?;
+            emit(&receipt, out.as_deref(), stdout)?;
+            crate::atlas_eval::gate_query_regression(&receipt)?;
+            Ok(())
         }
     }
 }
@@ -3658,6 +4889,77 @@ fn cmd_requirements(action: RequirementCommands) -> Result<(), Box<dyn std::erro
             );
             Ok(())
         }
+        RequirementCommands::Affected {
+            paths,
+            symbol,
+            knowledge,
+            specs,
+            code,
+            graph,
+            bindings,
+            worktrees,
+            max_depth,
+            max_nodes,
+            format,
+            out,
+        } => {
+            if format != "json" {
+                return Err(format!(
+                    "requirements-affected-format: expected json, found `{format}`"
+                )
+                .into());
+            }
+            let input = match (paths.is_empty(), symbol) {
+                (false, None) => crate::spec_knowledge::CodeImpactInput::Paths {
+                    paths: paths
+                        .iter()
+                        .map(|path| path.to_string_lossy().replace('\\', "/"))
+                        .collect(),
+                },
+                (true, Some(symbol)) if !symbol.trim().is_empty() => {
+                    crate::spec_knowledge::CodeImpactInput::Symbol { symbol }
+                }
+                _ => {
+                    return Err(
+                        "requirements-affected-input: choose exactly one of --path or --symbol"
+                            .into(),
+                    );
+                }
+            };
+            let provider = crate::spec_knowledge::AtlasProvider {
+                code_root: code.clone(),
+                graph_dir: graph,
+            };
+            let provider_result = crate::spec_knowledge::CodeImpactProvider::impact(
+                &provider,
+                &input,
+                &crate::spec_knowledge::CodeImpactOptions {
+                    max_depth,
+                    max_nodes,
+                },
+            );
+            let report = crate::spec_knowledge::build_intent_impact(
+                "rust-atlas",
+                input,
+                provider_result,
+                &knowledge,
+                &specs,
+                &bindings,
+                Some(worktrees.as_path()),
+                vcs::get_vcs_context(&code),
+            )?;
+            let rendered = crate::spec_knowledge::render_intent_impact(&report)?;
+            if let Some(out) = out {
+                if let Some(parent) = out.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(&out, rendered)?;
+                println!("intent impact written: {}", out.display());
+            } else {
+                print!("{rendered}");
+            }
+            Ok(())
+        }
         RequirementCommands::Compile {
             knowledge,
             specs,
@@ -3704,6 +5006,69 @@ fn cmd_requirements(action: RequirementCommands) -> Result<(), Box<dyn std::erro
                 bundle.code_bindings.len(),
                 bundle.acceptance_gates.len()
             );
+            Ok(())
+        }
+        RequirementCommands::AffectedBundle {
+            impact,
+            knowledge,
+            code,
+            out,
+        } => {
+            let text = std::fs::read_to_string(&impact)?;
+            let report: crate::spec_knowledge::IntentImpactReport = serde_json::from_str(&text)?;
+            let bundle = crate::spec_knowledge::build_affected_execution_bundle(
+                &report,
+                &knowledge,
+                &code,
+                &crate::spec_knowledge::baseline_quality_profile(),
+            )?;
+            let rendered = crate::spec_knowledge::render_affected_execution_bundle(&bundle)?;
+            if let Some(parent) = out.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&out, rendered)?;
+            println!(
+                "affected execution bundle written: {} ({} tests, {} candidates, {} gates)",
+                out.display(),
+                bundle.authoritative_tests.len(),
+                bundle.test_candidates.len(),
+                bundle.acceptance_gates.len()
+            );
+            Ok(())
+        }
+        RequirementCommands::AffectedRecord {
+            impact,
+            bundle,
+            quality_outcomes,
+            run_id,
+            timestamp,
+            trace_dir,
+        } => {
+            let report: crate::spec_knowledge::IntentImpactReport =
+                serde_json::from_str(&std::fs::read_to_string(&impact)?)?;
+            let bundle = bundle
+                .as_deref()
+                .map(std::fs::read_to_string)
+                .transpose()?
+                .map(|text| serde_json::from_str(&text))
+                .transpose()?;
+            let quality_outcomes = quality_outcomes
+                .as_deref()
+                .map(std::fs::read_to_string)
+                .transpose()?
+                .map(|text| serde_json::from_str(&text))
+                .transpose()?
+                .unwrap_or_default();
+            let record = crate::spec_knowledge::build_affected_trace_record(
+                run_id,
+                timestamp,
+                report,
+                bundle,
+                quality_outcomes,
+            )?;
+            let path =
+                crate::spec_knowledge::write_affected_trace_record_to_dir(&trace_dir, record)?;
+            println!("affected trace written: {}", path.display());
             Ok(())
         }
         RequirementCommands::VerifyRun { manifest, format } => {
@@ -3980,15 +5345,12 @@ fn cmd_requirements_replay(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ledger = crate::spec_knowledge::read_requirement_trace_ledgers(trace_dir);
     let target = id.to_ascii_uppercase();
-    let records = crate::spec_knowledge::replay_requirement_trace(&ledger, &target);
-    if records.is_empty() {
-        return Err(format!("no requirement trace record found for {target}").into());
-    }
+    let replay = crate::spec_knowledge::replay_affected_requirement(&ledger, &target);
     match format {
-        "json" => println!("{}", serde_json::to_string_pretty(&records)?),
+        "json" => println!("{}", serde_json::to_string_pretty(&replay)?),
         _ => print!(
             "{}",
-            crate::spec_knowledge::format_requirement_replay_text(&records)
+            crate::spec_knowledge::format_affected_requirement_replay_text(&replay)
         ),
     }
     Ok(())
@@ -4003,13 +5365,14 @@ fn cmd_requirements_explain_failure(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ledger = crate::spec_knowledge::read_requirement_trace_ledgers(trace_dir);
     let target = id.to_ascii_uppercase();
-    let mut explanation = crate::spec_knowledge::explain_requirement_failure(&ledger, &target);
-    attach_wiki_articles_to_failure_explanation(&mut explanation, code, wiki);
+    let mut explanation =
+        crate::spec_knowledge::explain_affected_requirement_failure(&ledger, &target);
+    attach_wiki_articles_to_trace_records(&mut explanation.lifecycle_non_pass_records, code, wiki);
     match format {
         "json" => println!("{}", serde_json::to_string_pretty(&explanation)?),
         _ => print!(
             "{}",
-            crate::spec_knowledge::format_requirement_failure_text(&explanation)
+            crate::spec_knowledge::format_affected_requirement_failure_text(&explanation)
         ),
     }
     Ok(())
@@ -4058,12 +5421,12 @@ fn cmd_requirements_trace_graph(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ledger = crate::spec_knowledge::read_requirement_trace_ledgers(trace_dir);
     let target = id.to_ascii_uppercase();
-    let records = crate::spec_knowledge::latest_requirement_trace_records(&ledger, &target);
+    let replay = crate::spec_knowledge::replay_affected_requirement(&ledger, &target);
     match format {
-        "json" => println!("{}", serde_json::to_string_pretty(&records)?),
+        "json" => println!("{}", serde_json::to_string_pretty(&replay)?),
         _ => print!(
             "{}",
-            crate::spec_knowledge::format_requirement_trace_mermaid(&records)
+            crate::spec_knowledge::format_affected_requirement_trace_mermaid(&replay)
         ),
     }
     Ok(())
@@ -6703,6 +8066,55 @@ name: "退款"
     }
 
     #[test]
+    fn test_requirements_affected_record_cli_parses_evidence_inputs() {
+        let cli = super::Cli::parse_from([
+            "agent-spec",
+            "requirements",
+            "affected-record",
+            "--impact",
+            ".agent-spec/intent-impact.json",
+            "--bundle",
+            ".agent-spec/affected-bundle.json",
+            "--quality-outcomes",
+            ".agent-spec/quality-outcomes.json",
+            "--run-id",
+            "run-42",
+            "--timestamp",
+            "42",
+            "--trace-dir",
+            ".agent-spec/trace",
+        ]);
+
+        match cli.command {
+            super::Commands::Requirements {
+                action:
+                    super::RequirementCommands::AffectedRecord {
+                        impact,
+                        bundle,
+                        quality_outcomes,
+                        run_id,
+                        timestamp,
+                        trace_dir,
+                    },
+            } => {
+                assert_eq!(impact, PathBuf::from(".agent-spec/intent-impact.json"));
+                assert_eq!(
+                    bundle,
+                    Some(PathBuf::from(".agent-spec/affected-bundle.json"))
+                );
+                assert_eq!(
+                    quality_outcomes,
+                    Some(PathBuf::from(".agent-spec/quality-outcomes.json"))
+                );
+                assert_eq!(run_id, "run-42");
+                assert_eq!(timestamp, 42);
+                assert_eq!(trace_dir, PathBuf::from(".agent-spec/trace"));
+            }
+            _ => panic!("expected requirements affected-record command"),
+        }
+    }
+
+    #[test]
     fn test_wiki_project_map_cli_parses_nested_subcommand() {
         let cli = super::Cli::parse_from([
             "agent-spec",
@@ -6994,6 +8406,9 @@ name: "退款"
             ("worktree-manifest-v1.schema.json", "object"),
             ("clarification-questions-v1.schema.json", "array"),
             ("requirement-trace-ledger-v1.schema.json", "object"),
+            ("intent-impact-v1.schema.json", "object"),
+            ("affected-execution-bundle-v1.schema.json", "object"),
+            ("requirement-trace-ledger-v2.schema.json", "object"),
         ] {
             let schema_path = schema_dir.join(file_name);
             let schema_json: serde_json::Value =
@@ -10283,6 +11698,162 @@ Scenario: verification metadata stays visible
     }
 
     #[test]
+    fn test_atlas_runtime_boundary_docs_and_wiki_describe_authority() {
+        let guide = include_str!("../docs/atlas-runtime-boundaries.md");
+        assert!(guide.contains("authority: query-hint"));
+        assert!(guide.contains("not proof"));
+        assert!(!guide.contains("--format json"));
+
+        let wiki_pages = [
+            include_str!("../.agent-spec/wiki/architecture/atlas.md"),
+            include_str!("../.agent-spec/wiki/concepts/atlas-authority.md"),
+            include_str!("../.agent-spec/wiki/decisions/atlas-derived-authority.md"),
+        ];
+        for page in wiki_pages {
+            assert!(page.contains("runtime-boundary"));
+            assert!(page.contains("query-hint"));
+            assert!(page.contains("graph"));
+            assert!(page.contains("lifecycle"));
+            assert!(
+                ["never", "cannot", "do not"]
+                    .iter()
+                    .any(|negation| page.contains(negation))
+            );
+        }
+    }
+
+    #[test]
+    fn test_atlas_incremental_docs_describe_generation_and_live_runtime_boundary() {
+        let guide = include_str!("../docs/atlas-incremental-builds.md");
+        let roadmap = include_str!("../docs/atlas-roadmap.md");
+        let skill = include_str!("../skills/agent-spec-tool-first/SKILL.md");
+        let wiki = include_str!("../.agent-spec/wiki/architecture/atlas.md");
+        for content in [guide, roadmap, skill, wiki] {
+            for term in ["generation", "frontier", "orphan", "zero-change"] {
+                assert!(content.contains(term), "missing `{term}`");
+            }
+            assert!(content.contains("watcher"));
+            assert!(content.contains("daemon"));
+            assert!(content.contains("D2"));
+            assert!(content.contains("D3"));
+        }
+        assert!(guide.contains("derived working data"));
+        assert!(wiki.contains("derived"));
+        assert!(roadmap.contains("Wave 8 已交付"));
+        assert!(roadmap.contains("Wave 9"));
+    }
+
+    #[test]
+    fn test_atlas_live_runtime_acceptance_matrix_records_receipts() {
+        let root = repo_root();
+        let matrix_path = root.join("fixtures/atlas/live-runtime/matrix.json");
+        let matrix_text = fs::read_to_string(&matrix_path)
+            .unwrap_or_else(|error| panic!("{}: {error}", matrix_path.display()));
+        let matrix: serde_json::Value = serde_json::from_str(&matrix_text).unwrap();
+        assert_eq!(matrix["schema"], "rust-atlas/live-runtime-matrix-v1");
+
+        let expected_cases = [
+            "coalescing",
+            "mid-sync",
+            "failed-sync",
+            "writer-retry-exhaustion",
+            "ordinary-retry-exhaustion",
+            "transient-recovery",
+            "competing-writer",
+            "stale-registry",
+            "client-disconnect",
+            "active-reader",
+            "ambiguous-lease",
+            "abandoned-staging",
+            "no-daemon-parity",
+        ];
+        let cases = matrix["cases"].as_array().unwrap();
+        assert_eq!(cases.len(), expected_cases.len());
+        let spec = fs::read_to_string(root.join("specs/task-atlas-live-runtime.spec.md")).unwrap();
+
+        for expected in expected_cases {
+            let case = cases
+                .iter()
+                .find(|case| case["case"] == expected)
+                .unwrap_or_else(|| panic!("missing live-runtime matrix case `{expected}`"));
+            let selector = case["test_selector"].as_str().unwrap();
+            assert!(
+                spec.contains(selector),
+                "matrix selector `{selector}` is not governed by the D3 Task Contract"
+            );
+            let receipt = case["receipt"].as_object().unwrap();
+            for field in [
+                "watermark",
+                "pending_before",
+                "pending_after",
+                "retries",
+                "state",
+                "generation",
+                "writer_identity",
+                "reclamation",
+            ] {
+                assert!(
+                    receipt.contains_key(field),
+                    "case `{expected}` is missing receipt field `{field}`"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_atlas_live_runtime_docs_match_cli_and_authority_boundaries() {
+        let root = repo_root();
+        let read = |path: &str| {
+            fs::read_to_string(root.join(path)).unwrap_or_else(|error| panic!("{path}: {error}"))
+        };
+        let guide = read("docs/atlas-live-runtime.md");
+        let roadmap = read("docs/atlas-roadmap.md");
+        let incremental = read("docs/atlas-incremental-builds.md");
+        let readme = read("README.md");
+        let agents = read("AGENTS.md");
+        let skill = read("skills/agent-spec-tool-first/SKILL.md");
+        let wiki = read(".agent-spec/wiki/architecture/atlas.md");
+
+        for command in [
+            "atlas daemon start",
+            "atlas daemon status",
+            "atlas daemon sync",
+            "atlas daemon stop",
+        ] {
+            assert!(guide.contains(command), "guide is missing `{command}`");
+        }
+        for content in [
+            &guide,
+            &roadmap,
+            &incremental,
+            &readme,
+            &agents,
+            &skill,
+            &wiki,
+        ] {
+            for term in [
+                "watcher",
+                "watermark",
+                "degraded",
+                "reader lease",
+                "no-daemon",
+            ] {
+                assert!(
+                    content.contains(term),
+                    "live-runtime docs are missing `{term}`"
+                );
+            }
+        }
+        for authority in ["graph freshness", "KLL", "lifecycle"] {
+            assert!(
+                guide.contains(authority),
+                "live runtime authority boundary is missing `{authority}`"
+            );
+        }
+        assert!(roadmap.contains("#### D3. 可选 watch 与 daemon mode\n\n状态：已交付"));
+    }
+
+    #[test]
     fn test_docs_describe_deepened_live_wiki_workflow() {
         let readme = include_str!("../README.md");
         let agents = include_str!("../AGENTS.md");
@@ -10966,6 +12537,831 @@ Scenario: pass
     }
 
     #[test]
+    fn test_atlas_requirements_bind_rejects_stale_semantic_authority_without_writing() {
+        let (code, graph) = atlas_fixture_copy("atlas-requirements-bind-stale-scip");
+        let base = code.parent().unwrap();
+        rust_atlas::build(
+            &code,
+            &graph,
+            &rust_atlas::BuildOptions {
+                full: false,
+                scip_index: Some(repo_root().join("fixtures/atlas/scip/index.json")),
+                dynamic_dispatch: false,
+                ..rust_atlas::BuildOptions::default()
+            },
+        )
+        .unwrap();
+        let service = code.join("src/service.rs");
+        let mut source = fs::read_to_string(&service).unwrap();
+        source.push_str("\npub fn refreshed_before_binding() {}\n");
+        fs::write(&service, source).unwrap();
+        rust_atlas::query(
+            &code,
+            &graph,
+            "atlas_basic::store::MemStore",
+            &rust_atlas::QueryOptions::default(),
+        )
+        .unwrap();
+        let status = rust_atlas::status(&code, &graph).unwrap();
+        assert_eq!(status.syn.state, rust_atlas::LayerState::Fresh);
+        assert_eq!(status.scip.state, rust_atlas::LayerState::Stale);
+
+        let knowledge = base.join("knowledge");
+        let specs = base.join("specs");
+        fs::create_dir_all(knowledge.join("requirements")).unwrap();
+        fs::create_dir_all(&specs).unwrap();
+        fs::write(
+            knowledge.join("requirements/req-bind.md"),
+            "---\nkind: requirement\nid: REQ-BIND-DEMO\ntitle: \"Bind Demo\"\nstatus: accepted\nliveness: auto\ntags: []\n---\n\n# Bind Demo\n\n## Problem\n\np\n\n## Requirements\n\n[REQ-BIND-DEMO-ONE] The system MUST reserve a slot exactly once.\n\n## Scenarios\n\nScenario: reserves\n  Given an available slot\n  When reserve runs\n  Then the slot is held\n",
+        )
+        .unwrap();
+        fs::write(
+            specs.join("task-bind.spec.md"),
+            "spec: task\nname: \"Bind Demo Contract\"\nsatisfies: [REQ-BIND-DEMO]\n---\n\n## Intent\n\nx\n\n## Boundaries\n\n### Allowed Changes\n- src/**\n\n### Symbols\n- rust-atlas: atlas_basic::store::MemStore\n\n## Completion Criteria\n\nScenario: reserves\n  Test: test_reserves\n  Given an available slot\n  When reserve runs\n  Then the slot is held\n",
+        )
+        .unwrap();
+        let out = base.join(".agent-spec/code-bindings.json");
+        fs::create_dir_all(out.parent().unwrap()).unwrap();
+        let sentinel = b"existing bindings sentinel\n";
+        fs::write(&out, sentinel).unwrap();
+
+        let error = super::cmd_requirements(super::RequirementCommands::Bind {
+            knowledge,
+            specs,
+            code: code.clone(),
+            graph,
+            out: out.clone(),
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("atlas-stale"), "{error}");
+        assert_eq!(fs::read(&out).unwrap(), sentinel);
+        fs::remove_dir_all(base).ok();
+    }
+
+    #[test]
+    fn test_atlas_benchmark_cli_parses_nested_actions() {
+        let cli = super::Cli::parse_from([
+            "agent-spec",
+            "atlas",
+            "benchmark",
+            "plan",
+            "--corpus",
+            "benchmarks/atlas/corpus.json",
+            "--out",
+            "plan.json",
+        ]);
+
+        match cli.command {
+            super::Commands::Atlas {
+                action:
+                    super::AtlasCommands::Benchmark {
+                        action: super::AtlasBenchmarkCommands::Plan { corpus, out },
+                    },
+            } => {
+                assert_eq!(corpus, PathBuf::from("benchmarks/atlas/corpus.json"));
+                assert_eq!(out, Some(PathBuf::from("plan.json")));
+            }
+            _ => panic!("expected atlas benchmark plan"),
+        }
+    }
+
+    #[test]
+    fn test_atlas_daemon_cli_parses_nested_actions() {
+        for action in ["start", "serve", "status", "service-status", "sync", "stop"] {
+            let cli = super::Cli::try_parse_from([
+                "agent-spec",
+                "atlas",
+                "daemon",
+                action,
+                "--code",
+                "worktree",
+                "--graph",
+                "graph",
+            ])
+            .unwrap();
+            let super::Commands::Atlas {
+                action: super::AtlasCommands::Daemon { action: parsed },
+            } = cli.command
+            else {
+                panic!("expected atlas daemon {action}");
+            };
+            let (code, graph) = match parsed {
+                super::AtlasDaemonCommands::Start { code, graph, .. }
+                | super::AtlasDaemonCommands::Serve { code, graph, .. }
+                | super::AtlasDaemonCommands::Status { code, graph }
+                | super::AtlasDaemonCommands::ServiceStatus { code, graph }
+                | super::AtlasDaemonCommands::Sync { code, graph }
+                | super::AtlasDaemonCommands::Stop { code, graph } => (code, graph),
+            };
+            assert_eq!(code, PathBuf::from("worktree"));
+            assert_eq!(graph, PathBuf::from("graph"));
+        }
+    }
+
+    #[test]
+    fn test_atlas_concurrent_query_cli_parse_contract() {
+        let cli = super::Cli::try_parse_from([
+            "agent-spec",
+            "atlas",
+            "daemon",
+            "start",
+            "--code",
+            "worktree",
+            "--graph",
+            "graph",
+            "--query-workers",
+            "3",
+            "--query-queue-capacity",
+            "17",
+            "--query-queue-timeout-ms",
+            "1234",
+            "--query-deadline-ms",
+            "4321",
+            "--query-memory-budget-bytes",
+            "33554432",
+            "--query-retry-after-ms",
+            "77",
+        ])
+        .unwrap();
+        let super::Commands::Atlas {
+            action:
+                super::AtlasCommands::Daemon {
+                    action: super::AtlasDaemonCommands::Start { query, .. },
+                },
+        } = cli.command
+        else {
+            panic!("expected atlas daemon start");
+        };
+        assert_eq!(
+            query.into_config().unwrap(),
+            crate::atlas_query_service::QueryServiceConfig {
+                workers: 3,
+                queue_capacity: 17,
+                queue_timeout_ms: 1234,
+                deadline_ms: 4321,
+                memory_budget_bytes: 33_554_432,
+                retry_after_ms: 77,
+            }
+        );
+
+        for (flag, value) in [
+            ("--query-workers", "5"),
+            ("--query-queue-capacity", "0"),
+            ("--query-queue-timeout-ms", "9"),
+            ("--query-deadline-ms", "99"),
+            ("--query-memory-budget-bytes", "16777215"),
+            ("--query-retry-after-ms", "0"),
+        ] {
+            assert!(
+                super::Cli::try_parse_from(
+                    ["agent-spec", "atlas", "daemon", "serve", flag, value,]
+                )
+                .is_err(),
+                "{flag}={value} must fail during CLI parsing"
+            );
+        }
+
+        let direct_fallback = super::Cli::try_parse_from([
+            "agent-spec",
+            "atlas",
+            "context",
+            "value",
+            "--fallback-direct",
+        ])
+        .unwrap();
+        let super::Commands::Atlas {
+            action:
+                super::AtlasCommands::Context {
+                    execution,
+                    fallback_direct,
+                    ..
+                },
+        } = direct_fallback.command
+        else {
+            panic!("expected atlas context");
+        };
+        assert!(
+            super::validate_atlas_context_execution(execution, fallback_direct).is_err(),
+            "fallback-direct must be rejected in direct mode"
+        );
+    }
+
+    fn run_atlas_benchmark_cli(
+        args: &[&str],
+        stdout: &mut Vec<u8>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let cli = super::Cli::parse_from(args);
+        match cli.command {
+            super::Commands::Atlas {
+                action: super::AtlasCommands::Benchmark { action },
+            } => super::cmd_atlas_benchmark_with_writer(action, stdout),
+            _ => panic!("expected atlas benchmark command"),
+        }
+    }
+
+    fn run_atlas_provider_cli(
+        args: &[&str],
+        stdout: &mut Vec<u8>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let cli = super::Cli::parse_from(args);
+        match cli.command {
+            super::Commands::Atlas {
+                action: super::AtlasCommands::Provider { action },
+            } => super::cmd_atlas_provider_with_writer(action, stdout),
+            _ => panic!("expected atlas provider command"),
+        }
+    }
+
+    #[test]
+    fn test_atlas_provider_cli_validate_and_conformance() {
+        let root = repo_root();
+        let fixture = root.join("fixtures/code-graph-provider/basic");
+        let manifest = fixture.join("manifest.json");
+        let registration = fixture.join("registration.json");
+        let matrix = fixture.join("conformance.json");
+        let scratch = make_temp_dir("atlas-provider-cli");
+        let receipt = scratch.join("receipt.json");
+
+        let mut validate_stdout = Vec::new();
+        run_atlas_provider_cli(
+            &[
+                "agent-spec",
+                "atlas",
+                "provider",
+                "validate",
+                "--manifest",
+                manifest.to_str().unwrap(),
+                "--registration",
+                registration.to_str().unwrap(),
+            ],
+            &mut validate_stdout,
+        )
+        .unwrap();
+        let validation: serde_json::Value = serde_json::from_slice(&validate_stdout).unwrap();
+        assert_eq!(validation["valid"], true);
+        assert_eq!(validation["provider_id"], "fixture-extractor");
+
+        let mut conformance_stdout = Vec::new();
+        run_atlas_provider_cli(
+            &[
+                "agent-spec",
+                "atlas",
+                "provider",
+                "conformance",
+                "--manifest",
+                manifest.to_str().unwrap(),
+                "--registration",
+                registration.to_str().unwrap(),
+                "--fixture",
+                matrix.to_str().unwrap(),
+                "--code",
+                root.to_str().unwrap(),
+                "--scratch",
+                scratch.to_str().unwrap(),
+                "--out",
+                receipt.to_str().unwrap(),
+            ],
+            &mut conformance_stdout,
+        )
+        .unwrap();
+        assert!(conformance_stdout.is_empty());
+        let receipt: agent_spec_code_graph_provider::ProviderConformanceReceipt =
+            serde_json::from_slice(&fs::read(receipt).unwrap()).unwrap();
+        assert_eq!(
+            receipt.state,
+            agent_spec_code_graph_provider::ConformanceState::Passed
+        );
+        assert_eq!(receipt.checks.len(), 8);
+
+        let disabled = scratch.join("disabled.json");
+        let mut disabled_value: serde_json::Value =
+            serde_json::from_slice(&fs::read(&registration).unwrap()).unwrap();
+        disabled_value["enabled"] = serde_json::Value::Bool(false);
+        fs::write(&disabled, serde_json::to_vec(&disabled_value).unwrap()).unwrap();
+        let error = run_atlas_provider_cli(
+            &[
+                "agent-spec",
+                "atlas",
+                "provider",
+                "validate",
+                "--manifest",
+                manifest.to_str().unwrap(),
+                "--registration",
+                disabled.to_str().unwrap(),
+            ],
+            &mut Vec::new(),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("provider-disabled"));
+        fs::remove_dir_all(scratch).unwrap();
+    }
+
+    #[test]
+    fn test_atlas_benchmark_commands_respect_stdout_contract() {
+        let dir = make_temp_dir("atlas-benchmark-cli");
+        let corpus = repo_root().join("benchmarks/atlas/corpus.json");
+        let plan = dir.join("plan.json");
+        let receipts = dir.join("receipts.json");
+        let summary = dir.join("summary.json");
+        fs::write(
+            &receipts,
+            r#"[{"case_id":"symbol-lookup","arm":"atlas","trial":1,"correctness":{"passed":true},"file_reads":1,"graph_calls":1,"tool_calls":2,"duration_ms":10,"context_bytes":100,"cost_usd":null}]"#,
+        )
+        .unwrap();
+
+        let corpus_arg = corpus.to_str().unwrap();
+        let plan_arg = plan.to_str().unwrap();
+        let receipts_arg = receipts.to_str().unwrap();
+        let summary_arg = summary.to_str().unwrap();
+
+        let mut validate_stdout = Vec::new();
+        run_atlas_benchmark_cli(
+            &[
+                "agent-spec",
+                "atlas",
+                "benchmark",
+                "validate",
+                "--corpus",
+                corpus_arg,
+            ],
+            &mut validate_stdout,
+        )
+        .unwrap();
+        let validation: serde_json::Value = serde_json::from_slice(&validate_stdout).unwrap();
+        assert_eq!(validation["valid"], true);
+
+        let mut plan_stdout = Vec::new();
+        run_atlas_benchmark_cli(
+            &[
+                "agent-spec",
+                "atlas",
+                "benchmark",
+                "plan",
+                "--corpus",
+                corpus_arg,
+                "--out",
+                plan_arg,
+            ],
+            &mut plan_stdout,
+        )
+        .unwrap();
+        assert!(plan_stdout.is_empty());
+        let parsed_plan: crate::atlas_eval::RunPlan =
+            serde_json::from_str(&fs::read_to_string(&plan).unwrap()).unwrap();
+        assert!(!parsed_plan.runs.is_empty());
+
+        let mut summary_stdout = Vec::new();
+        run_atlas_benchmark_cli(
+            &[
+                "agent-spec",
+                "atlas",
+                "benchmark",
+                "summarize",
+                "--receipts",
+                receipts_arg,
+                "--out",
+                summary_arg,
+            ],
+            &mut summary_stdout,
+        )
+        .unwrap();
+        assert!(summary_stdout.is_empty());
+        let parsed_summary: crate::atlas_eval::EvalSummary =
+            serde_json::from_str(&fs::read_to_string(&summary).unwrap()).unwrap();
+        assert_eq!(parsed_summary.receipts, 1);
+
+        let invalid_corpus = dir.join("invalid-corpus.json");
+        fs::write(&invalid_corpus, "{\"unknown\":true}").unwrap();
+        let mut failure_stdout = Vec::new();
+        let result = run_atlas_benchmark_cli(
+            &[
+                "agent-spec",
+                "atlas",
+                "benchmark",
+                "validate",
+                "--corpus",
+                invalid_corpus.to_str().unwrap(),
+            ],
+            &mut failure_stdout,
+        );
+        assert!(result.is_err(), "failure must map to a non-zero CLI exit");
+        assert!(failure_stdout.is_empty());
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn test_agent_ab_cli_writes_atomic_outputs() {
+        let dir = make_temp_dir("atlas-agent-ab-cli");
+        let corpus = repo_root().join("benchmarks/atlas/corpus.json");
+        let experiment = dir.join("experiment.json");
+        let out = dir.join("agent-plan.json");
+        fs::write(
+            &experiment,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "schema": "agent-spec/atlas-eval/agent-experiment-v1",
+                "version": "cli-fixture-v1",
+                "controls": {
+                    "prompt_hooks": { "mode": "disabled" },
+                    "mcp_config": { "mode": "disabled" },
+                    "user_skills": { "mode": "disabled" },
+                    "tool_instructions": { "mode": "disabled" },
+                    "judge": { "mode": "rubric", "version": "judge-v1" }
+                },
+                "session_store": ".agent-spec/evaluation/agent-ab",
+                "surfaces": {
+                    "baseline": ["grep", "read"],
+                    "atlas_primitives": ["atlas-explore", "atlas-search", "grep", "read"],
+                    "atlas_context": [
+                        "atlas-context", "atlas-explore", "atlas-search", "grep", "read"
+                    ]
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let mut stdout = Vec::new();
+        run_atlas_benchmark_cli(
+            &[
+                "agent-spec",
+                "atlas",
+                "benchmark",
+                "agent-plan",
+                "--corpus",
+                corpus.to_str().unwrap(),
+                "--experiment",
+                experiment.to_str().unwrap(),
+                "--out",
+                out.to_str().unwrap(),
+            ],
+            &mut stdout,
+        )
+        .unwrap();
+
+        assert!(stdout.is_empty());
+        let plan: crate::atlas_agent_eval::AgentRunPlan =
+            serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+        assert_eq!(plan.schema, crate::atlas_agent_eval::AGENT_PLAN_SCHEMA);
+        assert_eq!(plan.runs.len(), 72);
+        assert!(!fs::read_dir(&dir).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".agent-plan.json.")
+        }));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn test_atlas_benchmark_agent_gate_cli() {
+        let dir = make_temp_dir("atlas-agent-gate-cli");
+        let plan_path = repo_root().join("benchmarks/atlas/agent-ab-plan-v1.json");
+        let plan: crate::atlas_agent_eval::AgentRunPlan =
+            serde_json::from_slice(&fs::read(&plan_path).unwrap()).unwrap();
+        let receipts_path = dir.join("receipts.json");
+        let out = dir.join("gate.json");
+        let runs = plan
+            .runs
+            .iter()
+            .map(|run| crate::atlas_agent_eval::AgentRunReceipt {
+                run_id: run.run_id.clone(),
+                outcome: crate::atlas_agent_eval::AgentRunOutcome::Completed,
+                correctness: crate::atlas_agent_eval::AgentCorrectness {
+                    passed: true,
+                    rationale: "rubric satisfied".to_string(),
+                },
+                judge_version: run.controls.judge.version.clone(),
+                rubric_fingerprint: run.rubric_fingerprint.clone(),
+                raw_session: crate::atlas_agent_eval::EvidenceArtifact {
+                    path: format!("{}/{}.json", run.session_store, run.run_id),
+                    hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                        .to_string(),
+                },
+                answer_hash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                    .to_string(),
+                tool_trace_hash: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                    .to_string(),
+                query_metrics_schema: crate::atlas_eval::QUERY_METRICS_SCHEMA.to_string(),
+                stale_as_fresh: false,
+                metrics: crate::atlas_agent_eval::AgentRunMetrics {
+                    file_reads: 10,
+                    grep_calls: 5,
+                    graph_calls: u64::from(run.arm != crate::atlas_agent_eval::AgentArm::Baseline),
+                    tool_calls: 20,
+                    round_trips: 12,
+                    duration_ms: 100,
+                    response_bytes: 1000,
+                    context_bytes: 2000,
+                    cost_usd: None,
+                    read_back_calls: 1,
+                    follow_up_queries: 1,
+                    truncated_queries: 0,
+                },
+                diagnostic: None,
+            })
+            .collect();
+        let bundle = crate::atlas_agent_eval::AgentReceiptBundle {
+            schema: crate::atlas_agent_eval::AGENT_RECEIPTS_SCHEMA.to_string(),
+            experiment_version: plan.experiment_version.clone(),
+            plan_fingerprint: blake3::hash(&serde_json::to_vec(&plan).unwrap())
+                .to_hex()
+                .to_string(),
+            runs,
+        };
+        fs::write(&receipts_path, serde_json::to_vec_pretty(&bundle).unwrap()).unwrap();
+
+        let cli = super::Cli::try_parse_from([
+            "agent-spec",
+            "atlas",
+            "benchmark",
+            "agent-gate",
+            "--plan",
+            plan_path.to_str().unwrap(),
+            "--receipts",
+            receipts_path.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .unwrap();
+        let super::Commands::Atlas {
+            action:
+                super::AtlasCommands::Benchmark {
+                    action: super::AtlasBenchmarkCommands::AgentGate { .. },
+                },
+        } = cli.command
+        else {
+            panic!("expected agent-gate action");
+        };
+        let mut stdout = Vec::new();
+        let result = run_atlas_benchmark_cli(
+            &[
+                "agent-spec",
+                "atlas",
+                "benchmark",
+                "agent-gate",
+                "--plan",
+                plan_path.to_str().unwrap(),
+                "--receipts",
+                receipts_path.to_str().unwrap(),
+                "--out",
+                out.to_str().unwrap(),
+            ],
+            &mut stdout,
+        );
+        assert!(result.is_err(), "equal medium/large metrics must block");
+        assert!(stdout.is_empty());
+        let gate: crate::atlas_agent_eval::AgentGateReceipt =
+            serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+        assert_eq!(gate.schema, crate::atlas_agent_eval::AGENT_GATE_SCHEMA);
+        assert!(
+            gate.comparisons
+                .values()
+                .any(|comparison| comparison.state == crate::atlas_agent_eval::GateState::Blocked)
+        );
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn test_atlas_benchmark_serving_cli() {
+        let dir = make_temp_dir("atlas-serving-gate-cli");
+        let experiment_path = dir.join("experiment.json");
+        let plan_path = dir.join("plan.json");
+        let receipts_path = dir.join("receipts.json");
+        let gate_path = dir.join("gate.json");
+        let experiment = crate::atlas_agent_eval::ServingExperiment {
+            schema: crate::atlas_agent_eval::SERVING_EXPERIMENT_SCHEMA.to_string(),
+            version: "serving-cli-v1".to_string(),
+            execution_ready: true,
+            repository: "repos/pinned-project".to_string(),
+            revision: "0123456789abcdef0123456789abcdef01234567".to_string(),
+            trials_per_arm: 3,
+            burst_width: 8,
+            heartbeat_budget_ms: 100,
+            query_set_fingerprint:
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+            service_config_fingerprint:
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
+            session_store: ".agent-spec/evaluation/serving-ab".to_string(),
+        };
+        fs::write(
+            &experiment_path,
+            serde_json::to_vec_pretty(&experiment).unwrap(),
+        )
+        .unwrap();
+
+        let parsed = super::Cli::try_parse_from([
+            "agent-spec",
+            "atlas",
+            "benchmark",
+            "serving-plan",
+            "--experiment",
+            experiment_path.to_str().unwrap(),
+            "--out",
+            plan_path.to_str().unwrap(),
+        ])
+        .unwrap();
+        let super::Commands::Atlas {
+            action:
+                super::AtlasCommands::Benchmark {
+                    action: super::AtlasBenchmarkCommands::ServingPlan { .. },
+                },
+        } = parsed.command
+        else {
+            panic!("expected serving-plan action");
+        };
+        let mut stdout = Vec::new();
+        run_atlas_benchmark_cli(
+            &[
+                "agent-spec",
+                "atlas",
+                "benchmark",
+                "serving-plan",
+                "--experiment",
+                experiment_path.to_str().unwrap(),
+                "--out",
+                plan_path.to_str().unwrap(),
+            ],
+            &mut stdout,
+        )
+        .unwrap();
+        assert!(stdout.is_empty());
+        let plan: crate::atlas_agent_eval::ServingRunPlan =
+            serde_json::from_slice(&fs::read(&plan_path).unwrap()).unwrap();
+        assert_eq!(plan.runs.len(), 24);
+
+        let runs = plan
+            .runs
+            .iter()
+            .map(|run| crate::atlas_agent_eval::ServingRunReceipt {
+                run_id: run.run_id.clone(),
+                outcome: crate::atlas_agent_eval::AgentRunOutcome::Completed,
+                logical_queries: run.burst_width,
+                correct_results: run.burst_width,
+                stale_as_fresh: false,
+                queue_timeouts: 0,
+                snapshot_count: 1,
+                generation: "g-cli".to_string(),
+                graph_fingerprint:
+                    "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".to_string(),
+                semantic_digest: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+                    .to_string(),
+                raw_session: crate::atlas_agent_eval::EvidenceArtifact {
+                    path: format!("{}/{}.json", run.session_store, run.run_id),
+                    hash: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+                        .to_string(),
+                },
+                measurements: crate::atlas_agent_eval::ServingMeasurements {
+                    batch_duration_ms: if run.arm == crate::atlas_agent_eval::ServingArm::Direct {
+                        100
+                    } else {
+                        60
+                    },
+                    p95_latency_ms: if run.arm == crate::atlas_agent_eval::ServingArm::Direct {
+                        30
+                    } else {
+                        25
+                    },
+                    heartbeat_max_ms: if run.arm == crate::atlas_agent_eval::ServingArm::Direct {
+                        0
+                    } else {
+                        10
+                    },
+                    queue_wait_p95_ms: 0,
+                    response_bytes: 4000,
+                    cpu_ms: 50,
+                    rss_bytes: 20_000_000,
+                },
+                diagnostic: None,
+            })
+            .collect();
+        let bundle = crate::atlas_agent_eval::ServingReceiptBundle {
+            schema: crate::atlas_agent_eval::SERVING_RECEIPTS_SCHEMA.to_string(),
+            experiment_version: plan.experiment_version.clone(),
+            plan_fingerprint: blake3::hash(&serde_json::to_vec(&plan).unwrap())
+                .to_hex()
+                .to_string(),
+            runs,
+        };
+        fs::write(&receipts_path, serde_json::to_vec_pretty(&bundle).unwrap()).unwrap();
+
+        let mut gate_stdout = Vec::new();
+        run_atlas_benchmark_cli(
+            &[
+                "agent-spec",
+                "atlas",
+                "benchmark",
+                "serving-gate",
+                "--plan",
+                plan_path.to_str().unwrap(),
+                "--receipts",
+                receipts_path.to_str().unwrap(),
+                "--out",
+                gate_path.to_str().unwrap(),
+            ],
+            &mut gate_stdout,
+        )
+        .unwrap();
+        assert!(gate_stdout.is_empty());
+        let gate: crate::atlas_agent_eval::ServingGateReceipt =
+            serde_json::from_slice(&fs::read(&gate_path).unwrap()).unwrap();
+        assert_eq!(gate.state, crate::atlas_agent_eval::GateState::Passed);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn test_atlas_benchmark_score_cli_writes_atomic_receipt() {
+        let dir = make_temp_dir("atlas-benchmark-score-cli");
+        let corpus = repo_root().join("benchmarks/atlas/query-corpus.json");
+        let results = repo_root().join("benchmarks/atlas/query-results.json");
+        let out = dir.join("query-regression.json");
+        let expected_corpus = crate::atlas_eval::load_query_corpus(&corpus).unwrap();
+        let mut stdout = Vec::new();
+
+        run_atlas_benchmark_cli(
+            &[
+                "agent-spec",
+                "atlas",
+                "benchmark",
+                "score",
+                "--corpus",
+                corpus.to_str().unwrap(),
+                "--results",
+                results.to_str().unwrap(),
+                "--out",
+                out.to_str().unwrap(),
+            ],
+            &mut stdout,
+        )
+        .unwrap();
+
+        assert!(stdout.is_empty());
+        let receipt: crate::atlas_eval::QueryRegressionReceipt =
+            serde_json::from_str(&fs::read_to_string(&out).unwrap()).unwrap();
+        assert_eq!(receipt.schema, crate::atlas_eval::QUERY_REGRESSION_SCHEMA);
+        assert_eq!(receipt.corpus_version, expected_corpus.version);
+        assert_eq!(receipt.aggregate.failed, 0);
+        assert_eq!(
+            fs::read_dir(&dir).unwrap().count(),
+            1,
+            "atomic writer must not leave a temporary file"
+        );
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn test_atlas_benchmark_score_cli_fails_after_writing_regression_receipt() {
+        let dir = make_temp_dir("atlas-benchmark-score-failure");
+        let corpus = repo_root().join("benchmarks/atlas/query-corpus.json");
+        let source_results = repo_root().join("benchmarks/atlas/query-results.json");
+        let results = dir.join("failing-results.json");
+        let out = dir.join("query-regression.json");
+        let expected_cases = crate::atlas_eval::load_query_corpus(&corpus)
+            .unwrap()
+            .cases
+            .len();
+        let mut value: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(source_results).unwrap()).unwrap();
+        value["observations"][0]["ranked_symbols"] = serde_json::json!([]);
+        fs::write(&results, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+        let mut stdout = Vec::new();
+
+        let error = run_atlas_benchmark_cli(
+            &[
+                "agent-spec",
+                "atlas",
+                "benchmark",
+                "score",
+                "--corpus",
+                corpus.to_str().unwrap(),
+                "--results",
+                results.to_str().unwrap(),
+                "--out",
+                out.to_str().unwrap(),
+            ],
+            &mut stdout,
+        )
+        .expect_err("query correctness failure must fail the CLI gate");
+
+        assert!(stdout.is_empty());
+        assert!(error.to_string().contains("atlas-query-regression"));
+        let receipt: crate::atlas_eval::QueryRegressionReceipt =
+            serde_json::from_str(&fs::read_to_string(&out).unwrap()).unwrap();
+        assert_eq!(receipt.aggregate.failed, 1);
+        assert_eq!(
+            receipt.aggregate.passed + receipt.aggregate.failed,
+            expected_cases
+        );
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn test_atlas_check_reports_stale_files() {
         let (code, graph) = atlas_fixture_copy("atlas-cli-check");
         rust_atlas::build(&code, &graph, &rust_atlas::BuildOptions::default()).unwrap();
@@ -10994,6 +13390,759 @@ Scenario: pass
         );
         assert!(text.contains("stale"), "{text}");
         fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_status_cli_and_mcp_serialize_library_shape() {
+        let (code, _) = atlas_fixture_copy("atlas-cli-mcp-status");
+        let graph = code.join(".agent-spec/graph");
+        rust_atlas::build(&code, &graph, &rust_atlas::BuildOptions::default()).unwrap();
+        let expected = serde_json::to_value(rust_atlas::status(&code, &graph).unwrap()).unwrap();
+
+        let parsed = super::Cli::parse_from([
+            "agent-spec",
+            "atlas",
+            "status",
+            "--code",
+            code.to_str().unwrap(),
+            "--graph",
+            graph.to_str().unwrap(),
+        ]);
+        match parsed.command {
+            super::Commands::Atlas {
+                action:
+                    super::AtlasCommands::Status {
+                        code: parsed_code,
+                        graph: parsed_graph,
+                        format,
+                    },
+            } => {
+                assert_eq!(parsed_code, code);
+                assert_eq!(parsed_graph, graph);
+                assert_eq!(format, "json");
+            }
+            _ => panic!("expected atlas status"),
+        }
+
+        let mut stdout = Vec::new();
+        super::cmd_atlas_status_with_writer(&code, &graph, "json", &mut stdout).unwrap();
+        let cli: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
+        assert_eq!(cli, expected);
+
+        let ctx = crate::spec_mcp::McpContext {
+            knowledge: code.join("knowledge"),
+            specs: code.join("specs"),
+            code: code.clone(),
+        };
+        let mcp = crate::spec_mcp::dispatch("atlas_status", &serde_json::json!({}), &ctx).unwrap();
+        assert_eq!(mcp, expected);
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_search_cli_parses_limits_and_preserves_frozen_graph() {
+        let cli = super::Cli::parse_from([
+            "agent-spec",
+            "atlas",
+            "search",
+            "MemStore",
+            "--limit",
+            "2",
+            "--code",
+            "code",
+            "--graph",
+            "graph",
+            "--frozen",
+        ]);
+        match cli.command {
+            super::Commands::Atlas {
+                action:
+                    super::AtlasCommands::Search {
+                        query,
+                        limit,
+                        code,
+                        graph,
+                        frozen,
+                    },
+            } => {
+                assert_eq!(query, "MemStore");
+                assert_eq!(limit, 2);
+                assert_eq!(code, PathBuf::from("code"));
+                assert_eq!(graph, PathBuf::from("graph"));
+                assert!(frozen);
+            }
+            _ => panic!("expected atlas search"),
+        }
+
+        let (code, graph) = atlas_fixture_copy("atlas-search-cli-frozen");
+        rust_atlas::build(&code, &graph, &rust_atlas::BuildOptions::default()).unwrap();
+        let index_path = rust_atlas::graph_snapshot(&graph)
+            .unwrap()
+            .data_dir
+            .join("query-index.json");
+        let index_before = fs::read(&index_path).unwrap();
+        let service = code.join("src/service.rs");
+        let mut source = fs::read_to_string(&service).unwrap();
+        source.push_str("\npub fn changed_for_search() {}\n");
+        fs::write(&service, source).unwrap();
+
+        super::cmd_atlas(super::AtlasCommands::Search {
+            query: "MemStore".to_string(),
+            limit: 20,
+            code: code.clone(),
+            graph: graph.clone(),
+            frozen: true,
+        })
+        .unwrap();
+        assert_eq!(fs::read(index_path).unwrap(), index_before);
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_search_cli_rejects_invalid_limits() {
+        let (code, graph) = atlas_fixture_copy("atlas-search-cli-limits");
+        rust_atlas::build(&code, &graph, &rust_atlas::BuildOptions::default()).unwrap();
+        for limit in [0, 201] {
+            let error = super::cmd_atlas(super::AtlasCommands::Search {
+                query: "MemStore".to_string(),
+                limit,
+                code: code.clone(),
+                graph: graph.clone(),
+                frozen: true,
+            })
+            .unwrap_err();
+            assert!(error.to_string().contains("atlas-search-limit"));
+        }
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    struct PanicOnRead;
+
+    impl std::io::Read for PanicOnRead {
+        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+            panic!("stdin must not be read before affected mode validation")
+        }
+    }
+
+    #[test]
+    fn test_atlas_affected_cli_rejects_conflicting_input_modes() {
+        for input in [
+            super::AffectedCliInput::new(vec![PathBuf::from("src/lib.rs")]).staged(),
+            super::AffectedCliInput::new(Vec::new())
+                .stdin()
+                .commit("HEAD~1..HEAD"),
+        ] {
+            let mut stdin = PanicOnRead;
+            let mut git =
+                |_: &super::GitDiffRequest| -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+                    panic!("Git must not run before affected mode validation")
+                };
+            let mut stdout = Vec::new();
+            let error = super::cmd_atlas_affected_with_io(
+                Path::new("/unused"),
+                Path::new("/unused-graph"),
+                input,
+                &rust_atlas::AffectedOptions::default(),
+                &mut stdin,
+                &mut git,
+                &mut stdout,
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(error.contains("atlas-affected-input-mode"));
+            assert!(stdout.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_atlas_explore_flow_impact_cli_parse_contract() {
+        let explore = super::Cli::try_parse_from([
+            "agent-spec",
+            "atlas",
+            "explore",
+            "src/lib.rs entry",
+            "--profile",
+            "deep",
+            "--frozen",
+        ])
+        .unwrap();
+        assert!(matches!(
+            explore.command,
+            super::Commands::Atlas {
+                action: super::AtlasCommands::Explore {
+                    query,
+                    profile,
+                    frozen: true,
+                    ..
+                }
+            } if query == "src/lib.rs entry" && profile == "deep"
+        ));
+        let between =
+            super::Cli::try_parse_from(["agent-spec", "atlas", "flow", "--from", "a", "--to", "b"])
+                .unwrap();
+        assert!(matches!(
+            between.command,
+            super::Commands::Atlas {
+                action: super::AtlasCommands::Flow {
+                    from: Some(from),
+                    to: Some(to),
+                    through: None,
+                    max_depth: 8,
+                    max_expansions: 2_000,
+                    max_paths: 8,
+                    frozen: false,
+                    ..
+                }
+            } if from == "a" && to == "b"
+        ));
+        let through =
+            super::Cli::try_parse_from(["agent-spec", "atlas", "flow", "--through", "a"]).unwrap();
+        assert!(matches!(
+            through.command,
+            super::Commands::Atlas {
+                action: super::AtlasCommands::Flow {
+                    from: None,
+                    to: None,
+                    through: Some(symbol),
+                    ..
+                }
+            } if symbol == "a"
+        ));
+        let impact =
+            super::Cli::try_parse_from(["agent-spec", "atlas", "impact", "a", "--depth", "4"])
+                .unwrap();
+        assert!(matches!(
+            impact.command,
+            super::Commands::Atlas {
+                action: super::AtlasCommands::Impact {
+                    symbol,
+                    depth: 4,
+                    max_nodes: 200,
+                    frozen: false,
+                    ..
+                }
+            } if symbol == "a"
+        ));
+        let affected_modes = [
+            (
+                vec!["agent-spec", "atlas", "affected", "src/lib.rs"],
+                (true, false, false, false, None),
+            ),
+            (
+                vec!["agent-spec", "atlas", "affected", "--stdin"],
+                (false, true, false, false, None),
+            ),
+            (
+                vec!["agent-spec", "atlas", "affected", "--staged"],
+                (false, false, true, false, None),
+            ),
+            (
+                vec!["agent-spec", "atlas", "affected", "--worktree"],
+                (false, false, false, true, None),
+            ),
+            (
+                vec![
+                    "agent-spec",
+                    "atlas",
+                    "affected",
+                    "--commit",
+                    "HEAD~1..HEAD",
+                ],
+                (false, false, false, false, Some("HEAD~1..HEAD")),
+            ),
+        ];
+        for (args, expected) in affected_modes {
+            let parsed = super::Cli::try_parse_from(args).unwrap();
+            match parsed.command {
+                super::Commands::Atlas {
+                    action:
+                        super::AtlasCommands::Affected {
+                            paths,
+                            stdin,
+                            staged,
+                            worktree,
+                            commit,
+                            depth,
+                            max_nodes,
+                            frozen,
+                            ..
+                        },
+                } => {
+                    assert_eq!(!paths.is_empty(), expected.0);
+                    assert_eq!(stdin, expected.1);
+                    assert_eq!(staged, expected.2);
+                    assert_eq!(worktree, expected.3);
+                    assert_eq!(commit.as_deref(), expected.4);
+                    assert_eq!(depth, 3);
+                    assert_eq!(max_nodes, 200);
+                    assert!(!frozen);
+                }
+                _ => panic!("expected atlas affected"),
+            }
+        }
+        for args in [
+            vec![
+                "agent-spec",
+                "atlas",
+                "explore",
+                "entry",
+                "--profile",
+                "wide",
+            ],
+            vec!["agent-spec", "atlas", "flow", "--from", "a"],
+            vec!["agent-spec", "atlas", "impact"],
+            vec!["agent-spec", "atlas", "affected"],
+            vec!["agent-spec", "atlas", "affected", "src/lib.rs", "--staged"],
+            vec![
+                "agent-spec",
+                "atlas",
+                "affected",
+                "--stdin",
+                "--commit",
+                "HEAD~1..HEAD",
+            ],
+        ] {
+            assert!(super::Cli::try_parse_from(args).is_err(), "args must fail");
+        }
+    }
+
+    #[cfg(feature = "mir")]
+    #[test]
+    fn test_atlas_mir_build_cli_parses_overlay_and_driver_modes() {
+        assert!(
+            super::Cli::try_parse_from([
+                "agent-spec",
+                "atlas",
+                "build",
+                "--mir",
+                "target/mir-overlay.json",
+            ])
+            .is_ok()
+        );
+        assert!(
+            super::Cli::try_parse_from([
+                "agent-spec",
+                "atlas",
+                "build",
+                "--mir-driver",
+                "rust-atlas-mir-driver",
+            ])
+            .is_ok()
+        );
+        assert!(
+            super::Cli::try_parse_from([
+                "agent-spec",
+                "atlas",
+                "build",
+                "--mir",
+                "overlay.json",
+                "--mir-driver",
+                "driver",
+            ])
+            .is_err()
+        );
+    }
+
+    #[cfg(not(feature = "mir"))]
+    #[test]
+    fn test_atlas_default_cli_rejects_mir_activation() {
+        for flag in ["--mir", "--mir-driver"] {
+            assert!(
+                super::Cli::try_parse_from([
+                    "agent-spec",
+                    "atlas",
+                    "build",
+                    flag,
+                    "producer-input",
+                ])
+                .is_err(),
+                "default CLI must reject {flag}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_atlas_dynamic_dispatch_cli_flag() {
+        let cli =
+            super::Cli::try_parse_from(["agent-spec", "atlas", "build", "--dynamic-dispatch"])
+                .unwrap();
+        match cli.command {
+            super::Commands::Atlas {
+                action:
+                    super::AtlasCommands::Build {
+                        dynamic_dispatch, ..
+                    },
+            } => assert!(dynamic_dispatch),
+            _ => panic!("expected atlas build"),
+        }
+    }
+
+    #[test]
+    fn test_atlas_incremental_build_cli_options() {
+        let cli = super::Cli::try_parse_from([
+            "agent-spec",
+            "atlas",
+            "build",
+            "--features",
+            "serde,mir",
+            "--target",
+            "x86_64-unknown-linux-gnu",
+            "--cfg",
+            "tokio_unstable",
+            "--frontier-limit",
+            "17",
+            "--batch-size",
+            "3",
+            "--working-byte-limit",
+            "4096",
+        ])
+        .unwrap();
+        match cli.command {
+            super::Commands::Atlas {
+                action:
+                    super::AtlasCommands::Build {
+                        features,
+                        target,
+                        cfg,
+                        frontier_limit,
+                        batch_size,
+                        working_byte_limit,
+                        ..
+                    },
+            } => {
+                assert_eq!(features, ["serde", "mir"]);
+                assert_eq!(target.as_deref(), Some("x86_64-unknown-linux-gnu"));
+                assert_eq!(cfg, ["tokio_unstable"]);
+                assert_eq!(frontier_limit, 17);
+                assert_eq!(batch_size, 3);
+                assert_eq!(working_byte_limit, 4096);
+            }
+            _ => panic!("expected atlas build"),
+        }
+    }
+
+    #[test]
+    fn test_atlas_affected_cli_covers_all_vcs_modes_and_failures() {
+        let code = Path::new("repo");
+        let staged = super::git_diff_request(code, &super::AffectedInputMode::Staged)
+            .unwrap()
+            .unwrap();
+        let worktree = super::git_diff_request(code, &super::AffectedInputMode::Worktree)
+            .unwrap()
+            .unwrap();
+        let commit = super::git_diff_request(
+            code,
+            &super::AffectedInputMode::Commit("HEAD~1..HEAD".into()),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(staged.program, "git");
+        assert_eq!(
+            staged.args,
+            ["-C", "repo", "diff", "--name-only", "--cached", "--"].map(std::ffi::OsString::from)
+        );
+        assert_eq!(
+            worktree.args,
+            ["-C", "repo", "diff", "--name-only", "--"].map(std::ffi::OsString::from)
+        );
+        assert_eq!(
+            commit.args,
+            ["-C", "repo", "diff", "--name-only", "HEAD~1..HEAD", "--",]
+                .map(std::ffi::OsString::from)
+        );
+        assert!(
+            super::git_diff_request(
+                code,
+                &super::AffectedInputMode::Explicit(vec![PathBuf::from("src/lib.rs")])
+            )
+            .unwrap()
+            .is_none()
+        );
+        assert!(
+            super::git_diff_request(code, &super::AffectedInputMode::Stdin)
+                .unwrap()
+                .is_none()
+        );
+        for revision in ["", "-HEAD"] {
+            assert!(
+                super::git_diff_request(code, &super::AffectedInputMode::Commit(revision.into()))
+                    .unwrap_err()
+                    .to_string()
+                    .contains("atlas-affected-input-mode")
+            );
+        }
+
+        let non_repo = std::env::temp_dir().join(format!(
+            "agent-spec-affected-non-repo-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&non_repo);
+        fs::create_dir_all(&non_repo).unwrap();
+        let request = super::git_diff_request(&non_repo, &super::AffectedInputMode::Staged)
+            .unwrap()
+            .unwrap();
+        assert!(
+            super::run_git_name_only(&request)
+                .unwrap_err()
+                .to_string()
+                .contains("atlas-affected-git")
+        );
+        let mut stdin = std::io::Cursor::new(Vec::<u8>::new());
+        let mut stdout = Vec::new();
+        let mut run_git = |request: &super::GitDiffRequest| super::run_git_name_only(request);
+        let error = super::cmd_atlas_affected_with_io(
+            &non_repo,
+            &non_repo.join("graph"),
+            super::AffectedCliInput::new(Vec::new()).staged(),
+            &rust_atlas::AffectedOptions::default(),
+            &mut stdin,
+            &mut run_git,
+            &mut stdout,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("atlas-affected-git"));
+        assert!(stdout.is_empty());
+        fs::remove_dir_all(non_repo).ok();
+    }
+
+    #[test]
+    fn test_atlas_affected_stdin_normalizes_before_successful_output() {
+        let (code, graph) = atlas_fixture_copy("atlas-affected-stdin");
+        rust_atlas::build(&code, &graph, &rust_atlas::BuildOptions::default()).unwrap();
+        let mut stdin = std::io::Cursor::new(b"./src/lib.rs\nsrc/lib.rs\n".to_vec());
+        let mut git = |_: &super::GitDiffRequest| -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+            panic!("stdin mode must not invoke Git")
+        };
+        let mut stdout = Vec::new();
+        super::cmd_atlas_affected_with_io(
+            &code,
+            &graph,
+            super::AffectedCliInput::new(Vec::new()).stdin(),
+            &rust_atlas::AffectedOptions::default(),
+            &mut stdin,
+            &mut git,
+            &mut stdout,
+        )
+        .unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
+        assert_eq!(value["files"], serde_json::json!(["src/lib.rs"]));
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_explore_cli_emits_finalized_json_bytes() {
+        let (code, graph) = atlas_fixture_copy("atlas-explore-cli-bytes");
+        rust_atlas::build(&code, &graph, &rust_atlas::BuildOptions::default()).unwrap();
+        let options = rust_atlas::ExploreOptions {
+            profile: rust_atlas::ExploreProfile::Compact,
+            frozen: true,
+        };
+        let expected = rust_atlas::explore(&code, &graph, "MemStore", &options).unwrap();
+        let mut stdout = Vec::new();
+        super::cmd_atlas_explore_with_writer(&code, &graph, "MemStore", &options, &mut stdout)
+            .unwrap();
+        let mut expected_bytes = serde_json::to_vec(&expected).unwrap();
+        expected_bytes.push(b'\n');
+        assert_eq!(stdout, expected_bytes);
+        assert_eq!(expected.usage.serialized_bytes + 1, stdout.len());
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_context_cli_emits_finalized_json_and_continuation_contract() {
+        let parsed = super::Cli::try_parse_from([
+            "agent-spec",
+            "atlas",
+            "context",
+            "MemStore calls",
+            "--profile",
+            "flow",
+            "--min-score",
+            "700",
+            "--max-bytes",
+            "20000",
+            "--failure-evidence",
+            "test failed",
+            "--frozen",
+        ])
+        .unwrap();
+        assert!(matches!(
+            parsed.command,
+            super::Commands::Atlas {
+                action: super::AtlasCommands::Context {
+                    query,
+                    profile,
+                    min_score: Some(700),
+                    max_bytes: Some(20_000),
+                    failure_evidence,
+                    frozen: true,
+                    ..
+                }
+            } if query == "MemStore calls" && profile == "flow" && failure_evidence == ["test failed"]
+        ));
+
+        let (code, graph) = atlas_fixture_copy("atlas-context-cli-bytes");
+        rust_atlas::build(&code, &graph, &rust_atlas::BuildOptions::default()).unwrap();
+        let options = rust_atlas::ContextOptions {
+            profile: rust_atlas::ContextProfile::Symbol,
+            frozen: true,
+            min_score: Some(700),
+            ..rust_atlas::ContextOptions::default()
+        };
+        let expected = rust_atlas::compile_context(&code, &graph, "MemStore", &options).unwrap();
+        let mut stdout = Vec::new();
+        super::cmd_atlas_context_with_writer(&code, &graph, "MemStore", &options, &mut stdout)
+            .unwrap();
+        let mut expected_bytes = serde_json::to_vec(&expected).unwrap();
+        expected_bytes.push(b'\n');
+        assert_eq!(stdout, expected_bytes);
+        assert_eq!(expected.receipt.serialized_bytes + 1, stdout.len());
+        let continuation = expected
+            .omissions
+            .first()
+            .expect("high threshold creates an omission")
+            .continuation
+            .argv
+            .clone();
+        super::Cli::try_parse_from(continuation)
+            .expect("continuation argv parses in a new process");
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_query_service_worker_matches_frozen_direct_result() {
+        let (code, graph) = atlas_fixture_copy("atlas-context-worker-parity");
+        rust_atlas::build(&code, &graph, &rust_atlas::BuildOptions::default()).unwrap();
+        let config = crate::atlas_query_service::QueryServiceConfig::worker_profile();
+        let server_code = code.clone();
+        let server_graph = graph.clone();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            crate::atlas_daemon::serve_test_instance(&server_code, &server_graph, config, ready_tx)
+                .unwrap();
+        });
+        ready_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("worker daemon did not become ready");
+        let service_status = crate::atlas_daemon::service_status(&code, &graph).unwrap();
+        assert!(config.matches_status(&service_status));
+        let mismatch = crate::atlas_daemon::start(
+            &code,
+            &graph,
+            crate::atlas_query_service::QueryServiceConfig {
+                workers: 1,
+                ..config
+            },
+        )
+        .unwrap_err();
+        assert!(
+            mismatch
+                .to_string()
+                .contains("configuration does not match")
+        );
+
+        for profile in [
+            rust_atlas::ContextProfile::Symbol,
+            rust_atlas::ContextProfile::Flow,
+            rust_atlas::ContextProfile::Architecture,
+            rust_atlas::ContextProfile::Impact,
+        ] {
+            let options = rust_atlas::ContextOptions {
+                profile,
+                frozen: true,
+                ..rust_atlas::ContextOptions::default()
+            };
+            let direct = rust_atlas::compile_context(&code, &graph, "MemStore", &options).unwrap();
+            let worker = crate::atlas_daemon::context(
+                &code,
+                &graph,
+                &format!("parity-{profile:?}"),
+                "MemStore",
+                &options,
+            )
+            .unwrap();
+            assert_eq!(
+                worker.outcome,
+                crate::atlas_query_service::QueryOutcome::Success
+            );
+            assert_eq!(worker.context, Some(serde_json::to_value(&direct).unwrap()));
+            assert_eq!(
+                worker.receipt.graph_fingerprint,
+                direct.receipt.graph_fingerprint
+            );
+        }
+
+        crate::atlas_daemon::stop(&code, &graph).unwrap();
+        server.join().unwrap();
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_query_worker_fallback_records_distinct_complete_generation() {
+        let (code, graph) = atlas_fixture_copy("atlas-context-worker-fallback");
+        rust_atlas::build(&code, &graph, &rust_atlas::BuildOptions::default()).unwrap();
+        let options = rust_atlas::ContextOptions {
+            profile: rust_atlas::ContextProfile::Symbol,
+            frozen: true,
+            ..rust_atlas::ContextOptions::default()
+        };
+        let reply = super::execute_atlas_context_worker(
+            &code,
+            &graph,
+            "fallback-unavailable",
+            "MemStore",
+            &options,
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            reply.outcome,
+            crate::atlas_query_service::QueryOutcome::Success
+        );
+        assert!(reply.receipt.fallback_used);
+        assert_eq!(
+            reply.receipt.worker_outcome,
+            Some(crate::atlas_query_service::QueryOutcome::Unavailable)
+        );
+        assert!(reply.receipt.worker_generation.is_none());
+        assert_eq!(reply.receipt.generation, reply.receipt.fallback_generation);
+        assert_eq!(
+            reply.receipt.graph_fingerprint,
+            reply.receipt.fallback_graph_fingerprint.clone().unwrap()
+        );
+        reply.validate_shape().unwrap();
+        let context = reply.context.unwrap();
+        let digest = blake3::hash(&serde_json::to_vec(&context).unwrap())
+            .to_hex()
+            .to_string();
+        assert_eq!(reply.receipt.response_digest, Some(digest));
+        assert!(reply.diagnostic.is_none());
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_context_is_additive_to_explore_and_mcp_discovery() {
+        crate::spec_mcp::with_atlas_explore_tool(false, || {
+            let tools = crate::spec_mcp::tool_specs();
+            let names = tools
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|tool| tool["name"].as_str())
+                .collect::<Vec<_>>();
+            assert!(!names.contains(&"atlas_context"));
+            assert!(!names.contains(&"atlas_explore"));
+        });
+        assert_eq!(
+            serde_json::to_string(&rust_atlas::ExploreProfile::Compact).unwrap(),
+            "\"compact\""
+        );
+        assert_eq!(
+            rust_atlas::ExploreProfile::Compact
+                .budget()
+                .max_serialized_bytes,
+            16_000
+        );
     }
 
     #[test]
@@ -11029,6 +14178,277 @@ Scenario: pass
                 .unwrap()
                 .ends_with("src/store.rs")
         );
+        assert_eq!(result["stale"], result["status"]["syn"]["stale_files"]);
+        assert_eq!(result["status"]["syn"]["state"], "fresh");
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_mcp_discovery_is_static_and_no_daemon_queries_match() {
+        let (code, graph) = atlas_fixture_copy("atlas-mcp-no-daemon-parity");
+        rust_atlas::build(&code, &graph, &rust_atlas::BuildOptions::default()).unwrap();
+        let atlas_dir = code.join(".agent-spec");
+        fs::create_dir_all(&atlas_dir).unwrap();
+        let graph_dir = atlas_dir.join("graph");
+        fs::rename(&graph, &graph_dir).unwrap();
+        let ctx = crate::spec_mcp::McpContext {
+            knowledge: code.join("knowledge"),
+            specs: code.join("specs"),
+            code: code.clone(),
+        };
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let endpoint = listener.local_addr().unwrap().to_string();
+        let registry = graph_dir.join(".runtime/daemon.json");
+        let identity = serde_json::json!({
+            "schema_id": "agent-spec/atlas-daemon-identity-v1",
+            "schema_version": 1,
+            "worktree_root": fs::canonicalize(&code).unwrap().to_string_lossy(),
+            "graph_root": fs::canonicalize(&graph_dir).unwrap().to_string_lossy(),
+            "pid": std::process::id(),
+            "started_at_ms": 1,
+            "startup_nonce": "00000000000000000000000000000000",
+            "tool_version": env!("CARGO_PKG_VERSION"),
+            "atlas_schema_version": rust_atlas::SCHEMA_VERSION,
+            "endpoint": endpoint,
+        });
+        fs::write(&registry, serde_json::to_vec_pretty(&identity).unwrap()).unwrap();
+
+        let mut expected_tools = None;
+        for state in [
+            rust_atlas::live::LiveRuntimeState::Unavailable,
+            rust_atlas::live::LiveRuntimeState::Warming,
+            rust_atlas::live::LiveRuntimeState::Pending,
+            rust_atlas::live::LiveRuntimeState::Degraded,
+        ] {
+            rust_atlas::live::LiveRuntimeStatus::new(state)
+                .store(&graph_dir)
+                .unwrap();
+            let response = crate::spec_mcp::handle_request(
+                &serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/list"
+                }),
+                &ctx,
+            )
+            .unwrap();
+            let bytes = serde_json::to_vec(&response["result"]["tools"]).unwrap();
+            if let Some(expected) = &expected_tools {
+                assert_eq!(&bytes, expected, "tool discovery changed for {state:?}");
+            } else {
+                expected_tools = Some(bytes);
+            }
+        }
+        assert!(matches!(
+            listener.accept(),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
+        ));
+
+        fs::remove_file(&registry).unwrap();
+        let without_daemon = crate::spec_mcp::dispatch(
+            "atlas_query",
+            &serde_json::json!({"symbol": "atlas_basic::store::MemStore"}),
+            &ctx,
+        )
+        .unwrap();
+        fs::write(&registry, serde_json::to_vec_pretty(&identity).unwrap()).unwrap();
+        let with_registry = crate::spec_mcp::dispatch(
+            "atlas_query",
+            &serde_json::json!({"symbol": "atlas_basic::store::MemStore"}),
+            &ctx,
+        )
+        .unwrap();
+
+        let without_live = |mut value: serde_json::Value| {
+            value["status"].as_object_mut().unwrap().remove("live");
+            value
+        };
+        assert_eq!(without_live(with_registry), without_live(without_daemon));
+        assert!(matches!(
+            listener.accept(),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
+        ));
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_mcp_atlas_search_returns_the_frozen_library_result() {
+        let (code, graph) = atlas_fixture_copy("atlas-mcp-search");
+        rust_atlas::build(&code, &graph, &rust_atlas::BuildOptions::default()).unwrap();
+        let atlas_dir = code.join(".agent-spec");
+        fs::create_dir_all(&atlas_dir).unwrap();
+        let graph_dir = atlas_dir.join("graph");
+        fs::rename(&graph, &graph_dir).unwrap();
+        let index_path = rust_atlas::graph_snapshot(&graph_dir)
+            .unwrap()
+            .data_dir
+            .join("query-index.json");
+        let index_before = fs::read(&index_path).unwrap();
+
+        let service = code.join("src/service.rs");
+        let mut source = fs::read_to_string(&service).unwrap();
+        source.push_str("\npub fn stale_for_mcp_search() {}\n");
+        fs::write(&service, source).unwrap();
+
+        let expected = rust_atlas::search(
+            &code,
+            &graph_dir,
+            "MemStore",
+            &rust_atlas::SearchOptions {
+                limit: 2,
+                frozen: true,
+            },
+        )
+        .unwrap();
+        let ctx = crate::spec_mcp::McpContext {
+            knowledge: code.join("knowledge"),
+            specs: code.join("specs"),
+            code: code.clone(),
+        };
+        let result = crate::spec_mcp::dispatch(
+            "atlas_search",
+            &serde_json::json!({"query": "MemStore", "limit": 2}),
+            &ctx,
+        )
+        .unwrap();
+
+        assert_eq!(result, serde_json::to_value(expected).unwrap());
+        assert_eq!(result["limit"], 2);
+        assert!(
+            result["stale"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|file| file == "src/service.rs")
+        );
+        assert_eq!(fs::read(index_path).unwrap(), index_before);
+        fs::remove_dir_all(code.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn test_atlas_explore_mcp_is_hidden_by_default_and_opt_in() {
+        crate::spec_mcp::with_atlas_explore_tool(false, || {
+            assert!(
+                crate::spec_mcp::tool_specs()
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|tool| tool["name"] != "atlas_explore")
+            );
+        });
+
+        let (code, graph) = atlas_fixture_copy("atlas-mcp-explore");
+        rust_atlas::build(&code, &graph, &rust_atlas::BuildOptions::default()).unwrap();
+        let atlas_dir = code.join(".agent-spec");
+        fs::create_dir_all(&atlas_dir).unwrap();
+        let graph_dir = atlas_dir.join("graph");
+        fs::rename(&graph, &graph_dir).unwrap();
+        let ctx = crate::spec_mcp::McpContext {
+            knowledge: code.join("knowledge"),
+            specs: code.join("specs"),
+            code: code.clone(),
+        };
+
+        crate::spec_mcp::with_atlas_explore_tool(false, || {
+            let error = crate::spec_mcp::dispatch(
+                "atlas_explore",
+                &serde_json::json!({"query": "MemStore"}),
+                &ctx,
+            )
+            .unwrap_err();
+            assert_eq!(error, "unknown tool 'atlas_explore'");
+        });
+
+        crate::spec_mcp::with_atlas_explore_tool(true, || {
+            let tools = crate::spec_mcp::tool_specs();
+            let tool = tools
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|tool| tool["name"] == "atlas_explore")
+                .unwrap();
+            assert_eq!(
+                tool["inputSchema"]["required"],
+                serde_json::json!(["query"])
+            );
+
+            let actual = crate::spec_mcp::dispatch(
+                "atlas_explore",
+                &serde_json::json!({"query": "MemStore", "profile": "compact"}),
+                &ctx,
+            )
+            .unwrap();
+            let expected = rust_atlas::explore(
+                &ctx.code,
+                &graph_dir,
+                "MemStore",
+                &rust_atlas::ExploreOptions {
+                    profile: rust_atlas::ExploreProfile::Compact,
+                    frozen: true,
+                },
+            )
+            .unwrap();
+            assert_eq!(actual, serde_json::to_value(expected).unwrap());
+
+            let response = crate::spec_mcp::handle_request(
+                &serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "atlas_explore",
+                        "arguments": {"query": "MemStore", "profile": "compact"}
+                    }
+                }),
+                &ctx,
+            )
+            .unwrap();
+            let text = response["result"]["content"][0]["text"].as_str().unwrap();
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(text).unwrap(),
+                actual
+            );
+            assert_eq!(
+                text.len(),
+                actual["usage"]["serialized_bytes"].as_u64().unwrap() as usize
+            );
+            assert!(
+                text.len() <= actual["limits"]["max_serialized_bytes"].as_u64().unwrap() as usize
+            );
+
+            let default_profile = crate::spec_mcp::dispatch(
+                "atlas_explore",
+                &serde_json::json!({"query": "MemStore"}),
+                &ctx,
+            )
+            .unwrap();
+            assert_eq!(default_profile, actual);
+
+            let empty_actual =
+                crate::spec_mcp::dispatch("atlas_explore", &serde_json::json!({"query": ""}), &ctx)
+                    .unwrap();
+            let empty_expected = rust_atlas::explore(
+                &ctx.code,
+                &graph_dir,
+                "",
+                &rust_atlas::ExploreOptions {
+                    profile: rust_atlas::ExploreProfile::Compact,
+                    frozen: true,
+                },
+            )
+            .unwrap();
+            assert_eq!(empty_actual, serde_json::to_value(empty_expected).unwrap());
+
+            let error = crate::spec_mcp::dispatch(
+                "atlas_explore",
+                &serde_json::json!({"query": "MemStore", "profile": "wide"}),
+                &ctx,
+            )
+            .unwrap_err();
+            assert!(error.contains("atlas-explore-profile"), "{error}");
+        });
+
         fs::remove_dir_all(code.parent().unwrap()).ok();
     }
 
@@ -11253,5 +14673,15 @@ Scenario: pass
             authoring.contains("not required for ordinary incremental tasks"),
             "non-parity tasks must be exempt from the behavior matrix"
         );
+    }
+
+    #[test]
+    fn test_build_script_tracks_linked_worktree_and_branch_head() {
+        let build = include_str!("../build.rs");
+        assert!(build.contains("--git-path"));
+        assert!(build.contains("--symbolic-full-name"));
+        assert!(build.contains("cargo:rerun-if-changed={head}"));
+        assert!(build.contains("cargo:rerun-if-changed={branch_ref}"));
+        assert!(!build.contains("cargo:rerun-if-changed=.git/HEAD"));
     }
 }

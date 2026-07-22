@@ -2,19 +2,30 @@
 name = "agent-spec"
 description = "Intent compiler for AI agent coding: human intent compiles through requirement IR into verifiable task contracts, mechanically verified against the code"
 edition = "2024"
-version = "1.1.0"
+version = "1.2.0"
 license = "MIT"
 repository = "https://github.com/ZhangHanDong/agent-spec"
 homepage = "https://github.com/ZhangHanDong/agent-spec"
+exclude = [".superpowers/**"]
 
 [workspace]
-members = [".", "crates/rust-atlas"]
-default-members = [".", "crates/rust-atlas"]
-exclude = ["fixtures/requirements-noteapp", "fixtures/atlas/basic"]
+members = [".", "crates/rust-atlas", "crates/code-graph-provider"]
+default-members = [".", "crates/rust-atlas", "crates/code-graph-provider"]
+exclude = [
+    "fixtures/requirements-noteapp",
+    "fixtures/atlas/basic",
+    "fixtures/atlas/concurrent-query",
+]
+
+[features]
+default = []
+mir = ["rust-atlas/mir"]
 
 [dependencies]
-rust-atlas = { path = "crates/rust-atlas", version = "0.2.0" }
+agent-spec-code-graph-provider = { path = "crates/code-graph-provider", version = "0.1.0" }
+rust-atlas = { path = "crates/rust-atlas", version = "0.3.0" }
 blake3 = "1"
+getrandom = "0.4"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -1,0 +1,25 @@
+{
+  "metadata": {
+    "tool_info": {
+      "name": "rust-analyzer",
+      "version": "fixture-v1"
+    }
+  },
+  "documents": [
+    {
+      "relative_path": "src/lib.rs",
+      "occurrences": [
+        {
+          "symbol": "rust-analyzer cargo atlas-runtime-boundaries 0.1.0 callback_handler().",
+          "symbol_roles": 1,
+          "range": [28, 7, 23]
+        },
+        {
+          "symbol": "rust-analyzer cargo atlas-runtime-boundaries 0.1.0 callback_handler().",
+          "symbol_roles": 0,
+          "range": [40, 30, 46]
+        }
+      ]
+    }
+  ]
+}

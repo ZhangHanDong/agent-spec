@@ -1,7 +1,7 @@
 spec: task
 name: "Atlas SCIP Semantic Overlay (Phase 2)"
 tags: [atlas, code-graph, scip, semantic, rust-analyzer]
-satisfies: [REQ-INTENT-CODE-LINKER]
+satisfies: [REQ-ATLAS-SCIP-SEMANTIC]
 depends: [task-rust-atlas-code-graph, task-atlas-kll-integration]
 estimate: 1w
 ---

@@ -47,9 +47,16 @@ flowchart TD
     Q --> EB["Execution Bundle"]
 
     EB --> I["Agent implementation loop"]
+    I --> CA["Changed paths or symbol"]
+    CA --> AI["Intent-aware affected"]
+    PI --> AI
+    L --> AI
+    AI --> AB["Affected Execution Bundle"]
+    AB --> I
     I --> V["Lifecycle quality gates"]
     PI --> V
     T["Quality Tool Providers"] --> V
+    AI --> X["Trace ledger v2"]
     V --> X["Trace · replay · explain failure"]
     X --> Y["Derived liveness"]
     V --> Z["Verified completion and archive"]
@@ -67,9 +74,11 @@ flowchart TD
 | Intent-Code Linker | Work units plus Code Graph IR | Typed code bindings | Never rewrites KLL truth |
 | Task Contract and plan | Bindings plus scenarios | Verifiable Contract and execution DAG | Human Contract Acceptance remains required |
 | Quality Planning | Contract, risk, bindings, project policy | Execution Bundle | Missing required capabilities are visible |
+| Intent-aware affected | Changed paths or symbol plus fresh provider impact | Requirement-to-code paths, selectors, worktree and typed gaps | Candidate tests never become evidence |
+| Affected execution planning | Intent impact, risk and project guidance | Risk-scoped provider configs, checks, gates, tests and skill receipts | Provider argv stays executable; skill receipts are not pass evidence |
 | Implementation | Execution Bundle | Source changes | AI works inside declared boundaries |
 | Lifecycle | Source changes plus providers | Normalized evidence | `skip` and unavailable are not pass |
-| Trace and archive | Evidence plus VCS state | Liveness, replay chain, archive summary | Liveness is derived, never stored |
+| Trace and archive | Evidence, affected context plus VCS state | Trace ledger v2, replay chain, liveness and archive summary | Replay never reruns tools or models |
 
 ## Requirement Governance Gate
 
@@ -165,6 +174,9 @@ and lifecycle verdicts remain the proof.
 
 Fast checks run inside the implementation loop over the Atlas-derived affected
 scope. Full acceptance gates run through lifecycle after implementation.
+Risk A selects lifecycle, trace, targeted tests, and adversarial review; risk B
+selects lifecycle and trace; risk C selects lifecycle. Selected providers retain
+their executable, argv, cwd, timeout, and output limit in the affected bundle.
 
 ## Provider Roles
 

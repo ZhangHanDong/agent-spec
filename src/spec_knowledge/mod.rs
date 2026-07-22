@@ -14,6 +14,7 @@ pub mod governance;
 pub mod guidance;
 pub mod index;
 pub mod intake;
+pub mod intent_impact;
 pub mod lint;
 pub mod liveness;
 pub mod model;
@@ -41,9 +42,12 @@ pub mod yaml_export;
 pub mod yaml_frontend;
 
 pub use code_graph::{
-    AtlasProvider, CODE_BINDINGS_SCHEMA_ID, CodeBindingEntry, CodeBindings, CodeGraphProvider,
-    CodeTarget, SymbolDeclaration, build_code_bindings, collect_atlas_code_target_facts,
-    extract_symbol_declarations, render_code_bindings,
+    AtlasProvider, CODE_BINDINGS_SCHEMA_ID, CODE_IMPACT_SCHEMA_ID, CodeBindingEntry, CodeBindings,
+    CodeGraphProvider, CodeImpactInput, CodeImpactOptions, CodeImpactProvider, CodeTarget,
+    ImpactCodeNode, ImpactPath, ImpactPathHop, ImpactSourceSpan, ProviderImpact,
+    ProviderImpactDiagnostic, ProviderImpactEntry, ProviderImpactError, SymbolDeclaration,
+    build_code_bindings, collect_atlas_code_target_facts, extract_symbol_declarations,
+    render_code_bindings,
 };
 pub use compile_bundle::{
     BundleLayout, COMPILE_COMMAND, CompiledBundle, compile_bundles, render_bundle_artifacts,
@@ -59,6 +63,13 @@ pub use index::{SatisfiesIndex, build_satisfies_index};
 pub use intake::{
     RequirementImportBlock, RequirementImportError, parse_requirement_blocks,
     render_requirement_artifact, requirement_artifact_filename,
+};
+pub use intent_impact::{
+    AFFECTED_EXECUTION_BUNDLE_SCHEMA_ID, AffectedExecutionBundle, ExecutionSelection,
+    GuidanceSelection, INTENT_IMPACT_SCHEMA_ID, IntentAffectedNode, IntentBindingLink,
+    IntentImpactGap, IntentImpactReport, IntentScenarioLink, IntentSpecLink,
+    IntentTestObligationLink, PlannedWorktreeLink, SelectedTest, build_affected_execution_bundle,
+    build_intent_impact, render_affected_execution_bundle, render_intent_impact,
 };
 pub use lint::{lint_decision, lint_guidance, lint_requirement};
 pub use liveness::{decision_liveness, spec_rollup};
@@ -108,13 +119,19 @@ pub use test_obligations::{
 };
 pub use trace::{TraceReport, build_trace, format_trace_text, verify_spec_rollup};
 pub use trace_ledger::{
-    CodeTargetFact, RequirementFailureExplanation, RequirementTraceDiagnostic,
-    RequirementTraceEvidence, RequirementTraceLedger, RequirementTraceRecord,
-    RequirementTraceRecordInput, RequirementTraceRunInput, explain_requirement_failure,
+    AffectedQualityOutcome, AffectedRequirementFailure, AffectedRequirementReplay,
+    AffectedTraceRecord, CodeTargetFact, REQUIREMENT_TRACE_LEDGER_VERSION,
+    RequirementFailureExplanation, RequirementTraceDiagnostic, RequirementTraceEvidence,
+    RequirementTraceLedger, RequirementTraceRecord, RequirementTraceRecordInput,
+    RequirementTraceRunInput, build_affected_trace_record, explain_affected_requirement_failure,
+    explain_requirement_failure, format_affected_requirement_failure_text,
+    format_affected_requirement_replay_text, format_affected_requirement_trace_mermaid,
     format_requirement_failure_text, format_requirement_replay_text,
     format_requirement_trace_mermaid, format_requirement_trace_text,
-    latest_requirement_trace_records, read_requirement_trace_ledgers, record_requirement_trace_run,
-    replay_requirement_trace, write_requirement_trace_ledger,
+    latest_requirement_trace_records, read_requirement_trace_ledgers, record_affected_trace,
+    record_requirement_trace_run, replay_affected_requirement, replay_requirement_trace,
+    write_affected_trace_record_to_dir, write_requirement_trace_ledger,
+    write_requirement_trace_ledger_to_dir,
 };
 pub use traceability::{
     TRACEABILITY_SCHEMA_ID, TraceabilityProjection, build_traceability_projection,

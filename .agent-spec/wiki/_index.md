@@ -4,12 +4,16 @@ This index is generated from article frontmatter. Read it before opening individ
 
 ## Architecture
 
-- [Architecture](_architecture.md) — `Cargo.lock`, `Cargo.toml`, `src/main.rs`
+- [Architecture](_architecture.md) — `Cargo.lock`, `Cargo.toml`, `build.rs`, `crates/code-graph-provider/Cargo.toml`, `crates/code-graph-provider/src/lib.rs`, `crates/rust-atlas/Cargo.toml`, `crates/rust-atlas/src/context.rs`, `crates/rust-atlas/src/lib.rs`, `src/atlas_agent_eval.rs`, `src/main.rs`
+- [Rust Atlas Architecture](architecture/atlas.md) — `crates/rust-atlas/src/lib.rs`, `crates/rust-atlas/src/index.rs`, `crates/rust-atlas/src/generation.rs`, `crates/rust-atlas/src/live.rs`, `crates/rust-atlas/src/locking.rs`, `crates/rust-atlas/src/scope.rs`, `crates/rust-atlas/src/sync.rs`, `crates/rust-atlas/src/watch.rs`, `crates/rust-atlas/src/input_plan.rs`, `crates/rust-atlas/src/incremental.rs`, `crates/rust-atlas/src/status.rs`, `crates/rust-atlas/src/traversal.rs`, `crates/rust-atlas/src/flow.rs`, `crates/rust-atlas/src/runtime_boundary.rs`, `crates/rust-atlas/src/impact.rs`, `crates/rust-atlas/src/affected.rs`, `crates/rust-atlas/src/explore.rs`, `crates/rust-atlas/src/context.rs`, `src/main.rs`, `src/atlas_daemon.rs`, `src/atlas_query_service.rs`, `src/atlas_eval.rs`, `src/atlas_agent_eval.rs`, `crates/code-graph-provider/src/lib.rs`, `crates/code-graph-provider/Cargo.toml`, `crates/code-graph-provider/README.md`, `src/spec_mcp/mod.rs`, `src/spec_mcp/tools.rs`, `docs/atlas-live-runtime.md`, `docs/atlas-query-context.md`, `docs/atlas-concurrent-query-serving.md`, `docs/atlas-agent-ab-gate.md`, `docs/code-graph-provider-kit.md`, `specs/task-atlas-explore-flow-impact.spec.md`, `specs/task-atlas-runtime-boundary-hints.spec.md`, `specs/task-atlas-incremental-hardening.spec.md`, `specs/task-atlas-live-runtime.spec.md`, `specs/task-atlas-query-context-compiler.spec.md`, `specs/task-atlas-concurrent-query-serving.spec.md`, `specs/task-atlas-agent-ab-gate.spec.md`
 
 ## Concept
 
+- [Atlas Graph Authority](concepts/atlas-authority.md) — `crates/rust-atlas/src/status.rs`, `crates/rust-atlas/src/lib.rs`, `crates/rust-atlas/src/generation.rs`, `crates/rust-atlas/src/live.rs`, `crates/rust-atlas/src/sync.rs`, `crates/rust-atlas/src/incremental.rs`, `crates/rust-atlas/src/explore.rs`, `crates/rust-atlas/src/context.rs`, `crates/rust-atlas/src/flow.rs`, `crates/rust-atlas/src/runtime_boundary.rs`, `crates/rust-atlas/src/impact.rs`, `crates/rust-atlas/src/affected.rs`, `src/atlas_query_service.rs`, `src/atlas_daemon.rs`, `src/spec_mcp/mod.rs`, `src/atlas_eval.rs`, `src/spec_knowledge/code_graph.rs`, `src/spec_verify/atlas_symbols.rs`, `docs/atlas-roadmap.md`, `docs/atlas-runtime-boundaries.md`, `docs/atlas-incremental-builds.md`, `docs/atlas-live-runtime.md`, `docs/atlas-concurrent-query-serving.md`
+- [Atlas Evaluation And Adoption](concepts/atlas-evaluation.md) — `src/atlas_eval.rs`, `src/atlas_agent_eval.rs`, `src/main.rs`, `benchmarks/atlas/corpus.json`, `benchmarks/atlas/agent-ab-experiment-v1.json`, `benchmarks/atlas/agent-ab-plan-v1.json`, `benchmarks/atlas/serving-ab-experiment-v1.json`, `scripts/atlas-eval/run-agent-ab-opt-in.sh`, `scripts/atlas-eval/run-serving-ab-opt-in.sh`, `docs/atlas-evaluation.md`, `docs/atlas-agent-ab-gate.md`, `knowledge/requirements/req-atlas-agent-ab-gate.md`, `specs/task-atlas-agent-ab-gate.spec.md`
+- [External Code Graph Providers](concepts/code-graph-providers.md) — `crates/code-graph-provider/src/lib.rs`, `crates/code-graph-provider/Cargo.toml`, `crates/code-graph-provider/README.md`, `src/main.rs`, `fixtures/code-graph-provider/basic/manifest.json`, `fixtures/code-graph-provider/basic/conformance.json`, `fixtures/code-graph-provider/basic/provider.sh`, `docs/code-graph-provider-kit.md`, `knowledge/requirements/req-code-graph-provider-kit.md`, `specs/task-code-graph-provider-kit.spec.md`
 - [Cross-Project Wiki](concepts/cross-project-wiki.md) — `knowledge/requirements/req-cross-project-wiki.md`, `specs/task-cross-project-wiki.spec.md`, `src/spec_wiki/project_map.rs`, `src/spec_wiki/live.rs`
-- [Intent Compiler](concepts/intent-compiler.md) — `knowledge/requirements/req-requirements-compiler-plan-dag.md`, `src/spec_knowledge/requirement_plan.rs`, `src/spec_knowledge/trace_ledger.rs`, `src/spec_knowledge/test_obligations.rs`, `src/spec_knowledge/worktrees.rs`, `src/main.rs`
+- [Intent Compiler](concepts/intent-compiler.md) — `knowledge/requirements/req-requirements-compiler-plan-dag.md`, `src/spec_knowledge/requirement_plan.rs`, `src/spec_knowledge/trace_ledger.rs`, `src/spec_knowledge/test_obligations.rs`, `src/spec_knowledge/worktrees.rs`, `crates/rust-atlas/src/context.rs`, `src/main.rs`
 - [Knowledge Liveness Layer](concepts/knowledge-liveness-layer.md) — `knowledge/requirements`, `src/spec_knowledge`
 - [Lifecycle](concepts/lifecycle.md) — `src/spec_gateway/lifecycle.rs`, `src/spec_verify`
 - [Task Contract](concepts/task-contract.md) — `README.md`, `AGENTS.md`, `skills/agent-spec-tool-first/SKILL.md`
@@ -18,8 +22,9 @@ This index is generated from article frontmatter. Read it before opening individ
 
 ## Decision
 
+- [Atlas Derived Authority](decisions/atlas-derived-authority.md) — `crates/rust-atlas/src/lib.rs`, `crates/rust-atlas/src/index.rs`, `crates/rust-atlas/src/status.rs`, `crates/rust-atlas/src/live.rs`, `crates/rust-atlas/src/generation.rs`, `crates/rust-atlas/src/context.rs`, `crates/rust-atlas/src/flow.rs`, `crates/rust-atlas/src/runtime_boundary.rs`, `src/spec_mcp/tools.rs`, `src/spec_mcp/mod.rs`, `src/atlas_query_service.rs`, `src/atlas_daemon.rs`, `src/atlas_eval.rs`, `docs/atlas-roadmap.md`, `docs/atlas-runtime-boundaries.md`, `docs/atlas-live-runtime.md`, `docs/atlas-concurrent-query-serving.md`
 - [Deterministic CLI](decisions/deterministic-cli.md) — `specs/task-code-live-wiki.spec.md`, `specs/task-code-live-wiki-deepening.spec.md`, `src/spec_wiki`
-- [Knowledge Versus Docs](decisions/knowledge-vs-docs.md) — `skills/agent-spec-wiki/SKILL.md`, `AGENTS.md`
+- [Knowledge Versus Docs](decisions/knowledge-vs-docs.md) — `skills/agent-spec-wiki/SKILL.md`, `AGENTS.md`, `docs/atlas-query-context.md`, `docs/atlas-concurrent-query-serving.md`, `knowledge/requirements/req-atlas-query-context-compiler.md`, `specs/task-atlas-query-context-compiler.spec.md`, `knowledge/requirements/req-atlas-concurrent-query-serving.md`, `specs/task-atlas-concurrent-query-serving.spec.md`
 - [Wiki Path](decisions/wiki-path.md) — `knowledge/requirements/req-code-live-wiki.md`, `knowledge/requirements/req-code-live-wiki-deepening.md`, `.gitignore`
 
 ## External-project
@@ -32,7 +37,7 @@ This index is generated from article frontmatter. Read it before opening individ
 
 - [Code Live Wiki](modules/code-live-wiki.md) — `src/spec_wiki/live.rs`, `src/spec_wiki/architecture.rs`, `src/spec_wiki/model.rs`, `src/main.rs`, `knowledge/requirements/req-code-live-wiki.md`, `knowledge/requirements/req-code-live-wiki-deepening.md`, `specs/task-code-live-wiki.spec.md`, `specs/task-code-live-wiki-deepening.spec.md`, `skills/agent-spec-wiki/SKILL.md`
 - [Intent Compiler](modules/intent-compiler.md) — `src/spec_knowledge/parser.rs`, `src/spec_knowledge/requirement_graph.rs`, `src/spec_knowledge/work_units.rs`, `src/spec_knowledge/requirement_plan.rs`, `knowledge/requirements/req-kll-work-units.md`, `knowledge/requirements/req-requirements-compiler-plan-dag.md`, `specs/task-requirements-compiler-plan-dag.spec.md`
-- [Main CLI](modules/main-cli.md) — `src/main.rs`
+- [Main CLI](modules/main-cli.md) — `src/main.rs`, `src/atlas_daemon.rs`, `src/atlas_agent_eval.rs`, `crates/rust-atlas/src/context.rs`
 - [Spec Archive](modules/spec-archive.md) — `src/spec_archive.rs`
 - [Spec Knowledge](modules/spec-knowledge.md) — `src/spec_knowledge`
 - [Spec Lint](modules/spec-lint.md) — `src/spec_lint`
@@ -43,7 +48,7 @@ This index is generated from article frontmatter. Read it before opening individ
 
 ## Patterns
 
-- [Patterns](_patterns.md) — `Cargo.lock`, `Cargo.toml`, `src/main.rs`
+- [Patterns](_patterns.md) — `Cargo.lock`, `Cargo.toml`, `build.rs`, `crates/code-graph-provider/Cargo.toml`, `crates/code-graph-provider/src/lib.rs`, `crates/rust-atlas/Cargo.toml`, `crates/rust-atlas/src/context.rs`, `crates/rust-atlas/src/lib.rs`, `src/atlas_agent_eval.rs`, `src/main.rs`
 
 ## Project-flow
 

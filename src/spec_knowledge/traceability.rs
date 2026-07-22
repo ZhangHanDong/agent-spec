@@ -270,6 +270,7 @@ mod tests {
         let ledger = RequirementTraceLedger {
             version: 1,
             records: vec![record],
+            affected_records: Vec::new(),
             diagnostics: Vec::new(),
         };
         fs::write(

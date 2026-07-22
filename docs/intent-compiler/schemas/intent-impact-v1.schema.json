@@ -1,0 +1,399 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-spec.dev/schemas/agent-spec/intent-compiler/intent-impact-v1.schema.json",
+  "title": "agent-spec intent-aware affected report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "provider",
+    "graph_fingerprint",
+    "input",
+    "affected",
+    "truncated",
+    "gaps",
+    "provider_diagnostics",
+    "observed_vcs"
+  ],
+  "properties": {
+    "schema": {
+      "const": "agent-spec/intent-compiler/intent-impact-v1"
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1
+    },
+    "graph_fingerprint": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "input": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "paths"
+          ],
+          "properties": {
+            "kind": {
+              "const": "paths"
+            },
+            "paths": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "symbol"
+          ],
+          "properties": {
+            "kind": {
+              "const": "symbol"
+            },
+            "symbol": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      ]
+    },
+    "affected": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/affected_node"
+      }
+    },
+    "truncated": {
+      "type": "boolean"
+    },
+    "gaps": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/gap"
+      }
+    },
+    "provider_diagnostics": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/provider_diagnostic"
+      }
+    },
+    "observed_vcs": {
+      "type": [
+        "object",
+        "null"
+      ]
+    }
+  },
+  "$defs": {
+    "code_node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "node_id",
+        "symbol",
+        "kind",
+        "file",
+        "line_start",
+        "line_end",
+        "provenance"
+      ],
+      "properties": {
+        "node_id": {
+          "type": "string"
+        },
+        "symbol": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "file": {
+          "type": "string"
+        },
+        "line_start": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "line_end": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "provenance": {
+          "type": "string"
+        }
+      }
+    },
+    "path": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "nodes",
+        "hops",
+        "confidence"
+      ],
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/code_node"
+          }
+        },
+        "hops": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "confidence": {
+          "type": "string"
+        }
+      }
+    },
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "authoritative_selector",
+        "test_candidate",
+        "test_obligation",
+        "required_evidence"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "authoritative_selector": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "test_candidate": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "test_obligation": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/test_obligation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "required_evidence": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "test_obligation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requirement_id",
+        "scenario_name",
+        "suggested_selector",
+        "selector_authority"
+      ],
+      "properties": {
+        "requirement_id": {
+          "type": "string"
+        },
+        "scenario_name": {
+          "type": "string"
+        },
+        "suggested_selector": {
+          "type": "string"
+        },
+        "selector_authority": {
+          "enum": [
+            "explicit",
+            "candidate"
+          ]
+        }
+      }
+    },
+    "spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "risk",
+        "scenarios"
+      ],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "risk": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scenarios": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/scenario"
+          }
+        }
+      }
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requirement_id",
+        "work_unit_id",
+        "provider",
+        "graph_fingerprint",
+        "specs",
+        "worktree"
+      ],
+      "properties": {
+        "requirement_id": {
+          "type": "string"
+        },
+        "work_unit_id": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "graph_fingerprint": {
+          "type": "string"
+        },
+        "specs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/spec"
+          }
+        },
+        "worktree": {
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      }
+    },
+    "affected_node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "impact",
+        "links"
+      ],
+      "properties": {
+        "impact": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "node",
+            "distance",
+            "path"
+          ],
+          "properties": {
+            "node": {
+              "$ref": "#/$defs/code_node"
+            },
+            "distance": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "path": {
+              "$ref": "#/$defs/path"
+            }
+          }
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/binding"
+          }
+        }
+      }
+    },
+    "gap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "severity",
+        "node_id",
+        "requirement_id",
+        "spec_path",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "severity": {
+          "enum": [
+            "info",
+            "warning",
+            "error"
+          ]
+        },
+        "node_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "requirement_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "spec_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    },
+    "provider_diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,385 @@
+{
+  "schema": "agent-spec/atlas-eval/query-results-v1",
+  "corpus_version": "2026-07-21.1",
+  "observations": [
+    {
+      "case_id": "fixture-symbol-mem-store",
+      "ranked_symbols": [
+        "atlas_basic::store::MemStore"
+      ],
+      "paths": [
+        [
+          "atlas_basic::open_default",
+          "atlas_basic::store::MemStore"
+        ]
+      ],
+      "evidence": [
+        "fixtures/atlas/basic/src/lib.rs",
+        "fixtures/atlas/basic/src/store.rs"
+      ],
+      "diagnostics": [],
+      "response_bytes": 640,
+      "duration_ms": 8,
+      "read_back_calls": 0,
+      "follow_up_queries": 0
+    },
+    {
+      "case_id": "fixture-flow-store-get",
+      "ranked_symbols": [
+        "atlas_basic::service::run",
+        "atlas_basic::store::Store::get",
+        "atlas_basic::store::impl atlas_basic::store::Store for atlas_basic::store::MemStore::get"
+      ],
+      "paths": [
+        [
+          "atlas_basic::service::run",
+          "atlas_basic::store::Store::get"
+        ]
+      ],
+      "evidence": [
+        "fixtures/atlas/basic/src/service.rs",
+        "fixtures/atlas/basic/src/store.rs"
+      ],
+      "diagnostics": [],
+      "response_bytes": 1280,
+      "duration_ms": 14,
+      "read_back_calls": 0,
+      "follow_up_queries": 1
+    },
+    {
+      "case_id": "fixture-stale-boundary",
+      "ranked_symbols": [
+        "atlas_basic::service::run"
+      ],
+      "paths": [
+        [
+          "atlas_basic::service::run"
+        ]
+      ],
+      "evidence": [
+        ".agent-spec/graph/meta.json",
+        "fixtures/atlas/basic/src/service.rs"
+      ],
+      "diagnostics": [
+        {
+          "kind": "stale",
+          "code": "atlas-stale-scip"
+        }
+      ],
+      "response_bytes": 720,
+      "duration_ms": 9,
+      "read_back_calls": 1,
+      "follow_up_queries": 0
+    },
+    {
+      "case_id": "fixture-runtime-boundary-callback",
+      "ranked_symbols": [
+        "atlas_runtime_boundaries::dispatch",
+        "atlas_runtime_boundaries::callback_handler"
+      ],
+      "paths": [
+        [
+          "atlas_runtime_boundaries::dispatch",
+          "atlas_runtime_boundaries::callback_handler"
+        ]
+      ],
+      "evidence": [
+        "fixtures/atlas/runtime-boundaries/src/lib.rs"
+      ],
+      "diagnostics": [
+        {
+          "kind": "runtime-boundary",
+          "code": "atlas-flow-runtime-boundary"
+        }
+      ],
+      "response_bytes": 2048,
+      "duration_ms": 12,
+      "read_back_calls": 0,
+      "follow_up_queries": 0
+    },
+    {
+      "case_id": "fixture-context-symbol",
+      "ranked_symbols": [
+        "atlas_basic::store::MemStore"
+      ],
+      "paths": [
+        [
+          "atlas_basic::store::MemStore"
+        ]
+      ],
+      "evidence": [
+        "fixtures/atlas/basic/src/store.rs"
+      ],
+      "diagnostics": [],
+      "response_bytes": 15758,
+      "duration_ms": 3,
+      "read_back_calls": 0,
+      "follow_up_queries": 0,
+      "context_receipt": {
+        "schema": "agent-spec/rust-atlas/context-v1",
+        "profile": "symbol",
+        "max_serialized_bytes": 16000,
+        "relevance_threshold": 300,
+        "retrieval_total": 13,
+        "retrieval_returned": 13,
+        "retrieval_hard_cap_omitted": 0,
+        "projection_above_relevance": 13,
+        "projection_retained": 13,
+        "projection_below_relevance_omitted": 0,
+        "projection_byte_omitted": 0,
+        "projection_policy_skeletonized": 0,
+        "serialized_bytes": 15758,
+        "omission_classes": [],
+        "graph_fingerprint": "0e257075c113e637ebed088988f9ba8b0d573f3d81f1294c0e1e56a75bb86d6a",
+        "read_back_required": false,
+        "follow_up_queries": 0,
+        "load_profile": "source-heavy"
+      }
+    },
+    {
+      "case_id": "fixture-context-flow",
+      "ranked_symbols": [
+        "atlas_basic::open_default",
+        "atlas_basic::store::MemStore"
+      ],
+      "paths": [
+        [
+          "atlas_basic::open_default",
+          "atlas_basic::store::MemStore"
+        ]
+      ],
+      "evidence": [
+        "fixtures/atlas/basic/src/lib.rs",
+        "fixtures/atlas/basic/src/store.rs"
+      ],
+      "diagnostics": [],
+      "response_bytes": 25145,
+      "duration_ms": 4,
+      "read_back_calls": 0,
+      "follow_up_queries": 0,
+      "context_receipt": {
+        "schema": "agent-spec/rust-atlas/context-v1",
+        "profile": "flow",
+        "max_serialized_bytes": 32000,
+        "relevance_threshold": 250,
+        "retrieval_total": 23,
+        "retrieval_returned": 23,
+        "retrieval_hard_cap_omitted": 0,
+        "projection_above_relevance": 23,
+        "projection_retained": 23,
+        "projection_below_relevance_omitted": 0,
+        "projection_byte_omitted": 0,
+        "projection_policy_skeletonized": 0,
+        "serialized_bytes": 25145,
+        "omission_classes": [],
+        "graph_fingerprint": "0e257075c113e637ebed088988f9ba8b0d573f3d81f1294c0e1e56a75bb86d6a",
+        "read_back_required": false,
+        "follow_up_queries": 0,
+        "load_profile": "source-heavy"
+      }
+    },
+    {
+      "case_id": "fixture-context-architecture",
+      "ranked_symbols": [
+        "atlas_basic::service::run"
+      ],
+      "paths": [
+        [
+          "atlas_basic::service::run"
+        ]
+      ],
+      "evidence": [
+        "fixtures/atlas/basic/src/service.rs"
+      ],
+      "diagnostics": [],
+      "response_bytes": 13506,
+      "duration_ms": 3,
+      "read_back_calls": 0,
+      "follow_up_queries": 0,
+      "context_receipt": {
+        "schema": "agent-spec/rust-atlas/context-v1",
+        "profile": "architecture",
+        "max_serialized_bytes": 24000,
+        "relevance_threshold": 200,
+        "retrieval_total": 12,
+        "retrieval_returned": 12,
+        "retrieval_hard_cap_omitted": 0,
+        "projection_above_relevance": 12,
+        "projection_retained": 12,
+        "projection_below_relevance_omitted": 0,
+        "projection_byte_omitted": 0,
+        "projection_policy_skeletonized": 0,
+        "serialized_bytes": 13506,
+        "omission_classes": [],
+        "graph_fingerprint": "0e257075c113e637ebed088988f9ba8b0d573f3d81f1294c0e1e56a75bb86d6a",
+        "read_back_required": false,
+        "follow_up_queries": 0,
+        "load_profile": "source-heavy"
+      }
+    },
+    {
+      "case_id": "fixture-context-impact",
+      "ranked_symbols": [
+        "atlas_basic::store::Store::get",
+        "atlas_basic::service::run"
+      ],
+      "paths": [
+        [
+          "atlas_basic::store::Store::get",
+          "atlas_basic::service::run"
+        ]
+      ],
+      "evidence": [
+        "fixtures/atlas/basic/src/store.rs",
+        "fixtures/atlas/basic/src/service.rs"
+      ],
+      "diagnostics": [],
+      "response_bytes": 9975,
+      "duration_ms": 4,
+      "read_back_calls": 0,
+      "follow_up_queries": 0,
+      "context_receipt": {
+        "schema": "agent-spec/rust-atlas/context-v1",
+        "profile": "impact",
+        "max_serialized_bytes": 24000,
+        "relevance_threshold": 250,
+        "retrieval_total": 6,
+        "retrieval_returned": 6,
+        "retrieval_hard_cap_omitted": 0,
+        "projection_above_relevance": 6,
+        "projection_retained": 6,
+        "projection_below_relevance_omitted": 0,
+        "projection_byte_omitted": 0,
+        "projection_policy_skeletonized": 0,
+        "serialized_bytes": 9975,
+        "omission_classes": [],
+        "graph_fingerprint": "0e257075c113e637ebed088988f9ba8b0d573f3d81f1294c0e1e56a75bb86d6a",
+        "read_back_required": false,
+        "follow_up_queries": 0,
+        "load_profile": "source-heavy"
+      }
+    },
+    {
+      "case_id": "fixture-context-projection-pressure",
+      "ranked_symbols": [
+        "atlas_basic::service::run"
+      ],
+      "paths": [
+        [
+          "atlas_basic::service::run"
+        ]
+      ],
+      "evidence": [
+        "fixtures/atlas/basic/src/service.rs"
+      ],
+      "diagnostics": [
+        {
+          "kind": "truncated",
+          "code": "atlas-context-byte-ceiling"
+        }
+      ],
+      "response_bytes": 7267,
+      "duration_ms": 3,
+      "read_back_calls": 0,
+      "follow_up_queries": 2,
+      "context_receipt": {
+        "schema": "agent-spec/rust-atlas/context-v1",
+        "profile": "architecture",
+        "max_serialized_bytes": 8000,
+        "relevance_threshold": 0,
+        "retrieval_total": 12,
+        "retrieval_returned": 12,
+        "retrieval_hard_cap_omitted": 0,
+        "projection_above_relevance": 12,
+        "projection_retained": 3,
+        "projection_below_relevance_omitted": 0,
+        "projection_byte_omitted": 9,
+        "projection_policy_skeletonized": 0,
+        "serialized_bytes": 7267,
+        "omission_classes": [
+          "relationship",
+          "adjacent-structure"
+        ],
+        "graph_fingerprint": "0e257075c113e637ebed088988f9ba8b0d573f3d81f1294c0e1e56a75bb86d6a",
+        "read_back_required": false,
+        "follow_up_queries": 2,
+        "load_profile": "light"
+      }
+    },
+    {
+      "case_id": "fixture-context-stale-source",
+      "ranked_symbols": [
+        "atlas_basic::service::run"
+      ],
+      "paths": [
+        [
+          "atlas_basic::service::run"
+        ]
+      ],
+      "evidence": [
+        "fixtures/atlas/basic/src/service.rs"
+      ],
+      "diagnostics": [
+        {
+          "kind": "stale",
+          "code": "atlas-context-stale-source"
+        }
+      ],
+      "response_bytes": 12148,
+      "duration_ms": 3,
+      "read_back_calls": 1,
+      "follow_up_queries": 3,
+      "context_receipt": {
+        "schema": "agent-spec/rust-atlas/context-v1",
+        "profile": "symbol",
+        "max_serialized_bytes": 16000,
+        "relevance_threshold": 300,
+        "retrieval_total": 10,
+        "retrieval_returned": 10,
+        "retrieval_hard_cap_omitted": 0,
+        "projection_above_relevance": 10,
+        "projection_retained": 10,
+        "projection_below_relevance_omitted": 0,
+        "projection_byte_omitted": 0,
+        "projection_policy_skeletonized": 0,
+        "serialized_bytes": 12148,
+        "omission_classes": [
+          "named-symbol",
+          "relationship",
+          "adjacent-structure"
+        ],
+        "graph_fingerprint": "e577ce829ae053234d504a8538f9b26558b1501ad4da80d0bf5ccc88cfc87eb2",
+        "read_back_required": true,
+        "follow_up_queries": 3,
+        "load_profile": "light"
+      }
+    },
+    {
+      "case_id": "pinned-agent-spec-evaluator-flow",
+      "ranked_symbols": [
+        "agent_spec::atlas_eval::summarize"
+      ],
+      "paths": [
+        [
+          "agent_spec::cmd_atlas_benchmark_with_writer",
+          "agent_spec::atlas_eval::summarize"
+        ]
+      ],
+      "evidence": [
+        "src/main.rs",
+        "src/atlas_eval.rs",
+        "scripts/atlas-eval/run-opt-in.sh"
+      ],
+      "diagnostics": [
+        {
+          "kind": "capability",
+          "code": "atlas-eval-real-agent-opt-in"
+        }
+      ],
+      "response_bytes": 1536,
+      "duration_ms": 21,
+      "read_back_calls": 0,
+      "follow_up_queries": 1
+    }
+  ]
+}

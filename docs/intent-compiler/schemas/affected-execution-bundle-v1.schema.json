@@ -1,0 +1,207 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-spec.dev/schemas/agent-spec/intent-compiler/affected-execution-bundle-v1.schema.json",
+  "title": "agent-spec affected execution bundle v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "intent_impact_digest",
+    "risk",
+    "required_evidence",
+    "quality_profile",
+    "fast_checks",
+    "acceptance_gates",
+    "authoritative_tests",
+    "test_candidates",
+    "guidance",
+    "required_skills",
+    "skill_receipts",
+    "gaps"
+  ],
+  "properties": {
+    "schema": {
+      "const": "agent-spec/intent-compiler/affected-execution-bundle-v1"
+    },
+    "intent_impact_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "risk": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "required_evidence": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "quality_profile": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/quality_provider"
+      }
+    },
+    "fast_checks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/selection"
+      }
+    },
+    "acceptance_gates": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/selection"
+      }
+    },
+    "authoritative_tests": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/test"
+      }
+    },
+    "test_candidates": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/test"
+      }
+    },
+    "guidance": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "required_skills": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "skill_receipts": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "gaps": {
+      "type": "array",
+      "items": {
+        "$ref": "intent-impact-v1.schema.json#/$defs/gap"
+      }
+    }
+  },
+  "$defs": {
+    "quality_provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "role",
+        "required",
+        "executable",
+        "args",
+        "timeout_secs",
+        "max_output_bytes"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "code-intelligence",
+            "diagnostic",
+            "verification",
+            "transformation",
+            "agent-guidance"
+          ]
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "executable": {
+          "type": "string"
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timeout_secs": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_output_bytes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "role",
+        "reason"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "role": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    },
+    "test": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requirement_id",
+        "spec_path",
+        "scenario",
+        "selector",
+        "reason"
+      ],
+      "properties": {
+        "requirement_id": {
+          "type": "string"
+        },
+        "spec_path": {
+          "type": "string"
+        },
+        "scenario": {
+          "type": "string"
+        },
+        "selector": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

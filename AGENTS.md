@@ -38,7 +38,117 @@ agent-spec:   Write Contract (60%) → Agent codes (0%) → Read explain (30%) �
 | `agent-spec wiki status` | Check stale code live wiki articles | Before broad source reading |
 | `agent-spec wiki query <text>` | Search tracked live wiki articles | Before opening many source files |
 | `agent-spec wiki check` | Live wiki lint + worktree status gate | Pre-commit / CI for tracked wiki |
-| `agent-spec atlas build/tree/query/refs/impls/check` | Rust project graph: query structure instead of grepping | Before broad source reading; `check` gates staleness |
+| `agent-spec atlas build/tree/query/search/explore/context/flow/impact/affected/refs/impls/status/check` | Rust project graph: scored retrieval, bounded context projection, explainable paths, reverse impact, identity, and freshness | Build before querying; use frozen reads for review and `check` for syn staleness |
+| `agent-spec atlas benchmark validate/plan/summarize/score` | Validate an offline A/B corpus, compile paired run plans, summarize graded receipts, or score versioned query observations | Use the correctness-first E0/E3 gates; pinned repositories remain opt-in. See `docs/atlas-evaluation.md` |
+| `agent-spec atlas benchmark agent-plan/agent-gate` | Compile symmetric A/B/C Agent runs and gate complete strict receipts | Real execution is external and opt-in; B/A and C/B are separate promotion candidates. See `docs/atlas-agent-ab-gate.md` |
+| `agent-spec atlas benchmark serving-plan/serving-gate` | Compile and gate real-repository direct/worker burst trials | The checked template is disabled; fixture D4 receipts cannot approve worker defaults. See `docs/atlas-agent-ab-gate.md` |
+| `agent-spec atlas provider validate/conformance` | Validate optional external Code Graph manifests and run the F1 producer contract matrix | Use explicit project registration only. A passing fixture receipt proves protocol conformance, not F2 language support. See `docs/code-graph-provider-kit.md` |
+
+### Rust Atlas Workflow
+
+```bash
+agent-spec atlas build --code . --graph .agent-spec/graph
+agent-spec atlas search <query> --code . --graph .agent-spec/graph --limit 20
+agent-spec atlas explore <query> --profile compact --code . --graph .agent-spec/graph --frozen
+agent-spec atlas context <query> --profile symbol --code . --graph .agent-spec/graph --frozen
+agent-spec atlas flow --from <symbol> --to <symbol> --code . --graph .agent-spec/graph --frozen
+agent-spec atlas impact <symbol> --depth 3 --code . --graph .agent-spec/graph --frozen
+agent-spec atlas affected --worktree --code . --graph .agent-spec/graph --frozen
+agent-spec atlas status --code . --graph .agent-spec/graph --format json
+agent-spec atlas check --code . --graph .agent-spec/graph
+agent-spec atlas daemon start --code . --graph .agent-spec/graph
+agent-spec atlas daemon status --code . --graph .agent-spec/graph
+agent-spec atlas daemon service-status --code . --graph .agent-spec/graph
+agent-spec atlas daemon sync --code . --graph .agent-spec/graph
+agent-spec atlas daemon stop --code . --graph .agent-spec/graph
+```
+
+E1 plan and gate commands are deterministic, but the external drivers are not
+run by tests or CI. Agent receipts must include every planned run, including
+failures, plus judge/session/trace hashes and complete query metrics. Serving
+receipts use a separate non-fixture direct/worker plan. A machine pass still
+requires human acceptance before any MCP, B5, or worker default changes.
+
+Atlas builds publish one committed generation. Query and status results pin and
+report that generation; build reports expose input-plan hit/miss, touched
+shards, edge deltas, bounded working bytes, orphan recovery, and fallback
+reason. Healthy zero-change builds do not stage, resolve, validate, or rewrite
+authority files. Use `--features`, `--target`, `--cfg`, `--frontier-limit`,
+`--batch-size`, and `--working-byte-limit` when the project needs explicit
+input/resource identity. Cancellation, overflow, and failed publication leave
+the prior generation readable; later builds recover orphan work. Automatic
+refresh preserves committed Cargo inputs, and capability changes report an
+explicit full-frontier fallback. The optional D3 watcher/daemon persists a
+pending watermark and exposes typed `degraded` state. Writer-lock and ordinary
+failures have separate bounded retries. Queries hold a reader lease until their
+immutable generation read ends; ambiguous leases prevent reclamation. MCP
+discovery and no-daemon queries remain deterministic. This runtime never
+replaces graph freshness, KLL, or lifecycle authority. See
+`docs/atlas-incremental-builds.md` and `docs/atlas-live-runtime.md`.
+
+D4 query workers remain disabled by default. For explicit concurrency, start
+the daemon with `--query-workers 2`, inspect `daemon service-status`, and use
+`atlas context --execution worker`. Queue, deadline, memory, cancellation,
+panic, circuit, fallback, generation, and lease state must remain typed in the
+response receipt. Worker mode cannot repair stale graph authority. See
+`docs/atlas-concurrent-query-serving.md`.
+
+`atlas build --scip <index> --dynamic-dispatch` opt-in enriches resolved trait
+method calls with at most 64 sorted implementation candidates. It preserves the
+exact declaration edge and marks the inferred edge unresolved,
+`bounded-candidates`, and `dispatch: trait`; see
+`docs/atlas-dynamic-dispatch.md`.
+
+MIR is opt-in. Build the binary with Cargo feature `mir`, then pass exactly one
+of `atlas build --mir <overlay.json>` or `--mir-driver <absolute-binary>`.
+Failures degrade with `mir-extraction-failed`, clear old MIR facts, and preserve
+the syn plus optional SCIP graph. The repository ships the versioned consumer
+protocol and fixed-argv driver adapter; it does not bundle an official
+`rustc_public` producer binary. See `docs/atlas-mir-overlay.md`.
+
+Build the derived graph before querying. `status` reports recorded/current graph
+identity and independent syn, SCIP, and MIR freshness; syn fresh does not make a
+SCIP or MIR layer fresh. `check` preserves the syn stale-file gate. Rebuild with
+`atlas build` after `atlas-schema-mismatch` or any `atlas-query-index-*`
+diagnostic. A worktree mismatch or stale available semantic layer blocks
+definitive provider, binding, lifecycle-symbol, and typed trace evidence.
+
+`explore` has fixed compact/deep budgets of 8/32/48/8/4/20/16,000 and
+16/96/160/20/12/40/24,000 for seeds, nodes, edges, paths, excerpts, excerpt
+lines, and serialized bytes. Source excerpts require a current hash matching
+the graph metadata. `flow` keeps found, no-path, capability-unavailable,
+truncated, unknown-endpoint, and ambiguous-endpoint distinct. A fresh
+disconnected flow can add bounded `runtime_boundaries` for async tasks,
+channels, callback registries, reflection, and framework routes. Treat them as
+heuristic query hints, never graph facts or binding/lifecycle/archive evidence;
+see `docs/atlas-runtime-boundaries.md`. `affected`
+accepts exactly one explicit, stdin, staged, worktree, or commit-range input and
+never infers tests or coverage from filenames.
+
+`atlas context` separates retrieval from projection. Select exactly one
+`symbol`, `flow`, `architecture`, or `impact` profile. Treat candidate scores,
+omission manifests, source slices, continuations, and receipts as derived graph
+views, never KLL truth. Execute continuation argv literally and retain
+`--expect-graph`; do not invent a hidden cursor. Required evidence overflow,
+stale source, graph mismatch, and unknown cursor are typed failures. See
+`docs/atlas-query-context.md` for budgets and receipt fields.
+
+MCP Atlas reads are frozen and read-only. `atlas_search` is omitted from the
+default MCP tool list; set `AGENT_SPEC_MCP_ATLAS_SEARCH=1` when starting
+`agent-spec mcp` to list it. `atlas_explore` is unavailable unless
+`AGENT_SPEC_MCP_ATLAS_EXPLORE=1`; the default MCP surface stays unchanged while
+real Agent A/B remains pending. `atlas_context` requires
+`AGENT_SPEC_MCP_ATLAS_CONTEXT=1`; its concurrent daemon route additionally
+requires `AGENT_SPEC_MCP_ATLAS_QUERY_MODE=worker`. The graph, index, and bindings remain derived
+working data, while KLL truth remains in `knowledge/`.
+
+External Code Graph providers are also opt-in. Validate their strict manifest
+and project registration before conformance. Extraction providers may publish
+provider-scoped nodes, containment, and basic references; semantic enrichers
+may only add evidence-bearing edges or query hints against an explicit base
+graph fingerprint. Never treat stale, partial, wrong-worktree, timed-out,
+cancelled, or oversized output as an empty fresh graph. The checked-in F1
+fixture proves the adapter protocol only and does not implement F2.
 
 ### KLL Requirements Intake
 
@@ -371,6 +481,9 @@ agent-spec requirements graph --knowledge knowledge --format json --gate
 agent-spec requirements plan --knowledge knowledge --specs specs --format json --gate
 agent-spec requirements test-obligations --knowledge knowledge --specs specs --format json --out .agent-spec/test_obligations.json
 agent-spec requirements worktrees --knowledge knowledge --specs specs --base main --path-prefix ../agent-spec-worktrees --out .agent-spec/worktrees.json
+agent-spec requirements affected --path src/lib.rs --knowledge knowledge --specs specs --out .agent-spec/intent-impact.json
+agent-spec requirements affected-bundle --impact .agent-spec/intent-impact.json --knowledge knowledge --out .agent-spec/affected-bundle.json
+agent-spec requirements affected-record --impact .agent-spec/intent-impact.json --bundle .agent-spec/affected-bundle.json --quality-outcomes .agent-spec/quality-outcomes.json --run-id "$RUN_ID" --timestamp "$TIMESTAMP"
 agent-spec requirements replay REQ-123 --format text
 agent-spec requirements explain-failure REQ-123 --format json
 agent-spec requirements trace-graph REQ-123 --format mermaid
@@ -378,7 +491,14 @@ agent-spec requirements questions --knowledge knowledge --specs specs --format j
 agent-spec archive --spec-dir specs --archive-dir .agent-spec/archive/specs --summary knowledge/context/spec-archives.md --run-log-dir . --dry-run
 ```
 
-The CLI is deterministic. Use AI only to draft candidate KLL requirements or ask reverse interview questions generated by `requirements questions`; human-reviewed KLL artifacts remain the source of truth. Requirement replay is evidence replay from stored lifecycle/trace records and must not be described as deterministic LLM replay. It returns every scenario from the latest run; a sole satisfied requirement owns all spec scenarios, while multi-requirement specs use KLL scenario names for disambiguation instead of a Cartesian product.
+`affected-record` only records existing artifacts. It does not run Atlas,
+tests, quality providers, skills, or models. The optional quality outcomes file
+is a JSON array of `{provider_id, outcome, summary}` records; reuse the
+lifecycle `run_id` so v2 trace evidence merges into the same ledger file.
+Repeated partial recording preserves existing bundle and quality evidence;
+conflicting immutable evidence for one run is rejected.
+
+The CLI is deterministic. Use AI only to draft candidate KLL requirements or ask reverse interview questions generated by `requirements questions`; human-reviewed KLL artifacts remain the source of truth. `requirements affected` consumes a fresh provider graph and reports typed binding, obligation, worktree, and VCS gaps; generated selector slugs remain candidates unless the Task Contract contains an explicit selector. `affected-bundle` applies the risk A/B/C evidence policy and retains executable provider configuration. `affected-record` stores already-produced artifacts and normalized quality outcomes in trace ledger v2. Requirement replay and trace graph are evidence replay and never rerun providers, tools, skills, or models. V1 ledgers remain readable with an explicit `affected-trace-missing` gap.
 
 Treat compiler roots as trust boundaries: unsafe ids, malformed or duplicate frontmatter, a missing root, a directory-kind mismatch, and symlinked compiler inputs are blocking errors. `requirements plan` contains first-class requirement, work-unit, and spec nodes with explicit `satisfies` and `spec_depends` edges.
 
