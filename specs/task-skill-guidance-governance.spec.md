@@ -34,7 +34,7 @@ risk: B
 - src/main.rs
 - fixtures/**
 - install-skills.sh
-- specs/roadmap/task-skill-guidance-governance.spec.md
+- specs/task-skill-guidance-governance.spec.md
 
 ### Forbidden
 - 不改动 skill 的语义性指导内容（只加版本头与路由表锚点）

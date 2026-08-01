@@ -40,7 +40,7 @@ risk: A
 - src/main.rs
 - .agent-spec/orphan-baseline.json
 - fixtures/**
-- specs/roadmap/task-pipeline-integrity-gate.spec.md
+- specs/task-pipeline-integrity-gate.spec.md
 
 ### Forbidden
 - 不改变既有规则名与既有诊断的严重级别

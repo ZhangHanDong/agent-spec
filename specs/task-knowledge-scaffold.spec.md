@@ -36,7 +36,7 @@ risk: B
 - skills/agent-spec-authoring/SKILL.md
 - skills/agent-spec-intent-compiler/SKILL.md
 - fixtures/**
-- specs/roadmap/task-knowledge-scaffold.spec.md
+- specs/task-knowledge-scaffold.spec.md
 
 ### Forbidden
 - 不覆盖任何已存在文件

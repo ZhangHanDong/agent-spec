@@ -70,4 +70,4 @@ Scenario: 断链的 Produces 被指名方向
 - 实测证据: specs/ 下 37/74 无 satisfies；graph/plan 验证器不在
   lint-knowledge --gate 路径（main.rs cmd_lint_knowledge 仅调 lint_corpus）
 - 同类先例: agent-chat 工作区四份既有需求文档把 ADR 塞在 ## Dependencies
-- staged contract: specs/roadmap/task-pipeline-integrity-gate.spec.md
+- staged contract: specs/task-pipeline-integrity-gate.spec.md

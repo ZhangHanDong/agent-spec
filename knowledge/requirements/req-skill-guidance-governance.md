@@ -63,4 +63,4 @@ Scenario: 对抗路由用例常绿
   满分孤儿合约；本仓库 .claude/skills 仅装 5 个捆绑 skill 中的 2 个
 - 风格先例: transitions.rs 的 unknown governance status 错误列出合法值全集
 - 方法论: superpowers writing-skills 的压力场景测试与 skip-formalities 用例
-- staged contract: specs/roadmap/task-skill-guidance-governance.spec.md
+- staged contract: specs/task-skill-guidance-governance.spec.md

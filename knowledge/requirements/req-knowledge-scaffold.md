@@ -62,4 +62,4 @@ Scenario: 骨架带唯一出口
 - proposal: LEP-001
 - 实测证据: 现状仅 init --workspace 建目录树；frontmatter 枚举猜错时
   parser.rs 报 unknown status 不列合法值
-- staged contract: specs/roadmap/task-knowledge-scaffold.spec.md
+- staged contract: specs/task-knowledge-scaffold.spec.md

@@ -70,7 +70,7 @@ Bad, because `lint-knowledge --gate` 吸收 graph/plan 检查会拉长门禁耗�
   REQ-PIPELINE-INTEGRITY-GATE, REQ-KNOWLEDGE-SCAFFOLD,
   REQ-SKILL-GUIDANCE-GOVERNANCE
 - staged contracts: specs/task-knowledge-prefix-registry.spec.md,
-  specs/roadmap/task-pipeline-integrity-gate.spec.md,
-  specs/roadmap/task-knowledge-scaffold.spec.md,
-  specs/roadmap/task-skill-guidance-governance.spec.md
+  specs/task-pipeline-integrity-gate.spec.md,
+  specs/task-knowledge-scaffold.spec.md,
+  specs/task-skill-guidance-governance.spec.md
 - field incident: agent-chat workspace session post-mortem, 2026-08-01
