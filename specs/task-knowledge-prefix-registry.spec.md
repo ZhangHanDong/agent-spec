@@ -32,7 +32,7 @@ risk: B
 - knowledge/proposals/proposal-template.md
 - src/spec_knowledge/scaffold.rs
 - src/spec_knowledge/mod.rs
-- specs/roadmap/task-knowledge-prefix-registry.spec.md
+- specs/task-knowledge-prefix-registry.spec.md
 
 ### Forbidden
 - 不改动任何 lint 规则的语义

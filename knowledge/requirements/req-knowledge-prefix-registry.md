@@ -53,4 +53,4 @@ Scenario: 模板与脚手架漂移被测试拦截
 - proposal: LEP-001
 - 实测证据: proposal-template.md 无 Context/Decision/Consequences，与
   proposal.rs REQUIRED 三节冲突；governance.rs 模板豁免使冲突不可见
-- staged contract: specs/roadmap/task-knowledge-prefix-registry.spec.md
+- staged contract: specs/task-knowledge-prefix-registry.spec.md

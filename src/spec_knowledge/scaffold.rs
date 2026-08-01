@@ -44,7 +44,7 @@ const ADR_TEMPLATE: &str = "---\nkind: decision\nid: ADR-NNN\nstatus: Proposed\n
 const REQUIREMENTS_README: &str = "# Requirements\n\nEARS/29148-style requirement records. Use one artifact per stable requirement or grouping requirement.\n\nRequired shape:\n- `title:` is the canonical human-readable title used by graph, work-unit, and spec draft generation.\n- `## Problem` explains the user or system problem.\n- `## Requirements` is the normative source, with one `[REQ-NNN] ... MUST/SHOULD/MAY ...` clause per line.\n- `## Scenarios` supplies the work-unit and draft-spec BDD source.\n- `## Dependencies` declares ordering edges to other requirement ids.\n- `## Open Questions` blocks executable work-unit generation when it contains real questions.\n\nSpecs link back via `satisfies:`.\n";
 const REQ_TEMPLATE: &str = "---\nkind: requirement\nid: REQ-NNN\ntitle: \"Requirement Title\"\nliveness: auto\ntags: []\n---\n\n## Problem\n\nDescribe the user or system problem this requirement solves.\n\n## Requirements\n\n[REQ-NNN] The system MUST produce an observable response.\n\n## Scenarios\n\nScenario: Main behavior\n  Given a concrete starting state\n  When a concrete action occurs\n  Then a concrete observable outcome occurs\n\n## Dependencies\n\nNone.\n\n## Source Trace\n\n- issue:#NNN\n\n## Open Questions\n\nNone.\n";
 const PROPOSALS_README: &str = "# Proposals\n\nGovernance proposals (LEP-style). `liveness: n/a` — never enters the code gate.\nLink the decisions a proposal spawns with `## Produces: ADR-NNN`.\n";
-const LEP_TEMPLATE: &str = "---\nkind: proposal\nid: LEP-NNN\nstatus: Proposed\nliveness: n/a\n---\n\n## Context\n\n## Decision\n\n## Consequences\n\nGood, because …\nBad, because …\n\n## Produces: ADR-NNN\n";
+const LEP_TEMPLATE: &str = include_str!("../../knowledge/proposals/proposal-template.md");
 const GUIDANCE_README: &str = "# Guidance\n\nAgent-facing guidance + skill designation. `liveness: n/a`. Projected into\nCLAUDE.md/AGENTS.md via `gen-integrations --with-guidance` and served live via\nMCP `guidance.for`.\n";
 const GUIDANCE_TEMPLATE: &str = "---\nkind: guidance\nid: G-NNN\nliveness: n/a\ntags: []\n---\n\n## Scope\n\n## Instructions\n\n## Applies To\n\n## Skills\n";
 const CONTEXT_README: &str = "# Context (free-form)\n\nEscape hatch: arbitrary agent-context. Served read-only, NOT linted, no schema.\n";
@@ -79,5 +79,88 @@ mod tests {
         assert!(second.is_empty());
 
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    use crate::spec_core::Severity;
+    use crate::spec_knowledge::governance::lint_doc;
+    use crate::spec_knowledge::parser::parse_knowledge_str;
+    use std::path::Path;
+
+    fn repo_file(rel: &str) -> String {
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(rel)).unwrap()
+    }
+
+    fn instantiation_errors(contents: &str, name: &str) -> Vec<String> {
+        let doc = parse_knowledge_str(contents, Path::new(name))
+            .unwrap_or_else(|e| panic!("{name}: template instantiation must parse: {e}"));
+        lint_doc(&doc)
+            .into_iter()
+            .filter(|d| d.severity == Severity::Error)
+            .map(|d| format!("{}: {}", d.rule, d.message))
+            .collect()
+    }
+
+    #[test]
+    fn test_repo_templates_match_scaffold() {
+        assert_eq!(
+            repo_file("knowledge/proposals/proposal-template.md"),
+            LEP_TEMPLATE,
+            "knowledge/proposals/proposal-template.md must match scaffold LEP_TEMPLATE byte for byte"
+        );
+    }
+
+    #[test]
+    fn test_id_registry_doc_lists_all_prefixes() {
+        let registry = repo_file("knowledge/standards/operational/id-registry.md");
+        for (prefix, dir) in [
+            ("`LEP-`", "knowledge/proposals/"),
+            ("`ADR-`", "knowledge/decisions/"),
+            ("`REQ-`", "knowledge/requirements/"),
+            ("`task-`", "specs/"),
+        ] {
+            assert!(
+                registry.contains(prefix) && registry.contains(dir),
+                "registry must map {prefix} to {dir}"
+            );
+        }
+        assert!(registry.contains("YYYY-MM-DD"), "filename rule missing");
+        assert!(registry.contains("frontmatter"), "id-in-frontmatter rule missing");
+    }
+
+    #[test]
+    fn test_proposal_template_instantiation_lints_clean() {
+        let errors = instantiation_errors(&LEP_TEMPLATE.replace("LEP-NNN", "LEP-999"), "lep-999.md");
+        assert!(errors.is_empty(), "proposal template must lint clean, got {errors:?}");
+    }
+
+    #[test]
+    fn test_scaffold_templates_instantiate_clean() {
+        for (contents, name) in [
+            (ADR_TEMPLATE.replace("ADR-NNN", "ADR-999"), "adr-999.md"),
+            (REQ_TEMPLATE.replace("REQ-NNN", "REQ-999"), "req-999.md"),
+            (GUIDANCE_TEMPLATE.replace("G-NNN", "G-999"), "g-999.md"),
+        ] {
+            let errors = instantiation_errors(&contents, name);
+            assert!(errors.is_empty(), "{name} must lint clean, got {errors:?}");
+        }
+    }
+
+    #[test]
+    fn test_no_prop_prefix_remains() {
+        let sources = [
+            (
+                "knowledge/proposals/proposal-template.md",
+                repo_file("knowledge/proposals/proposal-template.md"),
+            ),
+            ("scaffold LEP_TEMPLATE", LEP_TEMPLATE.to_string()),
+            ("scaffold PROPOSALS_README", PROPOSALS_README.to_string()),
+            ("scaffold ARTIFACT_TYPES", ARTIFACT_TYPES.to_string()),
+        ];
+        for (name, contents) in sources {
+            assert!(
+                !contents.contains("PROP-"),
+                "{name} still carries the retired PROP- prefix (ADR-002 ratified LEP-NNN)"
+            );
+        }
     }
 }

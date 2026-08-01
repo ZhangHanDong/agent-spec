@@ -1,22 +1,27 @@
 ---
 kind: proposal
-id: PROP-YYYY-MM-DD-SLUG
+id: LEP-NNN
 title: "Proposal Title"
+status: proposed
 liveness: n/a
 tags: []
 ---
 
 # Proposal Title
 
-## Summary
+This template adapts Lore proposal practice for agent-spec; replace all
+placeholder prose before submitting. `## Context`, `## Decision`, and
+`## Consequences` are the lint-required skeleton; the remaining sections
+are Lore-practice depth.
 
-One paragraph for a reader unfamiliar with the area. This template adapts
-Lore proposal practice for agent-spec.
+## Context
+
+The problem, incident, or external pressure that makes this proposal
+necessary, with enough background to evaluate it.
 
 ## Motivation
 
-The problem, limitation, user need, incident, or external pressure that makes
-this proposal necessary now.
+The user need or limitation behind the context, and why now.
 
 ## Goals
 
@@ -26,9 +31,9 @@ this proposal necessary now.
 
 - Explicitly out-of-scope item.
 
-## Proposed Design
+## Decision
 
-Describe the design at the level needed to evaluate the goals.
+The proposed course of action, at the level of detail needed to judge it.
 
 ## Compatibility
 
@@ -47,8 +52,8 @@ Describe trust-boundary and abuse implications, or explain why there are none.
 
 ## Privacy Considerations
 
-Describe paths, metadata, user data, logs, or telemetry implications, or explain
-why there are none.
+Describe paths, metadata, user data, logs, or telemetry implications, or
+explain why there are none.
 
 ## Risks and Assumptions
 
@@ -60,9 +65,14 @@ why there are none.
 
 - Risk. Mitigation: ...
 
+## Consequences
+
+Good, because ...
+Bad, because ...
+
 ## Alternatives Considered
 
-- Alternative and concrete reason it was rejected.
+- Alternative and the concrete reason it was rejected.
 
 ## Prior Art
 
@@ -74,4 +84,5 @@ why there are none.
 
 ## Produces
 
-- ADR- or REQ- id created if this proposal is accepted.
+- On acceptance, mint the produced decision or requirement id here
+  (inline form: `## Produces: ADR-NNN`).

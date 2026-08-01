@@ -69,7 +69,7 @@ Bad, because `lint-knowledge --gate` 吸收 graph/plan 检查会拉长门禁耗�
 - governed requirements: REQ-KNOWLEDGE-PREFIX-REGISTRY,
   REQ-PIPELINE-INTEGRITY-GATE, REQ-KNOWLEDGE-SCAFFOLD,
   REQ-SKILL-GUIDANCE-GOVERNANCE
-- staged contracts: specs/roadmap/task-knowledge-prefix-registry.spec.md,
+- staged contracts: specs/task-knowledge-prefix-registry.spec.md,
   specs/roadmap/task-pipeline-integrity-gate.spec.md,
   specs/roadmap/task-knowledge-scaffold.spec.md,
   specs/roadmap/task-skill-guidance-governance.spec.md
