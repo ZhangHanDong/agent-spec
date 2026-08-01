@@ -378,6 +378,12 @@ enum Commands {
         #[arg(long, default_value = ".")]
         code: PathBuf,
     },
+    /// Knowledge-layer scaffolding: walk the pipeline forward instead of
+    /// retrofitting (see knowledge/standards/operational/id-registry.md).
+    Knowledge {
+        #[command(subcommand)]
+        action: KnowledgeCommands,
+    },
     /// Trace a decision/requirement to satisfying specs and report liveness.
     Trace {
         /// Decision or requirement id (e.g. ADR-001 or REQ-001), case-insensitive.
@@ -906,6 +912,24 @@ enum AtlasProviderCommands {
         scratch: PathBuf,
         #[arg(long)]
         out: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum KnowledgeCommands {
+    /// Scaffold a lint-clean knowledge artifact with valid enum values
+    /// pre-filled and the layer's single exit at the end.
+    New {
+        /// Artifact kind: proposal | decision | requirement.
+        kind: String,
+        /// Stable id matching the registry prefix (LEP-* / ADR-* / REQ-*).
+        id: String,
+        /// Human-readable title; also used for the filename slug.
+        #[arg(long)]
+        title: Option<String>,
+        /// Knowledge root.
+        #[arg(long, default_value = "knowledge")]
+        knowledge: PathBuf,
     },
 }
 
@@ -1527,6 +1551,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             format,
             gate,
         } => cmd_lint_knowledge(&knowledge, &specs, &orphan_baseline, &format, gate),
+        Commands::Knowledge { action } => cmd_knowledge(action),
         Commands::Mcp {
             knowledge,
             specs,
@@ -3716,6 +3741,38 @@ fn cmd_lint_knowledge(
         std::process::exit(2);
     }
     Ok(())
+}
+
+fn cmd_knowledge(action: KnowledgeCommands) -> Result<(), Box<dyn std::error::Error>> {
+    match action {
+        KnowledgeCommands::New {
+            kind,
+            id,
+            title,
+            knowledge,
+        } => {
+            let Some(kind) = crate::spec_knowledge::scaffold::KnowledgeNewKind::parse(&kind) else {
+                eprintln!("unknown knowledge kind `{kind}`; expected proposal, decision, or requirement");
+                std::process::exit(2);
+            };
+            match crate::spec_knowledge::scaffold::knowledge_new(
+                &knowledge,
+                kind,
+                &id,
+                title.as_deref(),
+                &crate::spec_knowledge::scaffold::today_utc(),
+            ) {
+                Ok(path) => {
+                    println!("created {}", path.display());
+                    Ok(())
+                }
+                Err(msg) => {
+                    eprintln!("{msg}");
+                    std::process::exit(2);
+                }
+            }
+        }
+    }
 }
 
 /// Collect every gate-relevant knowledge finding: per-doc lint, corpus
