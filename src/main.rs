@@ -8924,6 +8924,97 @@ name: "退款"
         }
     }
 
+    /// Bundled-skill freshness check (REQ-SKILL-GUIDANCE-GOVERNANCE): every
+    /// SKILL.md must carry a `> **Version:** ... **Tracks:** agent-spec X.Y.Z`
+    /// header matching the crate version. Returns one violation message per
+    /// offending file, each naming its path.
+    fn skill_tracks_violations(skills_dir: &std::path::Path, crate_version: &str) -> Vec<String> {
+        let expected = format!("**Tracks:** agent-spec {crate_version}");
+        let Ok(entries) = std::fs::read_dir(skills_dir) else {
+            return vec![format!("skills directory missing: {}", skills_dir.display())];
+        };
+        let mut out = Vec::new();
+        for entry in entries.flatten() {
+            let skill = entry.path().join("SKILL.md");
+            if !skill.is_file() {
+                continue;
+            }
+            let text = std::fs::read_to_string(&skill).unwrap_or_default();
+            let fresh = text
+                .lines()
+                .any(|l| l.starts_with("> **Version:**") && l.contains(&expected));
+            if !fresh {
+                out.push(format!(
+                    "{}: missing or stale version header; expected a `> **Version:** ...` line containing `{expected}`",
+                    skill.display()
+                ));
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn test_all_skills_track_current_crate_version() {
+        let skills = repo_root().join("skills");
+        let count = std::fs::read_dir(&skills)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.path().join("SKILL.md").is_file())
+            .count();
+        assert!(count >= 5, "expected the five bundled skills, found {count}");
+        let violations = skill_tracks_violations(&skills, env!("CARGO_PKG_VERSION"));
+        assert!(violations.is_empty(), "stale skill headers: {violations:#?}");
+    }
+
+    #[test]
+    fn test_stale_tracks_fails_with_file_path() {
+        let dir = make_temp_dir("skill-tracks-stale");
+        let stale = dir.join("some-skill");
+        fs::create_dir_all(&stale).unwrap();
+        let skill_md = stale.join("SKILL.md");
+        fs::write(
+            &skill_md,
+            "# Some Skill\n\n> **Version:** 1.0.0 | **Last Updated:** 2026-01-01 | **Tracks:** agent-spec 0.9.0\n",
+        )
+        .unwrap();
+        let violations = skill_tracks_violations(&dir, env!("CARGO_PKG_VERSION"));
+        assert_eq!(violations.len(), 1);
+        assert!(
+            violations[0].contains(&skill_md.display().to_string()),
+            "violation names the offending file: {}",
+            violations[0]
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_skip_formalities_routing_anchors_present() {
+        let adversarial = fs::read_to_string(repo_root().join("fixtures/adversarial/skip-formalities.txt"))
+            .expect("adversarial routing fixture must exist");
+        assert!(
+            adversarial.contains("直接写 spec") && adversarial.contains("Skip the formalities"),
+            "fixture keeps the recorded rationalization verbatim"
+        );
+        for skill in [
+            "skills/agent-spec-authoring/SKILL.md",
+            "skills/agent-spec-intent-compiler/SKILL.md",
+        ] {
+            let text = fs::read_to_string(repo_root().join(skill)).unwrap();
+            assert!(
+                text.contains("Routing: What You Hold"),
+                "{skill} must keep the routing table anchor"
+            );
+            assert!(
+                text.contains("orphan-spec"),
+                "{skill} must keep the orphan-spec hard gate"
+            );
+            assert!(
+                text.contains("HARD GATE"),
+                "{skill} must keep the hard-gate wording"
+            );
+        }
+    }
+
     #[test]
     fn test_docs_engineering_standards_include_lore_practices() {
         let doc_types = include_str!("../knowledge/standards/canon/doc-types.md");

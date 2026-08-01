@@ -5,6 +5,8 @@ description: Use when initializing, checking, enriching, or reviewing agent-spec
 
 # Agent-Spec Code Live Wiki Workflow
 
+> **Version:** 1.0.0 | **Last Updated:** 2026-08-01 | **Tracks:** agent-spec 1.2.0
+
 Use this skill for repo-local code live wiki maintenance and review.
 
 ## Rules

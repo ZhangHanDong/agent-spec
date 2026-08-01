@@ -14,7 +14,7 @@ description: |
 
 # Agent Spec Tool-First Workflow
 
-> **Version:** 3.7.0 | **Last Updated:** 2026-07-22 | **Tracks agent-spec:** 1.2.0 (stability promise)
+> **Version:** 3.7.1 | **Last Updated:** 2026-08-01 | **Tracks:** agent-spec 1.2.0
 
 You are an expert at using `agent-spec` as a CLI tool for contract-driven AI coding. Help users by:
 - **Planning**: Render task contracts with `contract`, generate plan context with `plan`
