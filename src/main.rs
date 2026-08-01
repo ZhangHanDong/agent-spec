@@ -345,11 +345,20 @@ enum Commands {
         #[command(subcommand)]
         action: WikiCommands,
     },
-    /// Lint the knowledge corpus (per-doc rules + governance integrity).
+    /// Lint the knowledge corpus (per-doc rules + governance integrity +
+    /// requirement graph/plan pipeline integrity).
     LintKnowledge {
         /// Knowledge root.
         #[arg(long, default_value = "knowledge")]
         knowledge: PathBuf,
+        /// Specs root for pipeline-integrity checks (satisfies coverage,
+        /// orphan specs).
+        #[arg(long, default_value = "specs")]
+        specs: PathBuf,
+        /// Orphan-spec baseline file; listed specs are exempt from the
+        /// orphan-spec diagnostic.
+        #[arg(long, default_value = ".agent-spec/orphan-baseline.json")]
+        orphan_baseline: PathBuf,
         /// Output format: text | json | sarif.
         #[arg(long, default_value = "text")]
         format: String,
@@ -1513,9 +1522,11 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Commands::Wiki { action } => cmd_wiki(action),
         Commands::LintKnowledge {
             knowledge,
+            specs,
+            orphan_baseline,
             format,
             gate,
-        } => cmd_lint_knowledge(&knowledge, &format, gate),
+        } => cmd_lint_knowledge(&knowledge, &specs, &orphan_baseline, &format, gate),
         Commands::Mcp {
             knowledge,
             specs,
@@ -3652,9 +3663,71 @@ fn cmd_init(
 
 fn cmd_lint_knowledge(
     knowledge: &Path,
+    specs: &Path,
+    orphan_baseline: &Path,
     format: &str,
     gate: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::spec_core::Severity;
+
+    let (doc_count, findings) = knowledge_gate_findings(knowledge, specs, orphan_baseline);
+
+    let errors = findings
+        .iter()
+        .filter(|f| f.diag.severity == Severity::Error)
+        .count();
+
+    match format {
+        "sarif" => {
+            let log = crate::spec_knowledge::render_sarif(&findings);
+            println!("{}", serde_json::to_string_pretty(&log)?);
+        }
+        "json" => {
+            let arr: Vec<serde_json::Value> = findings
+                .iter()
+                .map(|f| {
+                    serde_json::json!({
+                        "uri": f.uri,
+                        "rule": f.diag.rule,
+                        "severity": format!("{:?}", f.diag.severity),
+                        "message": f.diag.message,
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&arr)?);
+        }
+        _ => {
+            for f in &findings {
+                let where_ = if f.uri.is_empty() { "(corpus)" } else { &f.uri };
+                println!(
+                    "{where_}: [{:?}] {} — {}",
+                    f.diag.severity, f.diag.rule, f.diag.message
+                );
+            }
+            println!(
+                "{doc_count} docs, {} findings ({errors} errors)",
+                findings.len()
+            );
+        }
+    }
+
+    if gate && errors > 0 {
+        eprintln!("gate: {errors} error-level knowledge finding(s)");
+        std::process::exit(2);
+    }
+    Ok(())
+}
+
+/// Collect every gate-relevant knowledge finding: per-doc lint, corpus
+/// governance, and the requirement graph/plan pipeline-integrity diagnostics
+/// that previously ran only under `requirements graph`/`requirements plan`.
+/// Returns `(doc_count, findings)`; extracted from `cmd_lint_knowledge` so
+/// tests can assert on findings without exercising `process::exit`.
+fn knowledge_gate_findings(
+    knowledge: &Path,
+    specs: &Path,
+    orphan_baseline: &Path,
+) -> (usize, Vec<crate::spec_knowledge::sarif::Finding>) {
     use crate::spec_core::{LintDiagnostic, Severity, Span};
     use crate::spec_knowledge::sarif::Finding;
 
@@ -3691,51 +3764,83 @@ fn cmd_lint_knowledge(
         });
     }
 
-    let errors = findings
-        .iter()
-        .filter(|f| f.diag.severity == Severity::Error)
-        .count();
+    // Pipeline integrity (ADR-002): fold the requirement graph/plan
+    // diagnostics into this gate. A missing specs root is tolerated —
+    // knowledge-only workspaces make no pipeline claims to check. The plan's
+    // knowledge parse errors are skipped: the collection above already
+    // reported them.
+    if specs.is_dir() {
+        let plan = crate::spec_knowledge::build_requirement_plan(knowledge, specs);
+        for d in &plan.diagnostics {
+            findings.push(Finding {
+                uri: String::new(),
+                diag: LintDiagnostic {
+                    rule: d.code.clone(),
+                    severity: match d.severity.as_str() {
+                        "error" => Severity::Error,
+                        "info" => Severity::Info,
+                        _ => Severity::Warning,
+                    },
+                    message: d.message.clone(),
+                    span: Span::default(),
+                    suggestion: None,
+                },
+            });
+        }
 
-    match format {
-        "sarif" => {
-            let log = crate::spec_knowledge::render_sarif(&findings);
-            println!("{}", serde_json::to_string_pretty(&log)?);
-        }
-        "json" => {
-            let arr: Vec<serde_json::Value> = findings
-                .iter()
-                .map(|f| {
-                    serde_json::json!({
-                        "uri": f.uri,
-                        "rule": f.diag.rule,
-                        "severity": format!("{:?}", f.diag.severity),
-                        "message": f.diag.message,
-                    })
-                })
-                .collect();
-            println!("{}", serde_json::to_string_pretty(&arr)?);
-        }
-        _ => {
-            for f in &findings {
-                let where_ = if f.uri.is_empty() { "(corpus)" } else { &f.uri };
-                println!(
-                    "{where_}: [{:?}] {} — {}",
-                    f.diag.severity, f.diag.rule, f.diag.message
-                );
+        let requirements_exist = docs
+            .iter()
+            .any(|d| d.meta.kind == crate::spec_knowledge::KnowledgeKind::Requirement);
+        if requirements_exist {
+            let baseline = load_orphan_baseline(orphan_baseline);
+            for spec in &plan.specs {
+                if !spec.satisfies.is_empty() {
+                    continue;
+                }
+                let path_str = spec.path.display().to_string();
+                if baseline.contains(&path_str) {
+                    continue;
+                }
+                findings.push(Finding {
+                    uri: path_str,
+                    diag: LintDiagnostic {
+                        rule: "orphan-spec".into(),
+                        severity: Severity::Info,
+                        message: format!(
+                            "task spec declares no `satisfies:` while a requirements corpus exists; declare `satisfies: [REQ-*]` for the requirement this contract implements, or record the spec in {}",
+                            orphan_baseline.display()
+                        ),
+                        span: Span::default(),
+                        suggestion: None,
+                    },
+                });
             }
-            println!(
-                "{} docs, {} findings ({errors} errors)",
-                docs.len(),
-                findings.len()
-            );
         }
     }
 
-    if gate && errors > 0 {
-        eprintln!("gate: {errors} error-level knowledge finding(s)");
-        std::process::exit(2);
-    }
-    Ok(())
+    (docs.len(), findings)
+}
+
+/// Read the orphan-spec baseline: a JSON object `{"specs": ["path", ...]}`.
+/// A missing or unreadable file is an empty baseline; entries are exact spec
+/// paths as the plan reports them. The file is only ever shrunk by hand —
+/// nothing here writes it.
+fn load_orphan_baseline(path: &Path) -> std::collections::BTreeSet<String> {
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return Default::default();
+    };
+    serde_json::from_str::<serde_json::Value>(&raw)
+        .ok()
+        .and_then(|v| {
+            v.get("specs").and_then(|s| {
+                s.as_array().map(|arr| {
+                    arr.iter()
+                        .filter_map(|e| e.as_str().map(str::to_string))
+                        .collect()
+                })
+            })
+        })
+        .unwrap_or_default()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -7803,6 +7908,105 @@ name: "退款"
             }
             _ => panic!("expected requirements plan command"),
         }
+    }
+
+    fn knowledge_gate_fixture(prefix: &str, req: bool, spec: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let dir = make_temp_dir(prefix);
+        let knowledge = dir.join("knowledge");
+        let specs = dir.join("specs");
+        fs::create_dir_all(knowledge.join("requirements")).unwrap();
+        fs::create_dir_all(&specs).unwrap();
+        if req {
+            fs::write(
+                knowledge.join("requirements/req-a.md"),
+                "---\nkind: requirement\nid: REQ-A\ntitle: \"A\"\nstatus: accepted\nliveness: auto\n---\n## Problem\nA.\n## Requirements\n[REQ-A] The system MUST do A.\n## Scenarios\nScenario: A\n  Given input A\n  When A runs\n  Then output A is visible\n## Source Trace\n- test\n## Open Questions\nNone.\n",
+            )
+            .unwrap();
+        }
+        fs::write(specs.join("task-a.spec.md"), spec).unwrap();
+        (dir, knowledge, specs)
+    }
+
+    #[test]
+    fn test_gate_includes_graph_and_plan_diagnostics() {
+        let (dir, knowledge, specs) = knowledge_gate_fixture(
+            "knowledge-gate-merged",
+            true,
+            "spec: task\nname: \"A\"\nsatisfies: [REQ-MISSING]\n---\n## Intent\nA.\n## Completion Criteria\nScenario: A\n  Test: test_a\n  Given A\n  When A\n  Then A\n",
+        );
+        let (_, findings) =
+            super::knowledge_gate_findings(&knowledge, &specs, &dir.join("absent.json"));
+        let dangling = findings
+            .iter()
+            .find(|f| f.diag.rule == "dangling-spec-coverage")
+            .expect("plan diagnostics must reach the knowledge gate");
+        assert_eq!(dangling.diag.severity, crate::spec_core::Severity::Error);
+        assert!(
+            findings.iter().any(|f| f.diag.rule == "requirement-uncovered"),
+            "graph/plan validation must reach the knowledge gate"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_new_orphan_spec_diagnosed_with_remedies() {
+        let (dir, knowledge, specs) = knowledge_gate_fixture(
+            "knowledge-gate-orphan",
+            true,
+            "spec: task\nname: \"A\"\n---\n## Intent\nA.\n## Completion Criteria\nScenario: A\n  Test: test_a\n  Given A\n  When A\n  Then A\n",
+        );
+        let (_, findings) =
+            super::knowledge_gate_findings(&knowledge, &specs, &dir.join("absent.json"));
+        let orphan = findings
+            .iter()
+            .find(|f| f.diag.rule == "orphan-spec")
+            .expect("orphan spec must be diagnosed when a requirements corpus exists");
+        assert_eq!(orphan.diag.severity, crate::spec_core::Severity::Info);
+        assert!(
+            orphan.diag.message.contains("satisfies: [REQ-*]")
+                && orphan.diag.message.contains("record the spec in"),
+            "message must name both remedies: {}",
+            orphan.diag.message
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_orphan_baseline_exempts_listed_specs() {
+        let (dir, knowledge, specs) = knowledge_gate_fixture(
+            "knowledge-gate-baseline",
+            true,
+            "spec: task\nname: \"A\"\n---\n## Intent\nA.\n## Completion Criteria\nScenario: A\n  Test: test_a\n  Given A\n  When A\n  Then A\n",
+        );
+        let baseline = dir.join("orphan-baseline.json");
+        let listed = specs.join("task-a.spec.md").display().to_string();
+        fs::write(
+            &baseline,
+            serde_json::to_string(&serde_json::json!({ "specs": [listed] })).unwrap(),
+        )
+        .unwrap();
+        let (_, findings) = super::knowledge_gate_findings(&knowledge, &specs, &baseline);
+        assert!(
+            !findings.iter().any(|f| f.diag.rule == "orphan-spec"),
+            "baselined orphan must not be diagnosed"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_orphan_spec_silent_without_requirements() {
+        let (dir, knowledge, specs) = knowledge_gate_fixture(
+            "knowledge-gate-no-reqs",
+            false,
+            "spec: task\nname: \"A\"\n---\n## Intent\nA.\n## Completion Criteria\nScenario: A\n  Test: test_a\n  Given A\n  When A\n  Then A\n",
+        );
+        let (_, findings) =
+            super::knowledge_gate_findings(&knowledge, &specs, &dir.join("absent.json"));
+        assert!(
+            !findings.iter().any(|f| f.diag.rule == "orphan-spec"),
+            "no requirements corpus means no orphan-spec claims"
+        );
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

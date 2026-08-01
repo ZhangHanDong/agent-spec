@@ -212,15 +212,36 @@ pub fn lint_corpus(docs: &[KnowledgeDoc]) -> Vec<LintDiagnostic> {
             }
         }
 
-        // Produces integrity: a proposal's produced ids should exist (§6.3).
+        // Produces integrity: a proposal's produced ids should exist (§6.3),
+        // and once the proposal is accepted the produced decision must link
+        // back through its `## Source Trace` so the edge is walkable in both
+        // directions.
         if d.meta.kind == KnowledgeKind::Proposal {
             for produced in crate::spec_knowledge::proposal::produces(d) {
-                if !by_id.contains_key(produced.as_str()) {
+                let Some(target) = by_id.get(produced.as_str()).and_then(|v| v.first()) else {
                     out.push(diag(
                         "produces-dangling",
                         Severity::Warning,
                         format!("{} produces {produced}, which does not exist", d.meta.id),
                     ));
+                    continue;
+                };
+                if d.meta.status == Some(DecisionStatus::Accepted)
+                    && target.meta.kind == KnowledgeKind::Decision
+                {
+                    let back_linked = target
+                        .section("Source Trace")
+                        .is_some_and(|s| s.body.to_ascii_uppercase().contains(&d.meta.id));
+                    if !back_linked {
+                        out.push(diag(
+                            "produces-link-integrity",
+                            Severity::Warning,
+                            format!(
+                                "{produced} exists but its `## Source Trace` does not link back to {} (missing back-link direction: decision -> proposal)",
+                                d.meta.id
+                            ),
+                        ));
+                    }
                 }
             }
         }
@@ -328,6 +349,39 @@ mod tests {
             .map(|d| d.rule.clone())
             .collect();
         assert!(rules.contains(&"produces-dangling".to_string()));
+    }
+
+    #[test]
+    fn test_produces_link_integrity_names_missing_backlink() {
+        let prop = parse(
+            "---\nkind: proposal\nid: LEP-001\nstatus: accepted\nliveness: n/a\n---\n## Context\nc\n## Decision\nd\n## Consequences\ng/b\n## Produces: ADR-007\n",
+            "lep-001.md",
+        );
+        let dec_no_backlink = parse(
+            "---\nkind: decision\nid: ADR-007\nstatus: accepted\n---\n## Context\nc\n## Decision\nd\n## Consequences\ng/b\n## Source Trace\n- ratified in review\n",
+            "adr-007.md",
+        );
+        let out = lint_corpus(&[prop.clone(), dec_no_backlink]);
+        let hit = out
+            .iter()
+            .find(|d| d.rule == "produces-link-integrity")
+            .expect("accepted proposal with non-backlinking decision must warn");
+        assert!(
+            hit.message.contains("decision -> proposal"),
+            "message names the missing direction: {}",
+            hit.message
+        );
+        assert!(hit.message.contains("LEP-001") && hit.message.contains("ADR-007"));
+
+        let dec_backlinked = parse(
+            "---\nkind: decision\nid: ADR-007\nstatus: accepted\n---\n## Context\nc\n## Decision\nd\n## Consequences\ng/b\n## Source Trace\n- proposal: LEP-001\n",
+            "adr-007.md",
+        );
+        let out = lint_corpus(&[prop, dec_backlinked]);
+        assert!(
+            !out.iter().any(|d| d.rule == "produces-link-integrity"),
+            "backlinked decision must not warn"
+        );
     }
 
     #[test]

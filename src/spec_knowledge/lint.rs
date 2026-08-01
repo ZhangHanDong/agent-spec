@@ -330,6 +330,30 @@ pub fn lint_requirement(doc: &KnowledgeDoc) -> Vec<LintDiagnostic> {
         }
     }
 
+    // `## Dependencies` is the REQ-* ordering-edge section; decision and
+    // proposal ids listed there silently fall out of the requirement graph
+    // (or surface as misleading "missing requirement" errors downstream).
+    if let Some(section) = doc.section("Dependencies") {
+        for tok in section
+            .body
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
+        {
+            if (tok.starts_with("ADR-") || tok.starts_with("LEP-"))
+                && tok.len() > 4
+                && tok[4..].chars().any(|c| c.is_ascii_alphanumeric())
+            {
+                out.push(diag(
+                    "dependency-kind-mismatch",
+                    Severity::Warning,
+                    format!(
+                        "`## Dependencies` lists {tok}; dependencies are REQ-* ordering edges"
+                    ),
+                    Some("move the ADR-*/LEP-* entry to `## Source Trace`"),
+                ));
+            }
+        }
+    }
+
     out
 }
 
@@ -475,6 +499,30 @@ mod tests {
 
     fn parse(input: &str) -> DecisionDoc {
         parse_decision_str(input, Path::new("adr-001-x.md")).unwrap()
+    }
+
+    #[test]
+    fn test_dependency_kind_mismatch_suggests_source_trace() {
+        let doc = crate::spec_knowledge::parser::parse_knowledge_str(
+            "---\nkind: requirement\nid: REQ-A\ntitle: \"A\"\nliveness: auto\n---\n## Problem\nA.\n## Requirements\n[REQ-A] The system MUST do A.\n## Scenarios\nScenario: A\n  Given input A\n  When A runs\n  Then output A is visible\n## Dependencies\n- ADR-001\n- REQ-B\n## Source Trace\n- test\n",
+            Path::new("req-a.md"),
+        )
+        .unwrap();
+        let diags = lint_requirement(&doc);
+        let hit = diags
+            .iter()
+            .find(|d| d.rule == "dependency-kind-mismatch")
+            .expect("ADR id under ## Dependencies must be diagnosed");
+        assert!(hit.message.contains("ADR-001"), "message names the id: {}", hit.message);
+        assert!(
+            hit.suggestion.as_deref().unwrap_or_default().contains("Source Trace"),
+            "suggestion names the correct section"
+        );
+        // REQ-* dependencies stay silent.
+        assert_eq!(
+            diags.iter().filter(|d| d.rule == "dependency-kind-mismatch").count(),
+            1
+        );
     }
 
     #[test]
