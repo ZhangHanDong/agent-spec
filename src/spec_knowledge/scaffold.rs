@@ -340,7 +340,7 @@ mod tests {
         let next = contents
             .split("## Next")
             .nth(1)
-            .expect("skeleton ends with a ## Next exit");
+            .unwrap_or_else(|| panic!("skeleton ends with a ## Next exit"));
         assert!(
             next.contains("requirements draft-specs"),
             "requirement exit points at draft-specs"

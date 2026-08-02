@@ -365,7 +365,7 @@ mod tests {
         let hit = out
             .iter()
             .find(|d| d.rule == "produces-link-integrity")
-            .expect("accepted proposal with non-backlinking decision must warn");
+            .unwrap_or_else(|| panic!("accepted proposal with non-backlinking decision must warn"));
         assert!(
             hit.message.contains("decision -> proposal"),
             "message names the missing direction: {}",

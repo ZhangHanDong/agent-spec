@@ -510,7 +510,7 @@ mod tests {
         let hit = diags
             .iter()
             .find(|d| d.rule == "dependency-kind-mismatch")
-            .expect("ADR id under ## Dependencies must be diagnosed");
+            .unwrap_or_else(|| panic!("ADR id under ## Dependencies must be diagnosed"));
         assert!(
             hit.message.contains("ADR-001"),
             "message names the id: {}",
