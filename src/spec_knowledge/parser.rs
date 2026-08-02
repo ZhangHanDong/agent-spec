@@ -257,7 +257,13 @@ mod tests {
             Path::new("adr-001.md"),
         )
         .unwrap_err();
-        for valid in ["proposed", "accepted", "superseded", "deprecated", "rejected"] {
+        for valid in [
+            "proposed",
+            "accepted",
+            "superseded",
+            "deprecated",
+            "rejected",
+        ] {
             assert!(err.contains(valid), "error must list `{valid}`: {err}");
         }
     }
@@ -269,7 +275,10 @@ mod tests {
             Path::new("req-a.md"),
         )
         .unwrap_err();
-        assert!(err.contains("auto") && err.contains("n/a"), "error must list auto and n/a: {err}");
+        assert!(
+            err.contains("auto") && err.contains("n/a"),
+            "error must list auto and n/a: {err}"
+        );
     }
 
     #[test]

@@ -3752,7 +3752,9 @@ fn cmd_knowledge(action: KnowledgeCommands) -> Result<(), Box<dyn std::error::Er
             knowledge,
         } => {
             let Some(kind) = crate::spec_knowledge::scaffold::KnowledgeNewKind::parse(&kind) else {
-                eprintln!("unknown knowledge kind `{kind}`; expected proposal, decision, or requirement");
+                eprintln!(
+                    "unknown knowledge kind `{kind}`; expected proposal, decision, or requirement"
+                );
                 std::process::exit(2);
             };
             match crate::spec_knowledge::scaffold::knowledge_new(
@@ -7999,7 +8001,9 @@ name: "退款"
             .expect("plan diagnostics must reach the knowledge gate");
         assert_eq!(dangling.diag.severity, crate::spec_core::Severity::Error);
         assert!(
-            findings.iter().any(|f| f.diag.rule == "requirement-uncovered"),
+            findings
+                .iter()
+                .any(|f| f.diag.rule == "requirement-uncovered"),
             "graph/plan validation must reach the knowledge gate"
         );
         let _ = fs::remove_dir_all(dir);
@@ -8931,7 +8935,10 @@ name: "退款"
     fn skill_tracks_violations(skills_dir: &std::path::Path, crate_version: &str) -> Vec<String> {
         let expected = format!("**Tracks:** agent-spec {crate_version}");
         let Ok(entries) = std::fs::read_dir(skills_dir) else {
-            return vec![format!("skills directory missing: {}", skills_dir.display())];
+            return vec![format!(
+                "skills directory missing: {}",
+                skills_dir.display()
+            )];
         };
         let mut out = Vec::new();
         for entry in entries.flatten() {
@@ -8961,9 +8968,15 @@ name: "退款"
             .flatten()
             .filter(|e| e.path().join("SKILL.md").is_file())
             .count();
-        assert!(count >= 5, "expected the five bundled skills, found {count}");
+        assert!(
+            count >= 5,
+            "expected the five bundled skills, found {count}"
+        );
         let violations = skill_tracks_violations(&skills, env!("CARGO_PKG_VERSION"));
-        assert!(violations.is_empty(), "stale skill headers: {violations:#?}");
+        assert!(
+            violations.is_empty(),
+            "stale skill headers: {violations:#?}"
+        );
     }
 
     #[test]
@@ -8989,8 +9002,9 @@ name: "退款"
 
     #[test]
     fn test_skip_formalities_routing_anchors_present() {
-        let adversarial = fs::read_to_string(repo_root().join("fixtures/adversarial/skip-formalities.txt"))
-            .expect("adversarial routing fixture must exist");
+        let adversarial =
+            fs::read_to_string(repo_root().join("fixtures/adversarial/skip-formalities.txt"))
+                .expect("adversarial routing fixture must exist");
         assert!(
             adversarial.contains("直接写 spec") && adversarial.contains("Skip the formalities"),
             "fixture keeps the recorded rationalization verbatim"

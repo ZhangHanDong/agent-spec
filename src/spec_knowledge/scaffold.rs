@@ -122,11 +122,7 @@ pub fn knowledge_new(
     }
     let prefix = kind.prefix();
     let rest = id.strip_prefix(prefix).unwrap_or_default();
-    if rest.is_empty()
-        || !rest
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-')
-    {
+    if rest.is_empty() || !rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
         return Err(format!(
             "id `{id}` does not match the registry prefix for this kind; valid prefix: {prefix} (see knowledge/standards/operational/id-registry.md)"
         ));
@@ -150,7 +146,11 @@ pub fn knowledge_new(
     if kind == KnowledgeNewKind::Requirement {
         // The requirement template carries no governance status; a fresh
         // artifact enters the pipeline as proposed.
-        contents = contents.replacen("\nliveness: auto\n", "\nstatus: proposed\nliveness: auto\n", 1);
+        contents = contents.replacen(
+            "\nliveness: auto\n",
+            "\nstatus: proposed\nliveness: auto\n",
+            1,
+        );
     }
     if let Some(t) = title {
         for placeholder in ["Proposal Title", "Requirement Title"] {
@@ -159,7 +159,8 @@ pub fn knowledge_new(
     }
 
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    std::fs::write(&path, &contents).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    std::fs::write(&path, &contents)
+        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     Ok(path)
 }
 
@@ -267,13 +268,20 @@ mod tests {
             );
         }
         assert!(registry.contains("YYYY-MM-DD"), "filename rule missing");
-        assert!(registry.contains("frontmatter"), "id-in-frontmatter rule missing");
+        assert!(
+            registry.contains("frontmatter"),
+            "id-in-frontmatter rule missing"
+        );
     }
 
     #[test]
     fn test_proposal_template_instantiation_lints_clean() {
-        let errors = instantiation_errors(&LEP_TEMPLATE.replace("LEP-NNN", "LEP-999"), "lep-999.md");
-        assert!(errors.is_empty(), "proposal template must lint clean, got {errors:?}");
+        let errors =
+            instantiation_errors(&LEP_TEMPLATE.replace("LEP-NNN", "LEP-999"), "lep-999.md");
+        assert!(
+            errors.is_empty(),
+            "proposal template must lint clean, got {errors:?}"
+        );
     }
 
     #[test]
@@ -310,7 +318,10 @@ mod tests {
         .unwrap();
         assert!(path.starts_with(root.join("knowledge/proposals")));
         let errors = instantiation_errors(&std::fs::read_to_string(&path).unwrap(), "lep-002.md");
-        assert!(errors.is_empty(), "scaffolded proposal must lint clean: {errors:?}");
+        assert!(
+            errors.is_empty(),
+            "scaffolded proposal must lint clean: {errors:?}"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -326,7 +337,10 @@ mod tests {
         )
         .unwrap();
         let contents = std::fs::read_to_string(&path).unwrap();
-        let next = contents.split("## Next").nth(1).expect("skeleton ends with a ## Next exit");
+        let next = contents
+            .split("## Next")
+            .nth(1)
+            .expect("skeleton ends with a ## Next exit");
         assert!(
             next.contains("requirements draft-specs"),
             "requirement exit points at draft-specs"
@@ -335,9 +349,15 @@ mod tests {
             !contents.contains("## Produces"),
             "a requirement skeleton has no second exit"
         );
-        assert!(contents.contains("status: proposed"), "governance status prefilled");
+        assert!(
+            contents.contains("status: proposed"),
+            "governance status prefilled"
+        );
         let errors = instantiation_errors(&contents, "req-x.md");
-        assert!(errors.is_empty(), "scaffolded requirement must lint clean: {errors:?}");
+        assert!(
+            errors.is_empty(),
+            "scaffolded requirement must lint clean: {errors:?}"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -352,7 +372,10 @@ mod tests {
             "2026-08-01",
         )
         .unwrap_err();
-        assert!(err.contains("ADR-"), "error lists the valid prefix for the kind: {err}");
+        assert!(
+            err.contains("ADR-"),
+            "error lists the valid prefix for the kind: {err}"
+        );
         assert!(err.contains("LEP-9"), "error names the offending id: {err}");
         let _ = std::fs::remove_dir_all(root);
     }
@@ -361,13 +384,32 @@ mod tests {
     fn test_knowledge_new_refuses_to_clobber() {
         let root = new_root("clobber");
         let knowledge = root.join("knowledge");
-        let first = knowledge_new(&knowledge, KnowledgeNewKind::Decision, "ADR-9", None, "2026-08-01")
-            .unwrap();
+        let first = knowledge_new(
+            &knowledge,
+            KnowledgeNewKind::Decision,
+            "ADR-9",
+            None,
+            "2026-08-01",
+        )
+        .unwrap();
         let before = std::fs::read_to_string(&first).unwrap();
-        let err = knowledge_new(&knowledge, KnowledgeNewKind::Decision, "ADR-9", None, "2026-08-01")
-            .unwrap_err();
-        assert!(err.contains(&first.display().to_string()), "error names the existing path: {err}");
-        assert_eq!(std::fs::read_to_string(&first).unwrap(), before, "file is untouched");
+        let err = knowledge_new(
+            &knowledge,
+            KnowledgeNewKind::Decision,
+            "ADR-9",
+            None,
+            "2026-08-01",
+        )
+        .unwrap_err();
+        assert!(
+            err.contains(&first.display().to_string()),
+            "error names the existing path: {err}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&first).unwrap(),
+            before,
+            "file is untouched"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -383,7 +425,10 @@ mod tests {
             "2026-08-01",
         )
         .unwrap_err();
-        assert!(err.contains("init --workspace"), "error names the recovery command: {err}");
+        assert!(
+            err.contains("init --workspace"),
+            "error names the recovery command: {err}"
+        );
     }
 
     #[test]

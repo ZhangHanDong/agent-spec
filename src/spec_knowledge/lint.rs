@@ -345,9 +345,7 @@ pub fn lint_requirement(doc: &KnowledgeDoc) -> Vec<LintDiagnostic> {
                 out.push(diag(
                     "dependency-kind-mismatch",
                     Severity::Warning,
-                    format!(
-                        "`## Dependencies` lists {tok}; dependencies are REQ-* ordering edges"
-                    ),
+                    format!("`## Dependencies` lists {tok}; dependencies are REQ-* ordering edges"),
                     Some("move the ADR-*/LEP-* entry to `## Source Trace`"),
                 ));
             }
@@ -513,14 +511,24 @@ mod tests {
             .iter()
             .find(|d| d.rule == "dependency-kind-mismatch")
             .expect("ADR id under ## Dependencies must be diagnosed");
-        assert!(hit.message.contains("ADR-001"), "message names the id: {}", hit.message);
         assert!(
-            hit.suggestion.as_deref().unwrap_or_default().contains("Source Trace"),
+            hit.message.contains("ADR-001"),
+            "message names the id: {}",
+            hit.message
+        );
+        assert!(
+            hit.suggestion
+                .as_deref()
+                .unwrap_or_default()
+                .contains("Source Trace"),
             "suggestion names the correct section"
         );
         // REQ-* dependencies stay silent.
         assert_eq!(
-            diags.iter().filter(|d| d.rule == "dependency-kind-mismatch").count(),
+            diags
+                .iter()
+                .filter(|d| d.rule == "dependency-kind-mismatch")
+                .count(),
             1
         );
     }
