@@ -6,6 +6,44 @@ All notable changes to `agent-spec` are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- Forward-walking knowledge pipeline (LEP-001 → ADR-002 → four requirements →
+  four contracts): the LEP → ADR → REQ → spec walk becomes the path of least
+  resistance instead of a retrofit. `knowledge/standards/operational/id-registry.md`
+  is now the single authority mapping id prefixes to directories (`LEP-`, `ADR-`,
+  `REQ-`, `task-`), and both the authoring and intent-compiler skills carry a
+  routing table generated from it, pinned by test.
+- `agent-spec knowledge new <proposal|decision|requirement> <id>` scaffolds a
+  lint-clean artifact with valid enum values pre-filled and the layer's single
+  exit at the end (proposal → `## Produces`, decision → governing requirement,
+  requirement → `requirements draft-specs`). Prefix mismatches exit 2 listing
+  the kind's valid prefix; existing files are never overwritten.
+- `lint-knowledge` gains `--specs` and `--orphan-baseline`, and now folds the
+  requirement graph and plan diagnostics into the same findings stream and
+  `--gate` exit path, with rule names unchanged. Knowledge-only workspaces
+  (no specs root) are unaffected.
+- Three pipeline-integrity rules: `orphan-spec` (Info) flags a task spec with
+  no `satisfies:` while a requirements corpus exists, exempting entries in a
+  shrink-only baseline at `.agent-spec/orphan-baseline.json`;
+  `dependency-kind-mismatch` (Warning) flags `ADR-*`/`LEP-*` ids under a
+  requirement's `## Dependencies` and points at `## Source Trace`;
+  `produces-link-integrity` (Warning) requires an accepted proposal's produced
+  decision to back-link the proposal, naming the missing direction.
+
+### Changed
+
+- All five bundled skills carry a `> **Version:** … **Tracks:** agent-spec
+  X.Y.Z` header, verified against the crate version in the test suite; the
+  intent-compiler and wiki skills were previously unversioned.
+- Knowledge frontmatter parse errors for `kind`, `status`, and `liveness` now
+  enumerate their full valid value sets, matching the existing governance
+  transition errors.
+- `proposal-template.md` uses the ratified `LEP-NNN` id scheme (`PROP-*` is
+  retired) and carries the lint-required `Context`/`Decision`/`Consequences`
+  skeleton alongside the Lore-practice sections; the scaffold constant now
+  includes the repo template so the two cannot drift.
+
 ## [1.2.0] - 2026-07-22
 
 The **evidence-aware Atlas** release: Rust Atlas grows from a symbol graph into
