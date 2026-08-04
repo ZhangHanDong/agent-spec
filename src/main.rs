@@ -86,6 +86,10 @@ enum Commands {
         /// Output format: text, json, md
         #[arg(long, default_value = "text")]
         format: String,
+        /// Emit judgment questions for scenarios the machine could not settle
+        /// instead of the verification report.
+        #[arg(long)]
+        emit_questions: bool,
     },
     /// Render the coverage matrix (Rule × Scenario × Test × Verdict × Provenance)
     Matrix {
@@ -931,6 +935,18 @@ enum KnowledgeCommands {
         #[arg(long, default_value = "knowledge")]
         knowledge: PathBuf,
     },
+    /// Emit the decision points a knowledge artifact leaves open: a
+    /// proposal's unresolved questions and a decision's alternatives.
+    Questions {
+        /// Knowledge id (e.g. LEP-002 or ADR-003), case-insensitive.
+        id: String,
+        /// Knowledge root.
+        #[arg(long, default_value = "knowledge")]
+        knowledge: PathBuf,
+        /// Output format: text | json.
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1332,6 +1348,10 @@ enum RequirementCommands {
         specs: PathBuf,
         #[arg(long, default_value = "text")]
         format: String,
+        /// Agent-drafted candidate answers to merge and validate: a questions
+        /// envelope JSON whose questions carry `options`.
+        #[arg(long)]
+        options: Option<PathBuf>,
     },
     /// Generate deterministic git worktree execution entries for ready work units
     Worktrees {
@@ -1438,7 +1458,16 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             change_scope,
             ai_mode,
             format,
-        } => cmd_verify(&spec, &code, &change, &change_scope, &ai_mode, &format),
+            emit_questions,
+        } => cmd_verify(
+            &spec,
+            &code,
+            &change,
+            &change_scope,
+            &ai_mode,
+            &format,
+            emit_questions,
+        ),
         Commands::Matrix {
             spec,
             code,
@@ -1685,6 +1714,7 @@ fn cmd_verify(
     change_scope: &str,
     ai_mode: &str,
     format: &str,
+    emit_questions: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let doc = crate::spec_parser::parse_spec(spec)?;
     let resolved = crate::spec_parser::resolve_spec(doc, &[])?;
@@ -1706,6 +1736,30 @@ fn cmd_verify(
     let verifiers: Vec<&dyn crate::spec_verify::Verifier> =
         vec![&structural, &boundaries, &test, &ai];
     let report = crate::spec_verify::run_verification(&ctx, &verifiers)?;
+
+    // Judgment agenda instead of a report: emit what `resolve-ai` consumes.
+    // Exits zero even with unsettled scenarios — the questions are the output,
+    // not a gate result.
+    if emit_questions {
+        let questions = crate::spec_knowledge::build_verification_questions(
+            &report.spec_name,
+            &spec.display().to_string(),
+            &report.results,
+        );
+        let envelope = crate::spec_knowledge::QuestionEnvelope::new(questions);
+        if format == "json" {
+            println!("{}", serde_json::to_string_pretty(&envelope)?);
+        } else {
+            println!("judgment questions: {}", envelope.questions.len());
+            for question in &envelope.questions {
+                println!(
+                    "{} [{}] {}",
+                    question.id, question.diagnostic_code, question.prompt
+                );
+            }
+        }
+        return Ok(());
+    }
 
     let out_format = parse_output_format(format);
     println!(
@@ -3774,6 +3828,54 @@ fn cmd_knowledge(action: KnowledgeCommands) -> Result<(), Box<dyn std::error::Er
                 }
             }
         }
+        KnowledgeCommands::Questions {
+            id,
+            knowledge,
+            format,
+        } => {
+            let wanted = id.to_ascii_uppercase();
+            let collection = crate::spec_knowledge::collect_knowledge_checked(&knowledge);
+            let Some(doc) = collection.docs.iter().find(|d| d.meta.id == wanted) else {
+                eprintln!(
+                    "no knowledge artifact with id {wanted} under {}; run `agent-spec lint-knowledge` to list the corpus",
+                    knowledge.display()
+                );
+                std::process::exit(2);
+            };
+            let questions = crate::spec_knowledge::build_knowledge_questions(doc);
+            match format {
+                f if f == "json" => println!(
+                    "{}",
+                    serde_json::to_string_pretty(&crate::spec_knowledge::QuestionEnvelope::new(
+                        questions
+                    ))?
+                ),
+                _ => {
+                    println!("decision points: {}", questions.len());
+                    for question in &questions {
+                        println!(
+                            "{} [{}]{} {}",
+                            question.id,
+                            question.diagnostic_code,
+                            if question.blocking { " (blocking)" } else { "" },
+                            question.prompt
+                        );
+                        for option in &question.options {
+                            println!(
+                                "    - {}{}",
+                                option.label,
+                                if option.recommended {
+                                    " (recommended)"
+                                } else {
+                                    ""
+                                }
+                            );
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
     }
 }
 
@@ -4973,7 +5075,8 @@ fn cmd_requirements(action: RequirementCommands) -> Result<(), Box<dyn std::erro
             knowledge,
             specs,
             format,
-        } => cmd_requirements_questions(&knowledge, &specs, &format),
+            options,
+        } => cmd_requirements_questions(&knowledge, &specs, &format, options.as_deref()),
         RequirementCommands::Worktrees {
             knowledge,
             specs,
@@ -5694,10 +5797,47 @@ fn cmd_requirements_questions(
     knowledge: &Path,
     specs: &Path,
     format: &str,
+    options: Option<&Path>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let plan = crate::spec_knowledge::build_requirement_plan(knowledge, specs);
     let lint_diagnostics = crate::spec_knowledge::collect_clarification_lint_diagnostics(knowledge);
-    let questions = crate::spec_knowledge::build_clarification_questions(&plan, &lint_diagnostics);
+    let mut questions =
+        crate::spec_knowledge::build_clarification_questions(&plan, &lint_diagnostics);
+
+    // Agent-drafted candidates: merge by question id, then validate shape.
+    // The CLI never authors an option; it only checks the ones handed to it.
+    if let Some(path) = options {
+        let raw = std::fs::read_to_string(path)?;
+        let supplied: crate::spec_knowledge::QuestionEnvelope = serde_json::from_str(&raw)?;
+        if supplied.envelope_version != crate::spec_knowledge::ENVELOPE_VERSION {
+            return Err(format!(
+                "envelope_version {} in {} does not match this build's version {}",
+                supplied.envelope_version,
+                path.display(),
+                crate::spec_knowledge::ENVELOPE_VERSION
+            )
+            .into());
+        }
+        let diagnostics = crate::spec_knowledge::validate_envelope(&supplied.questions);
+        if !diagnostics.is_empty() {
+            for diagnostic in &diagnostics {
+                eprintln!(
+                    "[{:?}] {} — {}",
+                    diagnostic.severity, diagnostic.rule, diagnostic.message
+                );
+                if let Some(suggestion) = &diagnostic.suggestion {
+                    eprintln!("    suggestion: {suggestion}");
+                }
+            }
+            std::process::exit(2);
+        }
+        for drafted in supplied.questions {
+            if let Some(target) = questions.iter_mut().find(|q| q.id == drafted.id) {
+                target.options = drafted.options;
+                target.multi_select = drafted.multi_select;
+            }
+        }
+    }
     match format {
         "json" => println!(
             "{}",
@@ -8106,6 +8246,161 @@ name: "退款"
     }
 
     #[test]
+    fn test_requirements_questions_emit_requirements_kind() {
+        let (dir, knowledge, specs) = knowledge_gate_fixture(
+            "emit-req-kind",
+            true,
+            "spec: task\nname: \"A\"\nsatisfies: [REQ-A]\n---\n## Intent\nA.\n## Completion Criteria\nScenario: A\n  Test: test_a\n  Given A\n  When A\n  Then A\n",
+        );
+        fs::write(
+            knowledge.join("requirements/req-compound.md"),
+            "---\nkind: requirement\nid: REQ-COMPOUND\ntitle: \"C\"\nstatus: accepted\nliveness: auto\n---\n## Problem\nC.\n## Requirements\n[REQ-COMPOUND] The system MUST parse input and MUST write output.\n## Scenarios\nScenario: C\n  Given input C\n  When C runs\n  Then output C is visible\n## Source Trace\n- test\n## Open Questions\nNone.\n",
+        )
+        .unwrap();
+
+        let plan = crate::spec_knowledge::build_requirement_plan(&knowledge, &specs);
+        let diags = crate::spec_knowledge::collect_clarification_lint_diagnostics(&knowledge);
+        let questions = crate::spec_knowledge::build_clarification_questions(&plan, &diags);
+        let compound = questions
+            .iter()
+            .find(|q| q.diagnostic_code == "requirement-compound-clause")
+            .unwrap_or_else(|| panic!("compound clause must raise a question: {questions:?}"));
+        assert_eq!(
+            compound.kind,
+            crate::spec_knowledge::QuestionKind::Requirements
+        );
+        assert_eq!(compound.diagnostic_code, "requirement-compound-clause");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_requirements_questions_validates_supplied_options() {
+        // Five candidates exceed the bound; validation must reject them before
+        // anything is merged.
+        let drafted = crate::spec_knowledge::QuestionEnvelope::new(vec![
+            crate::spec_knowledge::ClarificationQuestion {
+                id: "Q-REQ-A-1".into(),
+                target_id: "REQ-A".into(),
+                diagnostic_code: "requirement-compound-clause".into(),
+                blocking: false,
+                prompt: "p".into(),
+                source: "knowledge/requirements/req-a.md".into(),
+                kind: crate::spec_knowledge::QuestionKind::Requirements,
+                multi_select: false,
+                options: (1..=5)
+                    .map(|i| crate::spec_knowledge::DecisionOption {
+                        label: format!("O{i}"),
+                        description: "d".into(),
+                        value: format!("v{i}"),
+                        recommended: false,
+                    })
+                    .collect(),
+                evidence: Vec::new(),
+            },
+        ]);
+        let diagnostics = crate::spec_knowledge::validate_envelope(&drafted.questions);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.rule == "envelope-too-many-options"),
+            "supplied options are validated: {diagnostics:?}"
+        );
+        // Round-trips through the on-disk form the CLI reads.
+        let json = serde_json::to_string(&drafted).unwrap();
+        let parsed: crate::spec_knowledge::QuestionEnvelope = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            parsed.envelope_version,
+            crate::spec_knowledge::ENVELOPE_VERSION
+        );
+        assert_eq!(parsed.questions[0].options.len(), 5);
+    }
+
+    #[test]
+    fn test_emission_points_emit_empty_set_without_questions() {
+        let dir = make_temp_dir("emit-empty");
+        let knowledge = dir.join("knowledge");
+        let specs = dir.join("specs");
+        fs::create_dir_all(knowledge.join("requirements")).unwrap();
+        fs::create_dir_all(knowledge.join("proposals")).unwrap();
+        fs::create_dir_all(&specs).unwrap();
+
+        // Requirements stage: empty corpus, no questions.
+        let plan = crate::spec_knowledge::build_requirement_plan(&knowledge, &specs);
+        let diags = crate::spec_knowledge::collect_clarification_lint_diagnostics(&knowledge);
+        assert!(crate::spec_knowledge::build_clarification_questions(&plan, &diags).is_empty());
+
+        // Knowledge stage: a proposal with nothing unresolved.
+        let doc = crate::spec_knowledge::parse_knowledge_str(
+            "---\nkind: proposal\nid: LEP-020\nstatus: accepted\nliveness: n/a\n---\n## Context\nc\n## Decision\nd\n## Consequences\ng/b\n## Unresolved Questions\n\nNone.\n",
+            Path::new("lep-020.md"),
+        )
+        .unwrap();
+        assert!(crate::spec_knowledge::build_knowledge_questions(&doc).is_empty());
+
+        // Verification stage: everything mechanically settled.
+        assert!(
+            crate::spec_knowledge::build_verification_questions("S", "specs/s.spec.md", &[])
+                .is_empty()
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_emitted_judgment_answers_feed_resolve_ai() {
+        // An answered judgment question becomes a ScenarioAiDecision without
+        // any field renaming: the emitted vocabulary is resolve-ai's own.
+        let results = vec![crate::spec_core::ScenarioResult {
+            scenario_name: "design intent holds".into(),
+            verdict: crate::spec_core::Verdict::Skip,
+            step_results: Vec::new(),
+            evidence: Vec::new(),
+            duration_ms: 0,
+            provenance: None,
+        }];
+        let questions =
+            crate::spec_knowledge::build_verification_questions("S", "specs/s.spec.md", &results);
+        assert_eq!(questions.len(), 1);
+        let answered = &questions[0].options[0]; // "pass"
+
+        // ScenarioAiDecision flattens AiDecision, so the file is flat.
+        let decisions = serde_json::json!([{
+            "scenario_name": results[0].scenario_name,
+            "model": "human",
+            "confidence": 1.0,
+            "verdict": answered.value,
+            "reasoning": "reviewed against the contract",
+        }]);
+        let parsed: Vec<super::ScenarioAiDecision> =
+            serde_json::from_value(decisions).expect("emitted answers parse as resolve-ai input");
+        assert_eq!(parsed[0].decision.verdict, crate::spec_core::Verdict::Pass);
+        assert_eq!(parsed[0].scenario_name, "design intent holds");
+    }
+
+    #[test]
+    fn test_knowledge_questions_unknown_id_names_corpus() {
+        let dir = make_temp_dir("emit-unknown-id");
+        let knowledge = dir.join("knowledge");
+        fs::create_dir_all(knowledge.join("proposals")).unwrap();
+        let collection = crate::spec_knowledge::collect_knowledge_checked(&knowledge);
+        assert!(
+            !collection.docs.iter().any(|d| d.meta.id == "LEP-999"),
+            "the id is genuinely absent, so the command must report it"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_emission_points_never_read_stdin() {
+        // The emitters are pure functions over already-loaded state: none of
+        // them touches stdin, so a closed stdin cannot block them.
+        let src = include_str!("spec_knowledge/questions.rs");
+        assert!(
+            !src.contains("stdin"),
+            "question emission must never read stdin"
+        );
+    }
+
+    #[test]
     fn test_requirements_plan_gate_fails_on_dangling_dependency() {
         let dir = make_temp_dir("requirements-plan-cli-gate");
         let knowledge = dir.join("knowledge");
@@ -8216,6 +8511,7 @@ name: "退款"
                         knowledge,
                         specs,
                         format,
+                        options: _,
                     },
             } => {
                 assert_eq!(knowledge, PathBuf::from("knowledge"));

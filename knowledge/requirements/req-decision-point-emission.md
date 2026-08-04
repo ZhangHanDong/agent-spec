@@ -25,7 +25,9 @@ tags: [knowledge, questions, cli, verification]
 
 [REQ-DECISION-POINT-EMISSION-RECOMMENDATION] 当来源文档明示推荐项时，`knowledge questions` MUST 在对应候选上标记推荐；未明示时 MUST NOT 自行推断推荐项。
 
-[REQ-DECISION-POINT-EMISSION-VERIFY] `verify --emit-questions` MUST 为每个 uncertain 或 pending_review 场景产出 kind 标记为 verification 的信封，携带场景文本、已收集证据与 verdict 词汇表作为候选。
+[REQ-DECISION-POINT-EMISSION-VERIFY] `verify --emit-questions` MUST 为每个 skip、uncertain 或 pending_review 场景产出 kind 标记为 verification 的信封，携带场景文本、已收集证据与 verdict 词汇表作为候选。
+
+[REQ-DECISION-POINT-EMISSION-MECHANICAL-MOAT] 发出的判定问题 MUST NOT 覆盖机械已判定的 pass 或 fail 场景；`resolve-ai` 只应用 skip 场景的判定这一既有保护 MUST 保持不变。
 
 [REQ-DECISION-POINT-EMISSION-DECISIONS-OUT] 验收判定的答案 MUST 能转为 `resolve-ai` 既有 decisions JSON 格式而无需人工改写字段名。
 
@@ -51,9 +53,14 @@ Scenario: 未明示推荐时不标记推荐
   Then 输出候选均不带推荐标记
 
 Scenario: 待判定场景带证据发出
-  Given 一份验证报告含一个 uncertain 场景
+  Given 一份验证报告含一个未定论场景
   When verify --emit-questions 运行
   Then 输出信封的 kind 为 verification 且携带该场景文本与已收集证据
+
+Scenario: 机械已判定场景不发问题
+  Given 一份验证报告含一个机械判定为 pass 的场景
+  When verify --emit-questions 运行
+  Then 该场景不产生任何判定问题
 
 Scenario: 判定答案可直接喂给 resolve-ai
   Given 一组已回答的验收判定信封

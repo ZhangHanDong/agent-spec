@@ -1,4 +1,5 @@
 use crate::spec_core::{LintDiagnostic, Severity, Span};
+use crate::spec_knowledge::model::{DecisionStatus, KnowledgeDoc};
 use crate::spec_knowledge::{
     KnowledgeKind, RequirementPlan, collect_knowledge_checked, lint_requirement,
 };
@@ -54,6 +55,205 @@ pub struct ClarificationQuestion {
     /// never claims to exhaust the answer space.
     #[serde(default)]
     pub options: Vec<DecisionOption>,
+    /// Evidence gathered for the thing being asked about. Populated by the
+    /// verification stage, which has evidence to show; empty elsewhere.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence: Vec<String>,
+}
+
+/// Extract decision-point questions from a knowledge document: a proposal's
+/// unresolved questions (one free-form question per list item) and a
+/// decision's alternatives (one choice whose candidates are the alternatives).
+/// A settled decision still yields its question, marked non-blocking, so a
+/// caller can show it for review without treating it as pending work.
+pub fn build_knowledge_questions(doc: &KnowledgeDoc) -> Vec<ClarificationQuestion> {
+    let source = doc.source_path.display().to_string();
+    let mut out = Vec::new();
+
+    if let Some(section) = doc.section("Unresolved Questions") {
+        for (index, item) in list_items(&section.body).into_iter().enumerate() {
+            out.push(ClarificationQuestion {
+                id: format!("Q-{}-UQ-{}", doc.meta.id, index + 1),
+                target_id: doc.meta.id.clone(),
+                diagnostic_code: "unresolved-question".into(),
+                blocking: doc.meta.status != Some(DecisionStatus::Accepted),
+                prompt: item,
+                source: source.clone(),
+                kind: QuestionKind::Knowledge,
+                multi_select: false,
+                options: Vec::new(),
+                evidence: Vec::new(),
+            });
+        }
+    }
+
+    if let Some(section) = doc.section("Alternatives Considered") {
+        let items = list_items(&section.body);
+        if !items.is_empty() {
+            let options = items
+                .iter()
+                .take(MAX_OPTIONS)
+                .map(|item| {
+                    let (label, description) = split_alternative(item);
+                    DecisionOption {
+                        label,
+                        description,
+                        value: item.clone(),
+                        // Only a stated recommendation counts; never inferred.
+                        recommended: states_recommendation(item),
+                    }
+                })
+                .collect::<Vec<_>>();
+            out.push(ClarificationQuestion {
+                id: format!("Q-{}-ALT", doc.meta.id),
+                target_id: doc.meta.id.clone(),
+                diagnostic_code: "alternatives-considered".into(),
+                blocking: doc.meta.status != Some(DecisionStatus::Accepted),
+                prompt: format!(
+                    "{}: which alternative does this decision take?",
+                    doc.meta.id
+                ),
+                source,
+                kind: QuestionKind::Knowledge,
+                multi_select: false,
+                options,
+                evidence: Vec::new(),
+            });
+        }
+    }
+
+    out
+}
+
+/// Markdown list items in a section body, joined across continuation lines.
+fn list_items(body: &str) -> Vec<String> {
+    let mut items: Vec<String> = Vec::new();
+    for line in body.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed
+            .strip_prefix("- ")
+            .or_else(|| trimmed.strip_prefix("* "))
+        {
+            items.push(rest.trim().to_string());
+        } else if !trimmed.is_empty()
+            && !trimmed.starts_with('#')
+            && let Some(last) = items.last_mut()
+        {
+            last.push(' ');
+            last.push_str(trimmed);
+        }
+    }
+    items.retain(|item| !item.is_empty() && !item.eq_ignore_ascii_case("none."));
+    items
+}
+
+/// An alternative reads "<option> — <reason it was rejected>"; the head is a
+/// usable label, the whole line is the description.
+fn split_alternative(item: &str) -> (String, String) {
+    // Separators in use across the corpus: Chinese double dash, English em
+    // dash, ASCII double hyphen. Longest first so `——` is not split as `—`.
+    let head = [" —— ", " — ", " -- ", "——"]
+        .iter()
+        .find_map(|sep| item.split_once(sep).map(|(head, _)| head))
+        .unwrap_or(item)
+        .trim();
+    let label = head.chars().take(60).collect::<String>();
+    (
+        if label.is_empty() {
+            item.chars().take(60).collect()
+        } else {
+            label
+        },
+        item.to_string(),
+    )
+}
+
+fn states_recommendation(item: &str) -> bool {
+    let lower = item.to_ascii_lowercase();
+    lower.contains("recommended") || item.contains("推荐")
+}
+
+/// Turn scenarios the machine could not settle into judgment questions — the
+/// inverse of `resolve-ai`, emitting what it consumes. Mechanically decided
+/// pass/fail scenarios never appear: a proven verdict is not up for a vote,
+/// and `resolve-ai` correspondingly only applies decisions to skip scenarios.
+/// The verdict vocabulary is the one place the CLI supplies candidates — it is
+/// a closed enum, not an inference from source text.
+pub fn build_verification_questions(
+    spec_name: &str,
+    spec_path: &str,
+    results: &[crate::spec_core::ScenarioResult],
+) -> Vec<ClarificationQuestion> {
+    use crate::spec_core::Verdict;
+
+    let mut out = Vec::new();
+    for result in results {
+        let unsettled = match result.verdict {
+            Verdict::Skip => "skip",
+            Verdict::Uncertain => "uncertain",
+            Verdict::PendingReview => "pending-review",
+            Verdict::Pass | Verdict::Fail => continue,
+        };
+        let evidence = result
+            .evidence
+            .iter()
+            .map(|e| {
+                serde_json::to_string(e).unwrap_or_else(|_| "<unserializable evidence>".into())
+            })
+            .collect::<Vec<_>>();
+        out.push(ClarificationQuestion {
+            id: format!("Q-VERIFY-{}", slug(&result.scenario_name)),
+            target_id: spec_name.to_string(),
+            diagnostic_code: unsettled.into(),
+            blocking: true,
+            prompt: format!(
+                "scenario `{}` is {unsettled}; does it meet the contract?",
+                result.scenario_name
+            ),
+            source: spec_path.to_string(),
+            kind: QuestionKind::Verification,
+            multi_select: false,
+            options: verdict_options(),
+            evidence,
+        });
+    }
+    out
+}
+
+fn verdict_options() -> Vec<DecisionOption> {
+    [
+        (
+            "Pass",
+            "The scenario meets the contract on this evidence",
+            "pass",
+        ),
+        ("Fail", "The scenario does not meet the contract", "fail"),
+        (
+            "Skip",
+            "Not judgeable yet — leave unsettled and gather more evidence",
+            "skip",
+        ),
+    ]
+    .into_iter()
+    .map(|(label, description, value)| DecisionOption {
+        label: label.into(),
+        description: description.into(),
+        value: value.into(),
+        recommended: false,
+    })
+    .collect()
+}
+
+fn slug(text: &str) -> String {
+    let mut out = String::new();
+    for ch in text.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_uppercase());
+        } else if !out.ends_with('-') && !out.is_empty() {
+            out.push('-');
+        }
+    }
+    out.trim_matches('-').chars().take(48).collect()
 }
 
 /// The questions payload as emitted and ingested: a versioned envelope around
@@ -207,6 +407,7 @@ pub fn build_clarification_questions(
                 kind: QuestionKind::Requirements,
                 multi_select: false,
                 options: Vec::new(),
+                evidence: Vec::new(),
             });
         }
     }
@@ -222,6 +423,7 @@ pub fn build_clarification_questions(
             kind: QuestionKind::Requirements,
             multi_select: false,
             options: Vec::new(),
+            evidence: Vec::new(),
         });
     }
 
@@ -267,7 +469,188 @@ mod tests {
             kind,
             multi_select: false,
             options,
+            evidence: Vec::new(),
         }
+    }
+
+    fn knowledge_doc(input: &str, name: &str) -> KnowledgeDoc {
+        crate::spec_knowledge::parse_knowledge_str(input, Path::new(name)).unwrap()
+    }
+
+    fn scenario(
+        name: &str,
+        verdict: crate::spec_core::Verdict,
+        evidence: Vec<crate::spec_core::Evidence>,
+    ) -> crate::spec_core::ScenarioResult {
+        crate::spec_core::ScenarioResult {
+            scenario_name: name.into(),
+            verdict,
+            step_results: Vec::new(),
+            evidence,
+            duration_ms: 0,
+            provenance: None,
+        }
+    }
+
+    #[test]
+    fn test_knowledge_questions_extracts_unresolved_questions() {
+        let doc = knowledge_doc(
+            "---\nkind: proposal\nid: LEP-009\nstatus: proposed\nliveness: n/a\n---\n## Context\nc\n## Decision\nd\n## Consequences\ng/b\n## Unresolved Questions\n\n- First open point?\n- Second open point?\n",
+            "knowledge/proposals/lep-009.md",
+        );
+        let questions = build_knowledge_questions(&doc);
+        let unresolved: Vec<_> = questions
+            .iter()
+            .filter(|q| q.diagnostic_code == "unresolved-question")
+            .collect();
+        assert_eq!(
+            unresolved.len(),
+            2,
+            "one question per list item: {questions:?}"
+        );
+        assert!(unresolved.iter().all(|q| q.kind == QuestionKind::Knowledge));
+        assert!(
+            unresolved
+                .iter()
+                .all(|q| q.source == "knowledge/proposals/lep-009.md"),
+            "source points at the proposal"
+        );
+        assert!(unresolved[0].blocking, "an open proposal's questions block");
+    }
+
+    #[test]
+    fn test_knowledge_questions_omits_unstated_recommendation() {
+        let doc = knowledge_doc(
+            "---\nkind: decision\nid: ADR-009\nstatus: proposed\n---\n## Context\nc\n## Decision\nd\n## Consequences\ng/b\n## Alternatives Considered\n\n- Option A — rejected because X.\n- Option B — rejected because Y.\n",
+            "knowledge/decisions/adr-009.md",
+        );
+        let questions = build_knowledge_questions(&doc);
+        let alt = questions
+            .iter()
+            .find(|q| q.diagnostic_code == "alternatives-considered")
+            .unwrap_or_else(|| panic!("alternatives must yield one choice: {questions:?}"));
+        assert_eq!(alt.options.len(), 2);
+        assert!(
+            alt.options.iter().all(|o| !o.recommended),
+            "no recommendation is stated, so none is marked"
+        );
+        assert_eq!(
+            alt.options[0].label, "Option A",
+            "label is the head, not the reason"
+        );
+    }
+
+    #[test]
+    fn test_knowledge_questions_marks_stated_recommendation() {
+        let doc = knowledge_doc(
+            "---\nkind: decision\nid: ADR-010\nstatus: proposed\n---\n## Context\nc\n## Decision\nd\n## Consequences\ng/b\n## Alternatives Considered\n\n- Option A (recommended) — keeps the surface small.\n- Option B — rejected because Y.\n",
+            "knowledge/decisions/adr-010.md",
+        );
+        let alt = build_knowledge_questions(&doc)
+            .into_iter()
+            .find(|q| q.diagnostic_code == "alternatives-considered")
+            .unwrap_or_else(|| panic!("alternatives must yield one choice"));
+        assert!(
+            alt.options[0].recommended,
+            "a stated recommendation is carried"
+        );
+        assert!(!alt.options[1].recommended);
+    }
+
+    #[test]
+    fn test_knowledge_questions_empty_for_resolved_proposal() {
+        let doc = knowledge_doc(
+            "---\nkind: proposal\nid: LEP-011\nstatus: accepted\nliveness: n/a\n---\n## Context\nc\n## Decision\nd\n## Consequences\ng/b\n## Unresolved Questions\n\nNone.\n",
+            "knowledge/proposals/lep-011.md",
+        );
+        assert!(
+            build_knowledge_questions(&doc).is_empty(),
+            "`None.` is not a question"
+        );
+    }
+
+    #[test]
+    fn test_knowledge_questions_alternatives_bounded_to_four() {
+        let items = (1..=6)
+            .map(|i| format!("- Option {i} — rejected because {i}."))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let doc = knowledge_doc(
+            &format!(
+                "---\nkind: decision\nid: ADR-012\nstatus: proposed\n---\n## Context\nc\n## Decision\nd\n## Consequences\ng/b\n## Alternatives Considered\n\n{items}\n"
+            ),
+            "knowledge/decisions/adr-012.md",
+        );
+        let alt = build_knowledge_questions(&doc)
+            .into_iter()
+            .find(|q| q.diagnostic_code == "alternatives-considered")
+            .unwrap_or_else(|| panic!("alternatives must yield one choice"));
+        assert_eq!(
+            alt.options.len(),
+            MAX_OPTIONS,
+            "six alternatives are capped at four"
+        );
+        assert!(
+            validate_envelope(&[alt]).is_empty(),
+            "a capped question validates"
+        );
+    }
+
+    #[test]
+    fn test_verify_emit_questions_carries_scenario_and_evidence() {
+        let results = vec![scenario(
+            "unsettled path",
+            crate::spec_core::Verdict::Skip,
+            vec![crate::spec_core::Evidence::AiAnalysis {
+                model: "stub".into(),
+                confidence: 0.4,
+                reasoning: "no mechanical binding".into(),
+            }],
+        )];
+        let questions =
+            build_verification_questions("Some Spec", "specs/task-some.spec.md", &results);
+        assert_eq!(questions.len(), 1);
+        let q = &questions[0];
+        assert_eq!(q.kind, QuestionKind::Verification);
+        assert!(
+            q.prompt.contains("unsettled path"),
+            "carries scenario text: {}",
+            q.prompt
+        );
+        assert!(!q.evidence.is_empty(), "carries gathered evidence");
+        assert!(
+            q.evidence[0].contains("no mechanical binding"),
+            "{:?}",
+            q.evidence
+        );
+        let values: Vec<_> = q.options.iter().map(|o| o.value.as_str()).collect();
+        assert_eq!(
+            values,
+            vec!["pass", "fail", "skip"],
+            "verdict vocabulary as candidates"
+        );
+        assert!(validate_envelope(&questions).is_empty());
+    }
+
+    #[test]
+    fn test_verify_emit_questions_skips_mechanical_verdicts() {
+        let results = vec![
+            scenario("proven good", crate::spec_core::Verdict::Pass, Vec::new()),
+            scenario("proven bad", crate::spec_core::Verdict::Fail, Vec::new()),
+            scenario(
+                "unsettled",
+                crate::spec_core::Verdict::Uncertain,
+                Vec::new(),
+            ),
+        ];
+        let questions =
+            build_verification_questions("Some Spec", "specs/task-some.spec.md", &results);
+        assert_eq!(
+            questions.len(),
+            1,
+            "only the unsettled scenario is asked about"
+        );
+        assert!(questions[0].prompt.contains("unsettled"));
     }
 
     #[test]

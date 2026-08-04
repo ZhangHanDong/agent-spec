@@ -94,8 +94,8 @@ pub use quality::{
 };
 pub use questions::{
     ClarificationDiagnostic, ClarificationQuestion, DecisionOption, ENVELOPE_VERSION, MAX_OPTIONS,
-    QuestionEnvelope, QuestionKind, build_clarification_questions,
-    collect_clarification_lint_diagnostics, validate_envelope,
+    QuestionEnvelope, QuestionKind, build_clarification_questions, build_knowledge_questions,
+    build_verification_questions, collect_clarification_lint_diagnostics, validate_envelope,
 };
 pub use requirement::{NormativeKeyword, RequirementClause, extract_requirements};
 pub use requirement_graph::{

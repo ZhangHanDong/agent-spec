@@ -21,9 +21,15 @@ risk: A
 - `knowledge questions <id>` 解析 proposal 的 `## Unresolved Questions`
   列表项与 decision 的 `## Alternatives Considered` 列表项，每个列表项一条
   问题；推荐标记只在源文本含「recommended」或「推荐」时置位。
-- `verify --emit-questions` 为 verdict 为 uncertain 或 pending_review 的
-  场景各产一条信封，候选固定为 verdict 词汇表（pass / fail / skip），
-  证据取自该场景已收集的 evidence 字段。
+- `verify --emit-questions` 为 verdict 为 skip、uncertain 或 pending_review
+  的场景各产一条信封，候选固定为 verdict 词汇表（pass / fail / skip），
+  证据取自该场景已收集的 evidence 字段。verdict 词汇表是封闭枚举，是
+  唯一由 CLI 提供候选的位置——它不是从源文本推断，因此不违反
+  「CLI 不生成候选」。
+- 机械已判定的 pass 与 fail 场景不产生问题；`resolve-ai` 只应用 skip 场景
+  判定的既有保护保持不变（机械结论是护城河）。
+- `evidence: Vec<String>` 以 additive 方式加入信封（默认空、空时不序列化），
+  只有 verification 类问题填充。
 - 判定答案到 decisions JSON 的转换在 `verify --emit-questions` 的输出形状
   上直接对齐 `AiDecision` 字段名，避免二次映射。
 - 三个发射点均不读标准输入；无问题时输出空集合、退出码 0。
@@ -77,9 +83,15 @@ risk: A
 
 场景: 待判定场景带证据发出
   测试: test_verify_emit_questions_carries_scenario_and_evidence
-  假设 一份验证报告含一个 uncertain 场景
+  假设 一份验证报告含一个未定论场景
   当 verify --emit-questions 运行
   那么 输出信封 kind 为 verification 且含该场景文本与已收集证据
+
+场景: 机械已判定场景不发问题
+  测试: test_verify_emit_questions_skips_mechanical_verdicts
+  假设 一份验证报告含机械判定为 pass 与 fail 的场景
+  当 verify --emit-questions 运行
+  那么 这两个场景均不产生判定问题
 
 场景: 判定答案可直接喂给 resolve-ai
   测试: test_emitted_judgment_answers_feed_resolve_ai
