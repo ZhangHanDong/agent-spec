@@ -9063,6 +9063,7 @@ name: "退款"
             branch: Some("feat/wu-req-note-create".into()),
             vcs: None,
             wiki_articles: Vec::new(),
+            human_judgment: None,
             timestamp: 1,
         }
     }
