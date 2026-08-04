@@ -5699,7 +5699,10 @@ fn cmd_requirements_questions(
     let lint_diagnostics = crate::spec_knowledge::collect_clarification_lint_diagnostics(knowledge);
     let questions = crate::spec_knowledge::build_clarification_questions(&plan, &lint_diagnostics);
     match format {
-        "json" => println!("{}", serde_json::to_string_pretty(&questions)?),
+        "json" => println!(
+            "{}",
+            serde_json::to_string_pretty(&crate::spec_knowledge::QuestionEnvelope::new(questions))?
+        ),
         _ => {
             println!("clarification questions: {}", questions.len());
             for question in questions {

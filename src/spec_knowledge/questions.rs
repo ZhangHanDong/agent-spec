@@ -1,11 +1,44 @@
-use crate::spec_core::Severity;
+use crate::spec_core::{LintDiagnostic, Severity, Span};
 use crate::spec_knowledge::{
     KnowledgeKind, RequirementPlan, collect_knowledge_checked, lint_requirement,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+/// Envelope schema version carried by every questions payload. Bumped when the
+/// question or option shape changes so an old reader fails loudly instead of
+/// silently misreading (REQ-DECISION-POINT-ENVELOPE).
+pub const ENVELOPE_VERSION: u32 = 1;
+
+/// Maximum candidates a question may carry. Matches what agent harnesses
+/// render as a choice list; more than this is a drafting error, not a UI hint.
+pub const MAX_OPTIONS: usize = 4;
+
+/// Which pipeline stage asked. Lets a renderer group questions without
+/// parsing ids or diagnostic codes.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum QuestionKind {
+    Requirements,
+    Knowledge,
+    Verification,
+}
+
+/// One candidate answer. `value` is what a write-back applies; `label` and
+/// `description` are what a human reads. Candidates are drafted from source
+/// text by an agent — the CLI validates their shape and never invents them
+/// (ADR-003).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DecisionOption {
+    pub label: String,
+    pub description: String,
+    pub value: String,
+    /// Set only when the source document states a recommendation.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub recommended: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ClarificationQuestion {
     pub id: String,
     pub target_id: String,
@@ -13,7 +46,86 @@ pub struct ClarificationQuestion {
     pub blocking: bool,
     pub prompt: String,
     pub source: String,
-    pub options: Vec<String>,
+    pub kind: QuestionKind,
+    #[serde(default)]
+    pub multi_select: bool,
+    /// Candidate answers. Empty is valid and honest: it means no candidate
+    /// could be grounded, and the question stays free-form. A populated list
+    /// never claims to exhaust the answer space.
+    #[serde(default)]
+    pub options: Vec<DecisionOption>,
+}
+
+/// The questions payload as emitted and ingested: a versioned envelope around
+/// the question list.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct QuestionEnvelope {
+    pub envelope_version: u32,
+    pub questions: Vec<ClarificationQuestion>,
+}
+
+impl QuestionEnvelope {
+    pub fn new(questions: Vec<ClarificationQuestion>) -> Self {
+        Self {
+            envelope_version: ENVELOPE_VERSION,
+            questions,
+        }
+    }
+}
+
+/// Validate agent-drafted candidates: bounded count, and every candidate
+/// readable on its own. Returns one diagnostic per violation, each naming the
+/// question id and the offending field. An empty option list is valid.
+pub fn validate_envelope(questions: &[ClarificationQuestion]) -> Vec<LintDiagnostic> {
+    let mut out = Vec::new();
+    for question in questions {
+        if question.options.len() > MAX_OPTIONS {
+            out.push(envelope_diag(
+                "envelope-too-many-options",
+                format!(
+                    "question {} carries {} options; at most {MAX_OPTIONS} are allowed",
+                    question.id,
+                    question.options.len()
+                ),
+                "drop or merge candidates until at most four remain; the free-form answer path covers the rest",
+            ));
+        }
+        for (index, option) in question.options.iter().enumerate() {
+            if option.label.trim().is_empty() {
+                out.push(envelope_diag(
+                    "envelope-option-missing-label",
+                    format!(
+                        "question {} option {} has an empty `label` field",
+                        question.id,
+                        index + 1
+                    ),
+                    "give every candidate a short label a human can pick by",
+                ));
+            }
+            if option.description.trim().is_empty() {
+                out.push(envelope_diag(
+                    "envelope-option-missing-description",
+                    format!(
+                        "question {} option {} has an empty `description` field",
+                        question.id,
+                        index + 1
+                    ),
+                    "state in one sentence what choosing this candidate means",
+                ));
+            }
+        }
+    }
+    out
+}
+
+fn envelope_diag(rule: &str, message: String, suggestion: &str) -> LintDiagnostic {
+    LintDiagnostic {
+        rule: rule.into(),
+        severity: Severity::Error,
+        message,
+        span: Span::default(),
+        suggestion: Some(suggestion.into()),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -92,6 +204,8 @@ pub fn build_clarification_questions(
                 blocking: true,
                 prompt: question.clone(),
                 source: node.source_path.display().to_string(),
+                kind: QuestionKind::Requirements,
+                multi_select: false,
                 options: Vec::new(),
             });
         }
@@ -105,6 +219,8 @@ pub fn build_clarification_questions(
             blocking: diagnostic.severity == "error",
             prompt: diagnostic.message.clone(),
             source: diagnostic.source.clone(),
+            kind: QuestionKind::Requirements,
+            multi_select: false,
             options: Vec::new(),
         });
     }
@@ -130,6 +246,122 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn option(label: &str, description: &str) -> DecisionOption {
+        DecisionOption {
+            label: label.into(),
+            description: description.into(),
+            value: label.to_ascii_lowercase(),
+            recommended: false,
+        }
+    }
+
+    fn question(kind: QuestionKind, options: Vec<DecisionOption>) -> ClarificationQuestion {
+        ClarificationQuestion {
+            id: "Q-REQ-A-1".into(),
+            target_id: "REQ-A".into(),
+            diagnostic_code: "requirement-compound-clause".into(),
+            blocking: false,
+            prompt: "clause 1 may contain multiple obligations".into(),
+            source: "knowledge/requirements/req-a.md".into(),
+            kind,
+            multi_select: false,
+            options,
+        }
+    }
+
+    #[test]
+    fn test_envelope_carries_kind_and_structured_options() {
+        let q = question(
+            QuestionKind::Requirements,
+            vec![
+                option("Split", "Break the clause into two MUST statements"),
+                option("Keep", "The obligations are inseparable in practice"),
+            ],
+        );
+        let json = serde_json::to_string(&QuestionEnvelope::new(vec![q])).unwrap();
+        assert!(json.contains("\"kind\":\"requirements\""), "{json}");
+        assert!(
+            json.contains("\"label\":\"Split\"") && json.contains("\"description\":"),
+            "{json}"
+        );
+    }
+
+    #[test]
+    fn test_envelope_rejects_more_than_four_options() {
+        let q = question(
+            QuestionKind::Requirements,
+            (1..=5).map(|i| option(&format!("O{i}"), "desc")).collect(),
+        );
+        let diags = validate_envelope(&[q]);
+        let hit = diags
+            .iter()
+            .find(|d| d.rule == "envelope-too-many-options")
+            .unwrap_or_else(|| panic!("five options must be rejected: {diags:?}"));
+        assert!(
+            hit.message.contains("Q-REQ-A-1"),
+            "names the question: {}",
+            hit.message
+        );
+        assert!(
+            hit.message.contains('4'),
+            "names the bound: {}",
+            hit.message
+        );
+    }
+
+    #[test]
+    fn test_envelope_rejects_option_without_description() {
+        let q = question(QuestionKind::Requirements, vec![option("Split", "  ")]);
+        let diags = validate_envelope(&[q]);
+        let hit = diags
+            .iter()
+            .find(|d| d.rule == "envelope-option-missing-description")
+            .unwrap_or_else(|| panic!("description-less option must be rejected: {diags:?}"));
+        assert!(
+            hit.message.contains("description"),
+            "names the field: {}",
+            hit.message
+        );
+    }
+
+    #[test]
+    fn test_envelope_rejects_option_without_label() {
+        let q = question(
+            QuestionKind::Requirements,
+            vec![option("", "a description")],
+        );
+        let diags = validate_envelope(&[q]);
+        let hit = diags
+            .iter()
+            .find(|d| d.rule == "envelope-option-missing-label")
+            .unwrap_or_else(|| panic!("label-less option must be rejected: {diags:?}"));
+        assert!(
+            hit.message.contains("label"),
+            "names the field: {}",
+            hit.message
+        );
+    }
+
+    #[test]
+    fn test_envelope_accepts_empty_options() {
+        let q = question(QuestionKind::Knowledge, Vec::new());
+        assert!(
+            validate_envelope(&[q]).is_empty(),
+            "an ungrounded question stays free-form and is valid"
+        );
+    }
+
+    #[test]
+    fn test_questions_json_carries_envelope_version() {
+        let json = serde_json::to_string(&QuestionEnvelope::new(vec![question(
+            QuestionKind::Verification,
+            Vec::new(),
+        )]))
+        .unwrap();
+        assert!(json.contains("\"envelope_version\":1"), "{json}");
+        assert_eq!(ENVELOPE_VERSION, 1);
+    }
 
     fn make_temp_dir(prefix: &str) -> PathBuf {
         let stamp = SystemTime::now()

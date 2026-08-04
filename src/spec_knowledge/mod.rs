@@ -93,8 +93,9 @@ pub use quality::{
     baseline_quality_profile, build_execution_bundle, outcome_passes_gate, render_execution_bundle,
 };
 pub use questions::{
-    ClarificationDiagnostic, ClarificationQuestion, build_clarification_questions,
-    collect_clarification_lint_diagnostics,
+    ClarificationDiagnostic, ClarificationQuestion, DecisionOption, ENVELOPE_VERSION, MAX_OPTIONS,
+    QuestionEnvelope, QuestionKind, build_clarification_questions,
+    collect_clarification_lint_diagnostics, validate_envelope,
 };
 pub use requirement::{NormativeKeyword, RequirementClause, extract_requirements};
 pub use requirement_graph::{
