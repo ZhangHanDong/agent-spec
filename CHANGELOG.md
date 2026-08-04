@@ -8,6 +8,33 @@ All notable changes to `agent-spec` are documented here. Format follows
 
 ### Added
 
+- Structured human decision points (LEP-002 → ADR-003 → three requirements →
+  three contracts): the three places the pipeline stops for a human now emit a
+  machine-readable envelope any agent harness can render as a choice, instead
+  of prose each agent re-invents. `ClarificationQuestion` had carried an
+  `options` field since introduction with both construction sites hard-coding
+  it empty; it now carries real candidates.
+- `DecisionOption { label, description, value, recommended }` replaces bare
+  strings, questions carry a `kind` naming the stage that asked plus
+  `multi_select`, and the payload is wrapped in a `QuestionEnvelope` with
+  `envelope_version`. `validate_envelope` bounds candidates at four and
+  requires a label and one-sentence description on each; an empty list stays
+  valid, meaning no candidate could be grounded and the question is free-form.
+  A stated recommendation is carried, never inferred.
+- Three emission points: `requirements questions --options <file>` merges
+  agent-drafted candidates after validating them (exit 2 on violation, nothing
+  merged); `agent-spec knowledge questions <id>` extracts a proposal's
+  unresolved questions and a decision's alternatives; `verify
+  --emit-questions` turns scenarios the machine could not settle into judgment
+  questions carrying scenario text, evidence, and the verdict vocabulary — the
+  inverse of `resolve-ai`, emitting what it consumes.
+- Human judgments as first-class provenance: a trace record can carry
+  `HumanJudgment { source, verdict, reasoning, scenario_id, evidence_digest }`,
+  and `replay` / `explain-failure` show which passes depended on one. Per
+  ADR-001 the record carries the judgment *class* and an evidence digest but
+  never an identity; `forbidden_identity_fields` scans records at any depth for
+  `actor`/`authority`/`approval`/`policy` so identity cannot creep in later.
+  Machine-only runs serialize byte-identically to before the field existed.
 - Forward-walking knowledge pipeline (LEP-001 → ADR-002 → four requirements →
   four contracts): the LEP → ADR → REQ → spec walk becomes the path of least
   resistance instead of a retrofit. `knowledge/standards/operational/id-registry.md`
