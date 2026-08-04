@@ -80,3 +80,15 @@ risk: B
   假设 工作区无 knowledge/ 目录
   当 运行 knowledge new proposal LEP-002
   那么 退出码为 2 且错误信息指名 init --workspace
+
+场景: 语义 id 不重复拼接标题 slug
+  测试: test_knowledge_new_filename_does_not_repeat_semantic_id
+  假设 id 为 REQ-DECISION-POINT-ENVELOPE 且标题为 Decision Point Envelope
+  当 运行 knowledge new requirement
+  那么 文件名为 req-decision-point-envelope.md 而数字 id 仍保留标题 slug
+
+场景: decision 骨架带标题
+  测试: test_knowledge_new_decision_carries_title
+  假设 运行 knowledge new decision ADR-009 并给出标题 Some Ruling
+  当 读取生成的骨架 frontmatter
+  那么 title 字段为 Some Ruling 且该实例 lint 零 Error

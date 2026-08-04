@@ -40,7 +40,7 @@ pub fn scaffold_workspace(root: &Path) -> io::Result<Vec<String>> {
 }
 
 const DECISIONS_README: &str = "# Decisions\n\nMADR-style decision records. One decision per file, `NNNNN-slug.md`.\nWhen NOT to use: routine implementation choices with no real trade-off — leave those in code/comments.\n";
-const ADR_TEMPLATE: &str = "---\nkind: decision\nid: ADR-NNN\nstatus: Proposed\n---\n\n## Context\n\n## Decision\n\n## Consequences\n\nGood, because …\nBad, because …\n\n## Alternatives Considered\n\n## Next\n\nSingle exit: govern this decision with a requirement document that task\ncontracts can satisfy.\n";
+const ADR_TEMPLATE: &str = "---\nkind: decision\nid: ADR-NNN\ntitle: \"Decision Title\"\nstatus: Proposed\n---\n\n## Context\n\n## Decision\n\n## Consequences\n\nGood, because …\nBad, because …\n\n## Alternatives Considered\n\n## Next\n\nSingle exit: govern this decision with a requirement document that task\ncontracts can satisfy.\n";
 const REQUIREMENTS_README: &str = "# Requirements\n\nEARS/29148-style requirement records. Use one artifact per stable requirement or grouping requirement.\n\nRequired shape:\n- `title:` is the canonical human-readable title used by graph, work-unit, and spec draft generation.\n- `## Problem` explains the user or system problem.\n- `## Requirements` is the normative source, with one `[REQ-NNN] ... MUST/SHOULD/MAY ...` clause per line.\n- `## Scenarios` supplies the work-unit and draft-spec BDD source.\n- `## Dependencies` declares ordering edges to other requirement ids.\n- `## Open Questions` blocks executable work-unit generation when it contains real questions.\n\nSpecs link back via `satisfies:`.\n";
 const REQ_TEMPLATE: &str = "---\nkind: requirement\nid: REQ-NNN\ntitle: \"Requirement Title\"\nliveness: auto\ntags: []\n---\n\n## Problem\n\nDescribe the user or system problem this requirement solves.\n\n## Requirements\n\n[REQ-NNN] The system MUST produce an observable response.\n\n## Scenarios\n\nScenario: Main behavior\n  Given a concrete starting state\n  When a concrete action occurs\n  Then a concrete observable outcome occurs\n\n## Dependencies\n\nNone.\n\n## Source Trace\n\n- issue:#NNN\n\n## Open Questions\n\nNone.\n\n## Next\n\nSingle exit: compile this requirement into a task contract with\n`agent-spec requirements draft-specs`.\n";
 const PROPOSALS_README: &str = "# Proposals\n\nGovernance proposals (LEP-style). `liveness: n/a` — never enters the code gate.\nLink the decisions a proposal spawns with `## Produces: ADR-NNN`.\n";
@@ -130,11 +130,15 @@ pub fn knowledge_new(
 
     let lower_id = id.to_ascii_lowercase();
     let slug = title.map(slugify).filter(|s| !s.is_empty());
+    // A semantic id (REQ-ARC-NATIVE-DIALECT) already carries its own slug;
+    // appending the title slug again would yield
+    // `req-arc-native-dialect-arc-native-dialect.md`. Numeric ids (ADR-003)
+    // need the slug to be readable, so only skip it when it is redundant.
     let file_name = match (kind, &slug) {
         (KnowledgeNewKind::Proposal, Some(s)) => format!("{date}-{s}.md"),
         (KnowledgeNewKind::Proposal, None) => format!("{date}-{lower_id}.md"),
-        (_, Some(s)) => format!("{lower_id}-{s}.md"),
-        (_, None) => format!("{lower_id}.md"),
+        (_, Some(s)) if !lower_id.contains(s.as_str()) => format!("{lower_id}-{s}.md"),
+        _ => format!("{lower_id}.md"),
     };
     let dir = root.join(kind.dir());
     let path = dir.join(file_name);
@@ -153,7 +157,7 @@ pub fn knowledge_new(
         );
     }
     if let Some(t) = title {
-        for placeholder in ["Proposal Title", "Requirement Title"] {
+        for placeholder in ["Proposal Title", "Requirement Title", "Decision Title"] {
             contents = contents.replace(placeholder, t);
         }
     }
@@ -357,6 +361,68 @@ mod tests {
         assert!(
             errors.is_empty(),
             "scaffolded requirement must lint clean: {errors:?}"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_knowledge_new_filename_does_not_repeat_semantic_id() {
+        let root = new_root("filename");
+        let knowledge = root.join("knowledge");
+
+        // Semantic id already carries the slug: no repetition.
+        let req = knowledge_new(
+            &knowledge,
+            KnowledgeNewKind::Requirement,
+            "REQ-DECISION-POINT-ENVELOPE",
+            Some("Decision Point Envelope"),
+            "2026-08-04",
+        )
+        .unwrap();
+        assert_eq!(
+            req.file_name().and_then(|n| n.to_str()),
+            Some("req-decision-point-envelope.md"),
+            "semantic id must not be followed by its own slug"
+        );
+
+        // Numeric id needs the slug to stay readable.
+        let adr = knowledge_new(
+            &knowledge,
+            KnowledgeNewKind::Decision,
+            "ADR-003",
+            Some("Structured Decision Point Envelope"),
+            "2026-08-04",
+        )
+        .unwrap();
+        assert_eq!(
+            adr.file_name().and_then(|n| n.to_str()),
+            Some("adr-003-structured-decision-point-envelope.md"),
+            "numeric id keeps the title slug"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_knowledge_new_decision_carries_title() {
+        let root = new_root("adr-title");
+        let path = knowledge_new(
+            &root.join("knowledge"),
+            KnowledgeNewKind::Decision,
+            "ADR-009",
+            Some("Some Ruling"),
+            "2026-08-04",
+        )
+        .unwrap();
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            contents.contains("title: \"Some Ruling\""),
+            "decision skeleton must carry the requested title: {contents}"
+        );
+        let errors = instantiation_errors(&contents, "adr-009.md");
+        assert!(
+            errors.is_empty(),
+            "titled decision must lint clean: {errors:?}"
         );
         let _ = std::fs::remove_dir_all(root);
     }
