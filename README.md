@@ -93,6 +93,51 @@ contracts. Every gate in between (`lint-knowledge`, `graph`, `plan`, `lifecycle`
 `trace`) is deterministic and model-free, and human acceptance sits at both ends:
 requirement review on the way in, Contract Acceptance on the way out.
 
+### Walking the pipeline forward
+
+Governance flows in one direction, and each layer has exactly one exit:
+
+```
+knowledge/proposals/    LEP-NNN   should we do this, and why
+    │  ## Produces: ADR-NNN
+knowledge/decisions/    ADR-NNN   the ruling, with alternatives
+    │  a governed requirement
+knowledge/requirements/ REQ-*     MUST clauses + scenarios
+    │  satisfies: [REQ-*]
+specs/                  task-*    executable, verifiable contract
+```
+
+`knowledge/standards/operational/id-registry.md` is the authority for which
+prefix lives where; scaffold each artifact with `agent-spec knowledge new
+<kind> <id>` so the enum values, filename, and exit pointer are right the first
+time. `lint-knowledge --gate` enforces the walk: a task contract with no
+`satisfies:` raises `orphan-spec`, an `ADR-*` id under a requirement's
+`## Dependencies` raises `dependency-kind-mismatch`, and an accepted proposal
+whose produced decision does not link back raises `produces-link-integrity`.
+Existing contracts are exempted through a shrink-only baseline at
+`.agent-spec/orphan-baseline.json` rather than a flag day.
+
+### Decision points
+
+Three places stop for a human, and all three emit the same machine-readable
+envelope so any agent harness can render it as a choice instead of improvising
+the question:
+
+| Stage | Command | What it asks |
+|---|---|---|
+| Reverse interview | `requirements questions` | Ambiguity a requirement lint found |
+| Governance | `knowledge questions <id>` | A proposal's unresolved questions, a decision's alternatives |
+| Acceptance | `verify --emit-questions` | Scenarios the machine could not settle, with their evidence |
+
+Candidates are drafted by the agent from source text and validated by the CLI
+(at most four, each with a label and a one-sentence description); the CLI never
+authors one. An empty candidate list is valid and means the question stays
+free-form. Answers to acceptance questions convert directly into the decisions
+JSON `resolve-ai` already consumes — and when a human settles a scenario, the
+trace record carries the judgment's *class* and an evidence digest, never an
+identity, so approval binding stays with the external system that can actually
+attest it.
+
 The two IR tracks keep different facts separate: Requirement IR records what
 the system must do; Code Graph IR records what the current program is. The code
 graph is derived and rebuildable, while accepted KLL requirements remain the
@@ -517,11 +562,13 @@ For consistency, `verify` and `lifecycle` use the same precedence when `--change
 | `audit` | Audit a spec library's health (unproven rules, open questions) |
 | `discover` | Reverse-engineer a draft task spec from a codebase's tests (`--from-codebase`) |
 | `init --workspace` | Scaffold the canonical `knowledge/` tree for KLL artifacts |
+| `knowledge new` | Scaffold one lint-clean proposal, decision, or requirement with valid enum values pre-filled |
+| `knowledge questions` | Emit the decision points an artifact leaves open: a proposal's unresolved questions, a decision's alternatives |
 | `requirements` | Import PRD/issue requirement blocks, validate a requirement graph, generate work units, and draft specs |
 | `wiki` | Generate, check, and export a local-first source trace wiki from code, KLL artifacts, specs, traces, and docs |
 | `atlas` | Build and query a freshness-gated Rust code graph, analyze flow/impact, run live serving, and validate external providers |
 | `trace` | Trace a decision/requirement id to satisfying specs and report derived liveness |
-| `lint-knowledge` | Lint the knowledge corpus and gate malformed or inconsistent artifacts |
+| `lint-knowledge` | Lint the knowledge corpus and gate malformed artifacts, dangling satisfies edges, and orphan contracts |
 | `mcp` | Serve specs, knowledge, guidance, context, and live liveness over read-only MCP |
 | `contract` | Render the Task Contract view |
 | `plan` | Generate plan context: Contract + Codebase scan + Task Sketch |

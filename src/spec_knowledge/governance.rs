@@ -231,7 +231,7 @@ pub fn lint_corpus(docs: &[KnowledgeDoc]) -> Vec<LintDiagnostic> {
                 {
                     let back_linked = target
                         .section("Source Trace")
-                        .is_some_and(|s| s.body.to_ascii_uppercase().contains(&d.meta.id));
+                        .is_some_and(|section| section_references_id(&section.body, &d.meta.id));
                     if !back_linked {
                         out.push(diag(
                             "produces-link-integrity",
@@ -248,6 +248,11 @@ pub fn lint_corpus(docs: &[KnowledgeDoc]) -> Vec<LintDiagnostic> {
     }
 
     out
+}
+
+fn section_references_id(body: &str, id: &str) -> bool {
+    body.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
+        .any(|token| token.eq_ignore_ascii_case(id))
 }
 
 /// Scan a doc's section bodies for `LETTERS-DIGITS` id tokens (e.g. ADR-001),
@@ -381,6 +386,24 @@ mod tests {
         assert!(
             !out.iter().any(|d| d.rule == "produces-link-integrity"),
             "backlinked decision must not warn"
+        );
+    }
+
+    #[test]
+    fn test_produces_link_integrity_requires_exact_backlink_id() {
+        let prop = parse(
+            "---\nkind: proposal\nid: LEP-001\nstatus: accepted\nliveness: n/a\n---\n## Context\nc\n## Decision\nd\n## Consequences\ng/b\n## Produces: ADR-007\n",
+            "lep-001.md",
+        );
+        let dec = parse(
+            "---\nkind: decision\nid: ADR-007\nstatus: accepted\n---\n## Context\nc\n## Decision\nd\n## Consequences\ng/b\n## Source Trace\n- proposal: LEP-0010\n",
+            "adr-007.md",
+        );
+        let out = lint_corpus(&[prop, dec]);
+        assert!(
+            out.iter()
+                .any(|diagnostic| diagnostic.rule == "produces-link-integrity"),
+            "LEP-0010 must not satisfy the exact LEP-001 backlink"
         );
     }
 

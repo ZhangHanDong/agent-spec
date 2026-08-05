@@ -263,6 +263,7 @@ fn format_verification_text(report: &VerificationReport) -> String {
                     model,
                     confidence,
                     reasoning,
+                    ..
                 } => {
                     out.push_str(&format!(
                         "    > ai '{model}': confidence={confidence:.2}, reasoning={reasoning}\n"
@@ -798,6 +799,7 @@ mod tests {
                     model: "stub".into(),
                     confidence: 0.0,
                     reasoning: "ai verifier stub enabled".into(),
+                    human_judgment: None,
                 }],
                 duration_ms: 0,
                 provenance: None,

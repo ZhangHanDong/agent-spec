@@ -24,6 +24,45 @@ pub enum EvidenceProvenance {
     Inferential,
 }
 
+/// Who settled a verdict, recorded only as a class rather than an identity.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum JudgmentSource {
+    Human,
+    Model,
+}
+
+/// A non-mechanical judgment bound to the evidence available before it was
+/// applied. The core deliberately records no approver identity.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HumanJudgment {
+    pub source: JudgmentSource,
+    pub verdict: Verdict,
+    pub reasoning: String,
+    pub scenario_id: String,
+    pub evidence_digest: String,
+}
+
+impl HumanJudgment {
+    pub fn new(
+        source: JudgmentSource,
+        verdict: Verdict,
+        reasoning: impl Into<String>,
+        scenario_id: impl Into<String>,
+        evidence: &[String],
+    ) -> Self {
+        Self {
+            source,
+            verdict,
+            reasoning: reasoning.into(),
+            scenario_id: scenario_id.into(),
+            evidence_digest: blake3::hash(evidence.join("\n").as_bytes())
+                .to_hex()
+                .to_string(),
+        }
+    }
+}
+
 /// Result of verifying a single scenario.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScenarioResult {
@@ -72,6 +111,12 @@ pub enum Evidence {
         model: String,
         confidence: f64,
         reasoning: String,
+        /// Present only when an external caller supplied the verdict. Keeping
+        /// this inside the evidence item lets the resolved report carry the
+        /// judgment into the requirement trace writer without changing the
+        /// legacy `ScenarioResult` shape.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        human_judgment: Option<HumanJudgment>,
     },
     PatternMatch {
         pattern: String,
@@ -118,7 +163,7 @@ pub struct AiRequest {
 }
 
 /// Structured response returned by an AI verifier backend.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AiDecision {
     pub model: String,
     pub confidence: f64,

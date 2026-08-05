@@ -91,6 +91,7 @@ impl Verifier for AiVerifier {
                     model: decision.model,
                     confidence: decision.confidence,
                     reasoning: decision.reasoning,
+                    human_judgment: None,
                 }],
                 duration_ms: 0,
                 provenance: None,
@@ -311,6 +312,7 @@ mod tests {
                 model,
                 confidence,
                 reasoning,
+                ..
             }) if model == "fake" && (*confidence - 0.42).abs() < f64::EPSILON && reasoning == "custom backend response"
         ));
     }

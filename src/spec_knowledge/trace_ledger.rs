@@ -1,4 +1,4 @@
-use crate::spec_core::{Evidence, Verdict, VerificationReport};
+use crate::spec_core::{Evidence, HumanJudgment, JudgmentSource, Verdict, VerificationReport};
 use crate::spec_knowledge::{
     AffectedExecutionBundle, IntentImpactGap, IntentImpactReport, QualityOutcome, RequirementPlan,
     WorktreeManifest,
@@ -134,54 +134,9 @@ pub struct RequirementTraceEvidence {
     pub summary: String,
 }
 
-/// Who settled a verdict, as a *class* — never an identity. ADR-001 forbids
-/// the core from carrying `actor`/`authority`/`approval`/`policy`, because a
-/// CLI cannot prove who approved anything. Recording the class keeps the fact
-/// "a human decided this" auditable while leaving "which human" to external
-/// systems, which bind it by digest in their own stores.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum JudgmentSource {
-    Human,
-    Model,
-}
-
-/// A judgment the machine could not make, recorded as first-class evidence
-/// (REQ-HUMAN-JUDGMENT-PROVENANCE). Carries what was decided and the digest of
-/// the evidence it was decided on — never who decided it.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct HumanJudgment {
-    pub source: JudgmentSource,
-    pub verdict: Verdict,
-    pub reasoning: String,
-    pub scenario_id: String,
-    /// Digest of the evidence this judgment was made on. External systems
-    /// bind an approver to this value in their own store.
-    pub evidence_digest: String,
-}
-
 /// Field names the core must never carry (ADR-001). Checked mechanically so
 /// identity cannot creep in as the implementation evolves.
 pub const FORBIDDEN_IDENTITY_FIELDS: [&str; 4] = ["actor", "authority", "approval", "policy"];
-
-impl HumanJudgment {
-    /// Build a judgment, digesting the evidence it rests on.
-    pub fn new(
-        source: JudgmentSource,
-        verdict: Verdict,
-        reasoning: impl Into<String>,
-        scenario_id: impl Into<String>,
-        evidence: &[String],
-    ) -> Self {
-        Self {
-            source,
-            verdict,
-            reasoning: reasoning.into(),
-            scenario_id: scenario_id.into(),
-            evidence_digest: crate::spec_knowledge::blake3_hex(evidence.join("\n").as_bytes()),
-        }
-    }
-}
 
 /// Scan a serialized record for forbidden identity keys, at any depth.
 /// Returns each offending field name so the caller can name it.
@@ -237,6 +192,7 @@ impl RequirementTraceRecord {
             .find(|result| result.scenario_name == input.scenario_name)?;
         let mut code_targets = Vec::new();
         let mut evidence = Vec::new();
+        let mut human_judgment = None;
 
         code_targets.extend(
             input
@@ -248,6 +204,13 @@ impl RequirementTraceRecord {
         for item in &result.evidence {
             collect_code_targets(item, &mut code_targets);
             evidence.push(trace_evidence_summary(item));
+            if let Evidence::AiAnalysis {
+                human_judgment: Some(judgment),
+                ..
+            } = item
+            {
+                human_judgment = Some(judgment.clone());
+            }
         }
         code_targets.sort();
         code_targets.dedup();
@@ -268,7 +231,7 @@ impl RequirementTraceRecord {
             branch: input.branch,
             vcs: input.vcs,
             wiki_articles: Vec::new(),
-            human_judgment: None,
+            human_judgment,
             timestamp: input.timestamp,
         })
     }
@@ -426,6 +389,19 @@ pub fn write_requirement_trace_ledger_to_dir(
     trace_dir: &Path,
     ledger: &RequirementTraceLedger,
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    for record in &ledger.records {
+        if let Some(judgment) = &record.human_judgment {
+            let value = serde_json::to_value(judgment)?;
+            let forbidden = forbidden_identity_fields(&value);
+            if !forbidden.is_empty() {
+                return Err(format!(
+                    "human judgment contains forbidden identity field(s): {}",
+                    forbidden.join(", ")
+                )
+                .into());
+            }
+        }
+    }
     let run_id = ledger
         .records
         .first()
@@ -1447,14 +1423,46 @@ mod tests {
 
     #[test]
     fn test_human_judgment_enters_run_log() {
+        let prior_evidence = ["evidence line one".to_string(), "evidence line two".into()];
         let judgment = HumanJudgment::new(
             JudgmentSource::Human,
             Verdict::Pass,
             "reviewed against the contract",
             "design intent holds",
-            &["evidence line one".to_string(), "evidence line two".into()],
+            &prior_evidence,
         );
-        let record = judged_record(Some(judgment.clone()));
+        let report = VerificationReport::from_results(
+            "Judged".into(),
+            vec![ScenarioResult {
+                scenario_name: "design intent holds".into(),
+                verdict: Verdict::Pass,
+                step_results: Vec::new(),
+                evidence: vec![Evidence::AiAnalysis {
+                    model: "human".into(),
+                    confidence: 1.0,
+                    reasoning: "reviewed against the contract".into(),
+                    human_judgment: Some(judgment.clone()),
+                }],
+                duration_ms: 0,
+                provenance: Some(crate::spec_core::EvidenceProvenance::Inferential),
+            }],
+        );
+        let record = RequirementTraceRecord::from_parts(RequirementTraceRecordInput {
+            run_id: "run-j".into(),
+            timestamp: 7,
+            requirement_id: "REQ-J".into(),
+            requirement_source: PathBuf::from("knowledge/requirements/req-j.md"),
+            work_unit_id: "WU-REQ-J".into(),
+            spec_path: PathBuf::from("specs/task-j.spec.md"),
+            scenario_name: "design intent holds".into(),
+            test_selector: None,
+            report: &report,
+            worktree_path: None,
+            branch: None,
+            vcs: None,
+            code_target_facts: Vec::new(),
+        })
+        .unwrap_or_else(|| panic!("production trace constructor must keep the judgment"));
         let json = serde_json::to_value(&record).unwrap();
         let recorded = json
             .get("human_judgment")

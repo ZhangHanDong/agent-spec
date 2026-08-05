@@ -41,6 +41,7 @@ pub mod worktrees;
 pub mod yaml_export;
 pub mod yaml_frontend;
 
+pub use crate::spec_core::{HumanJudgment, JudgmentSource};
 pub use code_graph::{
     AtlasProvider, CODE_BINDINGS_SCHEMA_ID, CODE_IMPACT_SCHEMA_ID, CodeBindingEntry, CodeBindings,
     CodeGraphProvider, CodeImpactInput, CodeImpactOptions, CodeImpactProvider, CodeTarget,
@@ -95,7 +96,8 @@ pub use quality::{
 pub use questions::{
     ClarificationDiagnostic, ClarificationQuestion, DecisionOption, ENVELOPE_VERSION, MAX_OPTIONS,
     QuestionEnvelope, QuestionKind, build_clarification_questions, build_knowledge_questions,
-    build_verification_questions, collect_clarification_lint_diagnostics, validate_envelope,
+    build_verification_questions, collect_clarification_lint_diagnostics, merge_drafted_options,
+    validate_envelope,
 };
 pub use requirement::{NormativeKeyword, RequirementClause, extract_requirements};
 pub use requirement_graph::{
@@ -121,7 +123,7 @@ pub use test_obligations::{
 pub use trace::{TraceReport, build_trace, format_trace_text, verify_spec_rollup};
 pub use trace_ledger::{
     AffectedQualityOutcome, AffectedRequirementFailure, AffectedRequirementReplay,
-    AffectedTraceRecord, CodeTargetFact, FORBIDDEN_IDENTITY_FIELDS, HumanJudgment, JudgmentSource,
+    AffectedTraceRecord, CodeTargetFact, FORBIDDEN_IDENTITY_FIELDS,
     REQUIREMENT_TRACE_LEDGER_VERSION, RequirementFailureExplanation, RequirementTraceDiagnostic,
     RequirementTraceEvidence, RequirementTraceLedger, RequirementTraceRecord,
     RequirementTraceRecordInput, RequirementTraceRunInput, build_affected_trace_record,

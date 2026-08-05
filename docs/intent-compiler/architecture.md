@@ -111,6 +111,59 @@ agent-spec requirements transition REQ-123 --to rejected
 agent-spec requirements supersede REQ-123 --by REQ-456
 ```
 
+## Pipeline Integrity
+
+Governance status answers whether one requirement may be lowered. Pipeline
+integrity answers whether the layers are actually connected. `lint-knowledge
+--gate` carries the requirement graph and plan diagnostics alongside the
+corpus rules, so a break anywhere in the chain fails one gate rather than
+hiding in a command nobody runs in CI:
+
+| Diagnostic | Break it catches |
+|---|---|
+| `orphan-spec` | A task contract with no `satisfies:` while a requirements corpus exists |
+| `dependency-kind-mismatch` | An `ADR-*`/`LEP-*` id under a requirement's `## Dependencies`, where only `REQ-*` ordering edges belong |
+| `produces-link-integrity` | An accepted proposal whose produced decision does not link back through `## Source Trace` |
+| `dangling-spec-coverage` | A `satisfies:` edge pointing at a requirement that does not exist |
+| `requirement-uncovered` | An accepted, ready requirement with no satisfying contract |
+
+`orphan-spec` phases in by severity rather than as a flag day: existing
+contracts are listed in a shrink-only baseline (`.agent-spec/orphan-baseline.json`),
+and only entries absent from it are reported. The id prefix each layer uses is
+registered in `knowledge/standards/operational/id-registry.md`, and
+`agent-spec knowledge new <kind> <id>` scaffolds against that registry so a
+new artifact starts lint-clean with its single exit already stated.
+
+## Decision Points
+
+Some stages cannot proceed without a human. The compiler stays model-free and
+non-interactive there: it emits a structured question and ingests an answer,
+but never prompts, and never authors the candidates.
+
+| Stage | Surface | Question |
+|---|---|---|
+| Reverse interview | `requirements questions` | Ambiguity raised by a requirement lint |
+| Governance | `knowledge questions <id>` | A proposal's unresolved questions; a decision's alternatives |
+| Acceptance | `verify --emit-questions` | Scenarios left `skip`/`uncertain`/`pending_review`, with evidence |
+
+All three emit the same envelope — `envelope_version`, and per question a
+`kind`, `prompt`, `source`, and bounded `options` — so a renderer needs no
+stage-specific parsing. Candidates are drafted by the calling agent from source
+text and validated by the CLI (at most four; each needs a label and a
+one-sentence description). An empty list is a valid, honest state: nothing
+could be grounded, so the question stays free-form. The one exception is the
+verdict vocabulary in acceptance questions, which is a closed enum rather than
+an inference.
+
+A human judgment merged back through `resolve-ai` becomes first-class evidence
+in the trace ledger: verdict, reasoning, scenario, and the digest of the
+evidence it rested on, tagged with the judgment *class* (`source: human`).
+Consistent with the orchestrator-neutral core, no `actor`, `authority`,
+`approval`, or `policy` field is ever recorded — a CLI cannot attest identity,
+so external systems bind approvers to the reported digest in their own stores.
+A mechanical check rejects those field names at any depth, and runs with no
+human judgment serialize exactly as they did before the field existed.
+
 ## Code Grounding And Intent-Code Linking
 
 Code grounding belongs after work-unit lowering and before the final Task

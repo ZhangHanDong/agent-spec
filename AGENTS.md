@@ -35,6 +35,9 @@ agent-spec:   Write Contract (60%) → Agent codes (0%) → Read explain (30%) �
 | `agent-spec requirements status <ID>` | Three-axis report: governance / execution / liveness with spec evidence | "Where is REQ-X?" in one command |
 | `agent-spec requirements export --out requirements.yaml` | YAML projection of confirmed requirements (round-trip fixpoint, `--check` drift gate) | Interop with YAML-world tooling; derived, never source of truth |
 | `agent-spec requirements supersede <ID> --by <NEW>` | Atomic supersession pair | Replacing an accepted requirement |
+| `agent-spec knowledge new <kind> <id>` | Scaffold a lint-clean proposal / decision / requirement | Starting any governance artifact — cheaper than hand-writing frontmatter |
+| `agent-spec knowledge questions <id>` | Emit an artifact's open decision points as structured choices | Before asking the human anything about a proposal or decision |
+| `agent-spec verify <spec> --emit-questions` | Emit judgment questions for scenarios the machine could not settle | When verification leaves skip/uncertain scenarios needing a human call |
 | `agent-spec wiki status` | Check stale code live wiki articles | Before broad source reading |
 | `agent-spec wiki query <text>` | Search tracked live wiki articles | Before opening many source files |
 | `agent-spec wiki check` | Live wiki lint + worktree status gate | Pre-commit / CI for tracked wiki |
@@ -167,6 +170,53 @@ agent-spec requirements draft-specs --knowledge knowledge --out specs/generated
 Imported candidates carry `status: proposed`; a human accepts them with
 `requirements transition <ID> --to accepted` before work units become ready —
 missing status fails the governance gate.
+
+### Walking the pipeline forward
+
+Governance flows `proposal → decision → requirement → contract`, one exit per
+layer, with `knowledge/standards/operational/id-registry.md` as the authority
+for which prefix lives where. Scaffold each artifact instead of hand-writing
+frontmatter:
+
+```bash
+agent-spec knowledge new proposal LEP-002 --title "Some Debate"
+agent-spec knowledge new decision ADR-003 --title "Some Ruling"
+agent-spec knowledge new requirement REQ-SOME-THING --title "Some Thing"
+```
+
+Do NOT write a task contract without `satisfies: [REQ-*]` when the workspace
+has a requirements corpus: `lint-knowledge --gate` reports it as `orphan-spec`,
+alongside `dependency-kind-mismatch` (an `ADR-*` id under a requirement's
+`## Dependencies` belongs in `## Source Trace`) and `produces-link-integrity`
+(an accepted proposal's produced decision must link back). The gate also
+carries the requirement graph and plan diagnostics, so a dangling `satisfies:`
+edge fails there rather than silently in a separate command.
+
+### Decision points
+
+When something needs a human, emit it as a structured question rather than
+improvising the phrasing:
+
+```bash
+agent-spec requirements questions --format json          # ambiguity a lint found
+agent-spec knowledge questions LEP-002 --format json     # unresolved questions, alternatives
+agent-spec verify <spec> --code . --emit-questions --format json
+```
+
+Each question carries `kind`, `prompt`, `source`, and `options`; the payload is
+wrapped in an envelope with `envelope_version`. Draft candidates yourself from
+the source text and hand them back with `requirements questions --options
+<file>` — the CLI validates shape (at most four, each with a label and a
+one-sentence description) and never authors a candidate. An empty `options`
+list is correct when nothing can be grounded; the free-form answer path always
+remains. Do not present a candidate as the answer: only a human-confirmed
+choice changes KLL truth.
+
+Answers to `--emit-questions` convert directly into the decisions JSON that
+`resolve-ai` consumes. A human-settled scenario records the judgment's class
+(`source: human`), verdict, reasoning, and an evidence digest — never an
+identity, per ADR-001. Never add `actor`, `authority`, `approval`, or `policy`
+fields to any core output; a mechanical check rejects them.
 
 `requirements import` consumes explicit `<!-- agent-spec:requirement ... -->`
 Markdown blocks, or the constrained YAML dialect when the source ends in

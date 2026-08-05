@@ -4,6 +4,7 @@ use crate::spec_knowledge::{
     KnowledgeKind, RequirementPlan, collect_knowledge_checked, lint_requirement,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::path::Path;
 
 /// Envelope schema version carried by every questions payload. Bumped when the
@@ -39,7 +40,7 @@ pub struct DecisionOption {
     pub recommended: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ClarificationQuestion {
     pub id: String,
     pub target_id: String,
@@ -59,6 +60,14 @@ pub struct ClarificationQuestion {
     /// verification stage, which has evidence to show; empty elsewhere.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub evidence: Vec<String>,
+    /// Exact scenario identity for verification questions. Keeping this
+    /// separate from the human-readable prompt avoids lossy slug parsing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scenario_name: Option<String>,
+    /// A harness may fill this field and pass the answered envelope directly
+    /// to `resolve-ai`; the nested field names are exactly `AiDecision`'s.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<crate::spec_core::AiDecision>,
 }
 
 /// Extract decision-point questions from a knowledge document: a proposal's
@@ -83,6 +92,8 @@ pub fn build_knowledge_questions(doc: &KnowledgeDoc) -> Vec<ClarificationQuestio
                 multi_select: false,
                 options: Vec::new(),
                 evidence: Vec::new(),
+                scenario_name: None,
+                answer: None,
             });
         }
     }
@@ -118,6 +129,8 @@ pub fn build_knowledge_questions(doc: &KnowledgeDoc) -> Vec<ClarificationQuestio
                 multi_select: false,
                 options,
                 evidence: Vec::new(),
+                scenario_name: None,
+                answer: None,
             });
         }
     }
@@ -187,7 +200,7 @@ pub fn build_verification_questions(
     use crate::spec_core::Verdict;
 
     let mut out = Vec::new();
-    for result in results {
+    for (index, result) in results.iter().enumerate() {
         let unsettled = match result.verdict {
             Verdict::Skip => "skip",
             Verdict::Uncertain => "uncertain",
@@ -202,7 +215,7 @@ pub fn build_verification_questions(
             })
             .collect::<Vec<_>>();
         out.push(ClarificationQuestion {
-            id: format!("Q-VERIFY-{}", slug(&result.scenario_name)),
+            id: verification_question_id(index, &result.scenario_name),
             target_id: spec_name.to_string(),
             diagnostic_code: unsettled.into(),
             blocking: true,
@@ -215,6 +228,8 @@ pub fn build_verification_questions(
             multi_select: false,
             options: verdict_options(),
             evidence,
+            scenario_name: Some(result.scenario_name.clone()),
+            answer: None,
         });
     }
     out
@@ -256,9 +271,20 @@ fn slug(text: &str) -> String {
     out.trim_matches('-').chars().take(48).collect()
 }
 
+fn verification_question_id(index: usize, scenario_name: &str) -> String {
+    let readable = slug(scenario_name);
+    let digest = blake3::hash(scenario_name.as_bytes()).to_hex().to_string();
+    let digest = &digest[..12];
+    if readable.is_empty() {
+        format!("Q-VERIFY-{}-{digest}", index + 1)
+    } else {
+        format!("Q-VERIFY-{}-{readable}-{digest}", index + 1)
+    }
+}
+
 /// The questions payload as emitted and ingested: a versioned envelope around
 /// the question list.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct QuestionEnvelope {
     pub envelope_version: u32,
     pub questions: Vec<ClarificationQuestion>,
@@ -278,7 +304,15 @@ impl QuestionEnvelope {
 /// question id and the offending field. An empty option list is valid.
 pub fn validate_envelope(questions: &[ClarificationQuestion]) -> Vec<LintDiagnostic> {
     let mut out = Vec::new();
+    let mut ids = BTreeSet::new();
     for question in questions {
+        if !ids.insert(question.id.as_str()) {
+            out.push(envelope_diag(
+                "envelope-duplicate-question-id",
+                format!("question id {} appears more than once", question.id),
+                "give every question a unique stable id",
+            ));
+        }
         if question.options.len() > MAX_OPTIONS {
             out.push(envelope_diag(
                 "envelope-too-many-options",
@@ -316,6 +350,50 @@ pub fn validate_envelope(questions: &[ClarificationQuestion]) -> Vec<LintDiagnos
         }
     }
     out
+}
+
+/// Merge agent-drafted options atomically. Shape, identity, and stage metadata
+/// are all checked before the first target question is changed.
+pub fn merge_drafted_options(
+    questions: &mut [ClarificationQuestion],
+    drafted: &[ClarificationQuestion],
+) -> Vec<LintDiagnostic> {
+    let mut diagnostics = validate_envelope(drafted);
+    for supplied in drafted {
+        match questions.iter().find(|question| question.id == supplied.id) {
+            None => diagnostics.push(envelope_diag(
+                "envelope-unknown-question-id",
+                format!("supplied options name unknown question id {}", supplied.id),
+                "regenerate the questions envelope and draft options against its current ids",
+            )),
+            Some(target)
+                if target.target_id != supplied.target_id || target.kind != supplied.kind =>
+            {
+                diagnostics.push(envelope_diag(
+                    "envelope-question-metadata-mismatch",
+                    format!(
+                        "question {} does not match target_id/kind from the current envelope",
+                        supplied.id
+                    ),
+                    "copy target_id and kind from the current emitted question",
+                ));
+            }
+            Some(_) => {}
+        }
+    }
+    if !diagnostics.is_empty() {
+        return diagnostics;
+    }
+    for supplied in drafted {
+        if let Some(target) = questions
+            .iter_mut()
+            .find(|question| question.id == supplied.id)
+        {
+            target.options.clone_from(&supplied.options);
+            target.multi_select = supplied.multi_select;
+        }
+    }
+    diagnostics
 }
 
 fn envelope_diag(rule: &str, message: String, suggestion: &str) -> LintDiagnostic {
@@ -408,6 +486,8 @@ pub fn build_clarification_questions(
                 multi_select: false,
                 options: Vec::new(),
                 evidence: Vec::new(),
+                scenario_name: None,
+                answer: None,
             });
         }
     }
@@ -424,6 +504,8 @@ pub fn build_clarification_questions(
             multi_select: false,
             options: Vec::new(),
             evidence: Vec::new(),
+            scenario_name: None,
+            answer: None,
         });
     }
 
@@ -470,6 +552,8 @@ mod tests {
             multi_select: false,
             options,
             evidence: Vec::new(),
+            scenario_name: None,
+            answer: None,
         }
     }
 
@@ -605,6 +689,7 @@ mod tests {
                 model: "stub".into(),
                 confidence: 0.4,
                 reasoning: "no mechanical binding".into(),
+                human_judgment: None,
             }],
         )];
         let questions =
@@ -651,6 +736,27 @@ mod tests {
             "only the unsettled scenario is asked about"
         );
         assert!(questions[0].prompt.contains("unsettled"));
+    }
+
+    #[test]
+    fn test_verify_question_ids_are_unique_for_non_ascii_scenarios() {
+        let results = vec![
+            scenario("信封携带阶段", crate::spec_core::Verdict::Skip, Vec::new()),
+            scenario("超过四项候选", crate::spec_core::Verdict::Skip, Vec::new()),
+            scenario("空候选表合法", crate::spec_core::Verdict::Skip, Vec::new()),
+        ];
+        let questions = build_verification_questions("中文合约", "specs/task.spec.md", &results);
+        let ids = questions
+            .iter()
+            .map(|question| question.id.as_str())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(ids.len(), results.len(), "question ids must be unique");
+        assert_eq!(
+            questions[0].scenario_name.as_deref(),
+            Some("信封携带阶段"),
+            "the exact scenario identity is structured, not parsed from the id"
+        );
+        assert!(validate_envelope(&questions).is_empty());
     }
 
     #[test]
@@ -724,6 +830,37 @@ mod tests {
             "names the field: {}",
             hit.message
         );
+    }
+
+    #[test]
+    fn test_envelope_rejects_duplicate_question_ids() {
+        let q = question(QuestionKind::Requirements, Vec::new());
+        let diagnostics = validate_envelope(&[q.clone(), q]);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.rule == "envelope-duplicate-question-id"),
+            "duplicate ids must fail before id-based merging: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn test_drafted_options_reject_unknown_id_atomically() {
+        let mut current = vec![question(QuestionKind::Requirements, Vec::new())];
+        let before = current.clone();
+        let mut unknown = question(
+            QuestionKind::Requirements,
+            vec![option("Split", "Split the requirement")],
+        );
+        unknown.id = "Q-REQ-STALE".into();
+        let diagnostics = merge_drafted_options(&mut current, &[unknown]);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.rule == "envelope-unknown-question-id"),
+            "a stale id must be named: {diagnostics:?}"
+        );
+        assert_eq!(current, before, "no option is merged after any violation");
     }
 
     #[test]

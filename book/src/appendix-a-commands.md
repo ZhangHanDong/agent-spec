@@ -49,8 +49,12 @@
 | 命令 | 用途 |
 |------|------|
 | `init --workspace` | 铺设 knowledge/ 工作区（幂等）|
+| `knowledge new <kind> <id> [--title]` | 脚手架一份 lint 干净的提案／决策／需求 |
+| `knowledge questions <id>` | 发出该文档留下的决策点（未决问题、备选方案）|
 | `trace <id> --gate` | 知识 → 合同 → liveness |
-| `lint-knowledge --gate [--format sarif]` | 语料治理 lint |
+| `lint-knowledge --gate [--format sarif]` | 语料治理 lint ＋ 流水线完整性 |
+| `verify <spec> --emit-questions` | 发出机器判不了的场景，供人裁决 |
+| `requirements questions [--options <file>]` | 澄清问题；回填 agent 起草的候选并校验 |
 | `atlas build/tree/query/refs/impls/check [--frozen]` | 代码图家族 |
 | `wiki init/seed/status/query/inspect/inventory/index/project-map/inspect-project/lint/check/meta` | live wiki 家族 |
 | `mcp` | 只读 MCP server（11 工具）|
