@@ -239,5 +239,5 @@ Accepted 2026-08-04. All four unresolved questions above were put to the human
 as structured multiple-choice — the interaction this proposal argues for — and
 answered: agent-drafted options, agent write-back with CLI validation,
 judgments as first-class provenance, and three stage-local surfaces. The
-produced decision records those rulings, including the orchestrator-neutrality
-tension the third one raises.
+produced decision records those rulings, including the tension the third one
+raises with ADR-001's orchestrator-neutral boundary.

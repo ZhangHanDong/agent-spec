@@ -75,6 +75,14 @@ All notable changes to `agent-spec` are documented here. Format follows
   `produces-link-integrity` (Warning) requires an accepted proposal's produced
   decision to back-link the proposal, naming the missing direction.
 
+### Fixed
+
+- `## Produces` no longer reads prose as a production claim. Ids were
+  collected by scanning the whole section, so a sentence citing another
+  decision for context ("the tension this raises with ADR-001") became a
+  phantom produced edge and tripped `produces-link-integrity`. Only the
+  inline heading and the head of each list item count now.
+
 ### Changed
 
 - All five bundled skills carry a `> **Version:** … **Tracks:** agent-spec

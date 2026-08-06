@@ -36,6 +36,8 @@ tags: [knowledge, lint, gate, satisfies, orphan]
 
 [REQ-PIPELINE-INTEGRITY-GATE-PRODUCES] status 为 accepted 的 proposal MUST 通过 `produces-link-integrity` 校验：`## Produces` 目标存在，且目标 decision 的 `## Source Trace` 回链该 proposal id，任一方向缺失均为 Warning 并指名缺失方向。
 
+[REQ-PIPELINE-INTEGRITY-GATE-PRODUCES-PARSE] `## Produces` 的产出物 MUST 只取自内联标题与列表项开头的 id；节内散文（含列表项 id 之后的说明文字）中引用的其他 id MUST NOT 被当作产出物。
+
 ## Scenarios
 
 Scenario: 门禁包含图诊断
@@ -67,6 +69,11 @@ Scenario: 断链的 Produces 被指名方向
   Given 一份 accepted proposal 的 Produces 指向存在但未回链的 decision
   When lint-knowledge 运行
   Then 输出 produces-link-integrity Warning 并指名缺失的回链方向
+
+Scenario: Produces 段的散文引用不算产出
+  Given 一份 Produces 段在说明文字里引用了另一个决策 id 的提案
+  When 解析该提案的产出物
+  Then 只有内联标题与列表项开头的 id 被计为产出
 
 ## Dependencies
 

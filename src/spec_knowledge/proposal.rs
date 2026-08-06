@@ -10,25 +10,50 @@ const REQUIRED: [&str; 3] = ["Context", "Decision", "Consequences"];
 
 /// Ids a proposal declares it `## Produces` (heading `## Produces` with a body
 /// list, or the inline form `## Produces: ADR-001`). UPPERCASE, de-duplicated.
+///
+/// Only a list item's leading id is a claim of production. Prose in the
+/// section — including prose inside a list item after its id — may cite other
+/// artifacts for context without claiming to have produced them; scanning it
+/// would turn "the ADR-001 tension this raises" into a phantom produced edge.
 pub fn produces(doc: &KnowledgeDoc) -> Vec<String> {
     let mut out = Vec::new();
     for section in &doc.sections {
         if !section.heading.to_ascii_lowercase().starts_with("produces") {
             continue;
         }
-        // Scan both the heading (inline form) and the body (list form).
-        for src in [section.heading.as_str(), section.body.as_str()] {
-            for tok in src.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-')) {
-                if is_id_token(tok) {
-                    let up = tok.to_ascii_uppercase();
-                    if !out.contains(&up) {
-                        out.push(up);
-                    }
-                }
-            }
+        // Inline form: the heading itself names what is produced.
+        collect_ids(&mut out, section.heading.as_str(), usize::MAX);
+        // List form: one produced id per item, taken from its head.
+        for line in section.body.lines() {
+            let trimmed = line.trim();
+            let Some(item) = trimmed
+                .strip_prefix("- ")
+                .or_else(|| trimmed.strip_prefix("* "))
+            else {
+                continue;
+            };
+            collect_ids(&mut out, item, 1);
         }
     }
     out
+}
+
+/// Append up to `limit` id tokens from `src`, preserving order and skipping
+/// duplicates already in `out`.
+fn collect_ids(out: &mut Vec<String>, src: &str, limit: usize) {
+    let mut taken = 0;
+    for tok in src.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-')) {
+        if taken >= limit {
+            break;
+        }
+        if is_id_token(tok) {
+            let up = tok.to_ascii_uppercase();
+            if !out.contains(&up) {
+                out.push(up);
+            }
+            taken += 1;
+        }
+    }
 }
 
 fn is_id_token(t: &str) -> bool {
@@ -109,6 +134,29 @@ mod tests {
         assert_eq!(
             produces(&list),
             vec!["ADR-008".to_string(), "REQ-009".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_produces_ignores_prose_citations() {
+        // The section explains the produced decision and cites another for
+        // context. Only the produced one is an edge.
+        let inline = parse(
+            "---\nkind: proposal\nid: LEP-001\nliveness: n/a\n---\n## Context\nc\n## Decision\nd\n## Consequences\ng/b\n## Produces: ADR-007\n\nAccepted today. The produced decision also records the ADR-001 tension it\nraises, and supersedes nothing.\n",
+        );
+        assert_eq!(
+            produces(&inline),
+            vec!["ADR-007".to_string()],
+            "prose citing ADR-001 must not become a produced edge"
+        );
+
+        let list = parse(
+            "---\nkind: proposal\nid: LEP-002\nliveness: n/a\n---\n## Context\nc\n## Decision\nd\n## Consequences\ng/b\n## Produces\n\n- ADR-008 — ratifies the registry, revisiting the ADR-001 boundary.\n- REQ-009 governs the gate.\n\nBoth land together; see ADR-002 for the precedent.\n",
+        );
+        assert_eq!(
+            produces(&list),
+            vec!["ADR-008".to_string(), "REQ-009".to_string()],
+            "only each item's leading id counts, and trailing prose is not scanned"
         );
     }
 

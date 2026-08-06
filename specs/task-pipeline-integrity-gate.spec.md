@@ -30,6 +30,9 @@ risk: A
 - `produces-link-integrity`：仅对 status accepted 的 proposal 生效；目标
   不存在沿用既有 `produces-dangling`，目标存在但 decision `## Source Trace`
   未含该 proposal id 时新发 Warning 并指名缺失方向。
+- `produces()` 只从内联标题与列表项开头取 id：节内散文可以引用别的决策做
+  背景说明而不被误判为产出。整段扫描会把「本决策还记录了 ADR-001 引出的
+  张力」这句话变成一条不存在的产出边。
 
 ## Boundaries
 
@@ -87,6 +90,12 @@ risk: A
   假设 accepted proposal 的 Produces 指向存在但未回链的 decision
   当 lint-knowledge 运行
   那么 输出 produces-link-integrity Warning 且指名缺失的回链方向
+
+场景: Produces 段的散文引用不算产出
+  测试: test_produces_ignores_prose_citations
+  假设 一份 Produces 段在说明文字里引用了另一个决策 id 的提案
+  当 解析该提案的产出物
+  那么 只有内联标题与列表项开头的 id 被计为产出
 
 场景: 需求语料为空时不误报
   测试: test_orphan_spec_silent_without_requirements
