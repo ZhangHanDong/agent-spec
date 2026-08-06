@@ -6,6 +6,25 @@ All notable changes to `agent-spec` are documented here. Format follows
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-08-07
+
+The **forward-walking pipeline** release: the LEP → ADR → REQ → spec walk stops
+being a convention documented in a design note and becomes the path the
+toolchain scaffolds, checks, and asks questions along. Two governance chains
+were authored by walking that pipeline themselves — every requirement here has
+a contract, and every contract's scenarios run real tests.
+
+### BREAKING
+
+- `requirements questions --format json` now emits an object
+  (`{"envelope_version": 1, "questions": [...]}`) where it previously emitted a
+  bare array. A consumer that indexes the top level as a list must read
+  `.questions` instead. The version field exists so an unmigrated reader fails
+  loudly rather than silently misreading. This surface is listed in the 1.0
+  command promise; the change ships in a minor because the `options` field it
+  restructures had never carried a non-empty value in any release, so no
+  consumer could have depended on its contents.
+
 ### Added
 
 - Structured human decision points (LEP-002 → ADR-003 → three requirements →
