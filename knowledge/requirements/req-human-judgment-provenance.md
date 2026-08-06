@@ -23,6 +23,8 @@ JSON 进入报告后就消失了：审计时看不出哪些通过是人裁决的
 
 [REQ-HUMAN-JUDGMENT-PROVENANCE-CLASS] 判定记录 MUST 以 `source: human` 一类的类别字段标明其来源类别，用以与机器判定区分。
 
+[REQ-HUMAN-JUDGMENT-PROVENANCE-CLASS-RENDERED] `replay` 与 `explain-failure` 的输出 MUST 按记录的来源类别区分措辞，模型判定 MUST NOT 被呈现为人的判定。
+
 [REQ-HUMAN-JUDGMENT-PROVENANCE-NO-IDENTITY] 判定记录 MUST NOT 包含 `actor`、`authority`、`approval` 或 `policy` 字段，亦 MUST NOT 以其他字段名承载审批者身份。
 
 [REQ-HUMAN-JUDGMENT-PROVENANCE-DIGEST-BINDING] 判定记录 MUST 携带足以让外部系统按 digest 绑定审批人的稳定标识，绑定关系本身 MUST 留在外部存储。
@@ -57,6 +59,11 @@ Scenario: 无人工判定时输出不变
   Given 一份全部由机器判定的验证运行
   When run log 写入并被 replay 读取
   Then 输出不含任何人工判定标记
+
+Scenario: 模型判定不被呈现为人的判定
+  Given 一条来源类别为 model 的判定记录
+  When replay 与 explain-failure 渲染该记录
+  Then 两者均标注为模型判定且不含人工判定措辞
 
 ## Dependencies
 

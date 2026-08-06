@@ -22,7 +22,8 @@ explain-failure 能显示某条通过是否依赖人判。同时守住 ADR-001 �
 - 被禁字段检查为独立函数，对判定记录的序列化结果做键名扫描，命中
   `actor`/`authority`/`approval`/`policy` 即失败并指名该键。
 - `requirements replay` 与 `requirements explain-failure` 在输出中以固定
-  标记显示该通过依赖人工判定；无人工判定时输出逐字节不变。
+  标记显示该通过依赖人工判定；无人工判定时输出逐字节不变。措辞按 `source`
+  区分——模型判定渲染为 model judgment，不得冒充人的判定。
 
 ## Boundaries
 
@@ -88,3 +89,9 @@ explain-failure 能显示某条通过是否依赖人判。同时守住 ADR-001 �
   假设 一份全部由机器判定的验证运行
   当 run log 写入并被 replay 读取
   那么 输出不含任何人工判定标记
+
+场景: 模型判定不被呈现为人的判定
+  测试: test_replay_and_explain_label_model_judgment_as_model
+  假设 一条来源类别为 model 的判定记录
+  当 replay 与 explain-failure 渲染该记录
+  那么 两者均标注为模型判定且不含人工判定措辞

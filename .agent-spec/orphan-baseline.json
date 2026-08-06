@@ -1,6 +1,5 @@
 {
   "specs": [
-    "specs/project.spec.md",
     "specs/task-add-ai-verifier-skeleton.spec.md",
     "specs/task-add-behavior-completeness-linters.spec.md",
     "specs/task-audit-v1.spec.md",

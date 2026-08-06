@@ -5,7 +5,7 @@ use crate::spec_knowledge::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Envelope schema version carried by every questions payload. Bumped when the
 /// question or option shape changes so an old reader fails loudly instead of
@@ -189,7 +189,8 @@ fn states_recommendation(item: &str) -> bool {
 /// Turn scenarios the machine could not settle into judgment questions — the
 /// inverse of `resolve-ai`, emitting what it consumes. Mechanically decided
 /// pass/fail scenarios never appear: a proven verdict is not up for a vote,
-/// and `resolve-ai` correspondingly only applies decisions to skip scenarios.
+/// and `resolve-ai` never applies an answer to either state. Legacy model
+/// decisions retain their narrower skip-only behavior.
 /// The verdict vocabulary is the one place the CLI supplies candidates — it is
 /// a closed enum, not an inference from source text.
 pub fn build_verification_questions(
@@ -210,9 +211,7 @@ pub fn build_verification_questions(
         let evidence = result
             .evidence
             .iter()
-            .map(|e| {
-                serde_json::to_string(e).unwrap_or_else(|_| "<unserializable evidence>".into())
-            })
+            .map(serialize_verification_evidence)
             .collect::<Vec<_>>();
         out.push(ClarificationQuestion {
             id: verification_question_id(index, &result.scenario_name),
@@ -233,6 +232,65 @@ pub fn build_verification_questions(
         });
     }
     out
+}
+
+fn serialize_verification_evidence(evidence: &crate::spec_core::Evidence) -> String {
+    let stable = match evidence {
+        crate::spec_core::Evidence::TestOutput {
+            test_name,
+            stdout,
+            passed,
+            package,
+            level,
+            test_double,
+            targets,
+        } => crate::spec_core::Evidence::TestOutput {
+            test_name: test_name.clone(),
+            stdout: normalize_cargo_test_output(stdout),
+            passed: *passed,
+            package: package.clone(),
+            level: level.clone(),
+            test_double: test_double.clone(),
+            targets: targets.clone(),
+        },
+        other => other.clone(),
+    };
+    serde_json::to_string(&stable).unwrap_or_else(|_| "<unserializable evidence>".into())
+}
+
+/// Remove Cargo orchestration noise that changes between a cold and warm
+/// rerun while retaining test names, results, warnings, and compiler errors.
+/// Verification answers bind this normalized representation, so cache state
+/// and wall-clock timing cannot make unchanged evidence look stale.
+fn normalize_cargo_test_output(stdout: &str) -> String {
+    let mut normalized = String::new();
+    for segment in stdout.split_inclusive('\n') {
+        let (line, newline) = segment
+            .strip_suffix('\n')
+            .map_or((segment, ""), |line| (line, "\n"));
+        let trimmed = line.trim_start();
+        let orchestration = trimmed.starts_with("Compiling ")
+            || trimmed.starts_with("Finished `")
+            || trimmed.starts_with("Running unittests ")
+            || trimmed.starts_with("Running tests/")
+            || trimmed.starts_with("Running tests\\")
+            || trimmed.starts_with("Running doc-tests ")
+            || trimmed.starts_with("Blocking waiting for file lock");
+        if orchestration {
+            continue;
+        }
+        if trimmed.starts_with("test result:")
+            && let Some(index) = line.find("; finished in ")
+        {
+            normalized.push_str(&line[..index]);
+            normalized.push_str("; finished in <duration>");
+            normalized.push_str(newline);
+            continue;
+        }
+        normalized.push_str(line);
+        normalized.push_str(newline);
+    }
+    normalized
 }
 
 fn verdict_options() -> Vec<DecisionOption> {
@@ -287,15 +345,32 @@ fn verification_question_id(index: usize, scenario_name: &str) -> String {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct QuestionEnvelope {
     pub envelope_version: u32,
+    /// Replay inputs for verification questions. Other question kinds omit it,
+    /// preserving their v1 wire shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_context: Option<VerificationQuestionContext>,
     pub questions: Vec<ClarificationQuestion>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VerificationQuestionContext {
+    pub ai_mode: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub change_paths: Vec<PathBuf>,
 }
 
 impl QuestionEnvelope {
     pub fn new(questions: Vec<ClarificationQuestion>) -> Self {
         Self {
             envelope_version: ENVELOPE_VERSION,
+            verification_context: None,
             questions,
         }
+    }
+
+    pub fn with_verification_context(mut self, context: VerificationQuestionContext) -> Self {
+        self.verification_context = Some(context);
+        self
     }
 }
 
@@ -715,6 +790,47 @@ mod tests {
             "verdict vocabulary as candidates"
         );
         assert!(validate_envelope(&questions).is_empty());
+    }
+
+    #[test]
+    fn test_verification_questions_normalize_cargo_rerun_noise() {
+        fn output(stdout: &str) -> crate::spec_core::Evidence {
+            crate::spec_core::Evidence::TestOutput {
+                test_name: "manual_review".into(),
+                stdout: stdout.into(),
+                passed: true,
+                package: None,
+                level: None,
+                test_double: None,
+                targets: None,
+            }
+        }
+
+        let cold = "   Compiling fixture v0.1.0 (/tmp/fixture)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.65s\n     Running unittests src/lib.rs (target/debug/deps/fixture-a)\n\nrunning 1 test\ntest tests::manual_review ... ok\n\ntest result: ok. 1 passed; 0 failed; finished in 0.01s\n";
+        let warm = "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.12s\n     Running unittests src/lib.rs (target/debug/deps/fixture-b)\n\nrunning 1 test\ntest tests::manual_review ... ok\n\ntest result: ok. 1 passed; 0 failed; finished in 0.00s\n";
+        let first = build_verification_questions(
+            "S",
+            "specs/s.spec.md",
+            &[scenario(
+                "manual review",
+                crate::spec_core::Verdict::PendingReview,
+                vec![output(cold)],
+            )],
+        );
+        let second = build_verification_questions(
+            "S",
+            "specs/s.spec.md",
+            &[scenario(
+                "manual review",
+                crate::spec_core::Verdict::PendingReview,
+                vec![output(warm)],
+            )],
+        );
+
+        assert_eq!(first[0].evidence, second[0].evidence);
+        assert!(first[0].evidence[0].contains("test tests::manual_review ... ok"));
+        assert!(!first[0].evidence[0].contains("Compiling fixture"));
+        assert!(!first[0].evidence[0].contains("0.65s"));
     }
 
     #[test]

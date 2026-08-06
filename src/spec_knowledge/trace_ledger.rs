@@ -1067,8 +1067,11 @@ pub fn format_requirement_replay_text(records: &[RequirementTraceRecord]) -> Str
         ));
         if let Some(judgment) = &record.human_judgment {
             out.push_str(&format!(
-                "human judgment: {:?} verdict={:?} evidence_digest={}\n",
-                judgment.source, judgment.verdict, judgment.evidence_digest
+                "{} judgment: {:?} verdict={:?} evidence_digest={}\n",
+                judgment_source_label(judgment.source),
+                judgment.source,
+                judgment.verdict,
+                judgment.evidence_digest
             ));
         }
     }
@@ -1121,12 +1124,22 @@ pub fn format_requirement_failure_text(explanation: &RequirementFailureExplanati
         }
         if let Some(judgment) = &record.human_judgment {
             out.push_str(&format!(
-                "  human judgment: {:?} verdict={:?} evidence_digest={}\n",
-                judgment.source, judgment.verdict, judgment.evidence_digest
+                "  {} judgment: {:?} verdict={:?} evidence_digest={}\n",
+                judgment_source_label(judgment.source),
+                judgment.source,
+                judgment.verdict,
+                judgment.evidence_digest
             ));
         }
     }
     out
+}
+
+fn judgment_source_label(source: JudgmentSource) -> &'static str {
+    match source {
+        JudgmentSource::Human => "human",
+        JudgmentSource::Model => "model",
+    }
 }
 
 pub fn format_requirement_trace_mermaid(records: &[RequirementTraceRecord]) -> String {
@@ -1607,6 +1620,29 @@ mod tests {
             text.contains("human judgment"),
             "explain-failure marks which scenarios were human-judged: {text}"
         );
+    }
+
+    #[test]
+    fn test_replay_and_explain_label_model_judgment_as_model() {
+        let judged = judged_record(Some(HumanJudgment::new(
+            JudgmentSource::Model,
+            Verdict::Fail,
+            "model review failed",
+            "design intent holds",
+            &["e".to_string()],
+        )));
+        let replay = format_requirement_replay_text(std::slice::from_ref(&judged));
+        assert!(replay.contains("model judgment"), "{replay}");
+        assert!(!replay.contains("human judgment"), "{replay}");
+
+        let explanation = RequirementFailureExplanation {
+            requirement_id: "REQ-J".into(),
+            non_pass_records: vec![judged],
+            diagnostics: Vec::new(),
+        };
+        let failure = format_requirement_failure_text(&explanation);
+        assert!(failure.contains("model judgment"), "{failure}");
+        assert!(!failure.contains("human judgment"), "{failure}");
     }
 
     #[test]

@@ -31,6 +31,16 @@ ADR 的备选是纯散文，验收判定没有任何机器可读形状。ADR-003
 
 [REQ-DECISION-POINT-ENVELOPE-VERSION] questions JSON MUST 携带信封版本字段，使旧读者遇到结构化候选时显式失败而非静默误读。
 
+[REQ-DECISION-POINT-ENVELOPE-ANSWER-SLOT] 信封 MUST 为每个问题提供承载答案的可选字段，使同一份信封既是提问也是回答载体，未回答时该字段不序列化。
+
+[REQ-DECISION-POINT-ENVELOPE-SCENARIO-BINDING] 验证类问题 MUST 携带结构化的 scenario_name 字段而非仅把场景名嵌在 prompt 文本里，使回答可按场景精确回绑。
+
+[REQ-DECISION-POINT-ENVELOPE-REPLAY-CONTEXT] 验证类信封 MUST 携带重放上下文（ai_mode 与变更路径），使消费方能以发出时的同一配置复算；其他类型信封 MUST 不带该字段以保持既有线格式。
+
+[REQ-DECISION-POINT-ENVELOPE-STABLE-ID] 验证类问题 id MUST 对同一场景名稳定且对不同场景名互异，MUST NOT 因场景名长前缀相同而冲突。
+
+[REQ-DECISION-POINT-ENVELOPE-EVIDENCE-NORMALIZED] 携带的证据 MUST 归一化掉与判定无关的构建噪音（如编译进度与计时行），使同一场景在冷热两次运行下产出相同证据。
+
 ## Scenarios
 
 Scenario: 信封携带阶段与结构化候选
@@ -57,6 +67,16 @@ Scenario: 旧读者遇结构化候选显式失败
   Given 一份按 bare string 解析候选的旧消费者
   When 读取带版本字段的新 questions JSON
   Then 消费者依版本字段报错而非静默误读
+
+Scenario: 验证信封带重放上下文
+  Given 一次以 stub 模式并指定变更路径发出的验证提问
+  When 读取该信封的重放上下文
+  Then ai_mode 为 stub 且变更路径与发出时一致
+
+Scenario: 证据归一化掉构建噪音
+  Given 同一场景在冷编译与热编译下各产出一次测试输出
+  When 两次分别构建验证问题
+  Then 两次携带的证据相同
 
 ## Dependencies
 

@@ -18,8 +18,11 @@ risk: A
 - 合流方式：`cmd_lint_knowledge` 在 corpus lint 之后追加调用
   `build_requirement_graph` 与 `build_requirement_plan`，诊断并入同一份
   输出与 SARIF，规则名保持既有字符串不变。
-- `orphan-spec`：需求语料非空且 spec 无 `satisfies:` 时触发；引入版本
+- `orphan-spec`：需求语料非空且**任务合约**无 `satisfies:` 时触发；引入版本
   严重级别为 Info；诊断文本给出两条补救动作（声明 satisfies 或进基线）。
+  project、org 与 capability 层级的 spec 不承载 satisfies，不在范围内。
+- 基线条目按路径身份匹配（规范化后比较），支持相对仓库根、相对基线文件与
+  绝对路径三种写法。
 - 基线文件：`.agent-spec/orphan-baseline.json`，仅允许人为缩小；lint 启动
   时读取，缺失视为空基线。
 - `dependency-kind-mismatch`：`## Dependencies` 行内 id 前缀命中 `ADR-` 或
@@ -90,3 +93,9 @@ risk: A
   假设 工作区无 knowledge/requirements/ 文档
   当 lint-knowledge 运行
   那么 无 orphan-spec 诊断
+
+场景: 非任务合约不算孤儿
+  测试: test_orphan_spec_applies_only_to_task_contracts
+  假设 specs 下存在一份 project 层级的 spec 且它不带 satisfies
+  当 lint-knowledge 运行
+  那么 该 project spec 不产生 orphan-spec 诊断

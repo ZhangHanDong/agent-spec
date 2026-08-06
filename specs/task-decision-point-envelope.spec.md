@@ -21,6 +21,14 @@ risk: B
 - 校验器 `validate_envelope` 返回诊断列表而非 bool：超过四项候选、缺 label、
   缺 description 各自一条诊断，诊断文本含问题 id 与违规字段名。
 - 空候选表合法：校验器对空 options 返回零诊断。
+- 问题增可选 `answer`（`AiDecision` 形状）与可选 `scenario_name`；信封增可选
+  `verification_context`（ai_mode 与变更路径）。三者均 `skip_serializing_if`，
+  非验证类问题与未回答问题的线格式保持 v1 不变。
+- 验证类问题 id 形如 `Q-VERIFY-<序号>-<可读 slug>-<场景名 blake3 前 12 位>`：
+  可读部分方便人看，digest 保证长前缀相同的场景名不撞 id。
+- 证据在进入信封前归一化：剔除 cargo 编译进度、Finished 计时与 deps 哈希路径
+  等与判定无关的行，使冷热两次运行产出相同证据——否则逐字段绑定校验会因
+  构建噪音误报陈旧。
 
 ## Boundaries
 
@@ -78,3 +86,15 @@ risk: B
   假设 一项只有 description 的候选
   当 validate_envelope 运行
   那么 返回诊断指名 label 字段
+
+场景: 验证信封带重放上下文
+  测试: test_verification_envelope_records_replay_context
+  假设 一次以 stub 模式并指定变更路径发出的验证提问
+  当 读取该信封的重放上下文
+  那么 ai_mode 为 stub 且变更路径与发出时一致
+
+场景: 证据归一化掉构建噪音
+  测试: test_verification_questions_normalize_cargo_rerun_noise
+  假设 同一场景在冷编译与热编译下各产出一次测试输出
+  当 两次分别构建验证问题
+  那么 两次携带的证据相同

@@ -26,7 +26,11 @@ tags: [knowledge, lint, gate, satisfies, orphan]
 
 [REQ-PIPELINE-INTEGRITY-GATE-ORPHAN] 当 `knowledge/requirements/` 含至少一份需求文档时，无 `satisfies:` 声明的任务 spec MUST 触发 `orphan-spec` 诊断；引入版本的严重级别 MUST 为 Info，且诊断文本 MUST 指名补救动作（声明 `satisfies: [REQ-*]` 或进基线）。
 
+[REQ-PIPELINE-INTEGRITY-GATE-ORPHAN-SCOPE] `orphan-spec` MUST 只针对任务合约；project、org 与 capability 层级的 spec 不承载 `satisfies:`，MUST NOT 被诊断为孤儿。
+
 [REQ-PIPELINE-INTEGRITY-GATE-BASELINE] `orphan-spec` MUST 支持仓库内基线文件豁免存量 spec；基线中不存在的新孤儿 MUST 照常诊断；从基线移除的条目 MUST NOT 被自动加回。
+
+[REQ-PIPELINE-INTEGRITY-GATE-BASELINE-PATHS] 基线条目 MUST 按路径身份而非字符串字面量匹配，使相对于仓库根、相对于基线文件与绝对路径三种写法指向同一 spec 时等效。
 
 [REQ-PIPELINE-INTEGRITY-GATE-KIND-MISMATCH] 需求文档 `## Dependencies` 中出现 `ADR-` 或 `LEP-` 前缀 id 时 MUST 触发 `dependency-kind-mismatch` 诊断，suggestion MUST 指名把该 id 移至 `## Source Trace`。
 
@@ -45,9 +49,14 @@ Scenario: 新孤儿 spec 被指名
   Then 输出 orphan-spec 诊断并给出两条补救动作
 
 Scenario: 基线豁免存量
-  Given 基线文件列出全部 37 份存量孤儿 spec
+  Given 基线文件列出全部存量孤儿 spec
   When lint-knowledge --gate 运行
   Then 存量不产生 orphan-spec 诊断且退出码为零
+
+Scenario: 非任务合约不算孤儿
+  Given specs 下存在一份 project 层级的 spec 且它不带 satisfies
+  When lint-knowledge 运行
+  Then 该 project spec 不产生 orphan-spec 诊断
 
 Scenario: Dependencies 里的 ADR 被纠偏
   Given 一份需求文档在 ## Dependencies 列出 ADR-001

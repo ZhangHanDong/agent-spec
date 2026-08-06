@@ -26,8 +26,15 @@ risk: A
   证据取自该场景已收集的 evidence 字段。verdict 词汇表是封闭枚举，是
   唯一由 CLI 提供候选的位置——它不是从源文本推断，因此不违反
   「CLI 不生成候选」。
-- 机械已判定的 pass 与 fail 场景不产生问题；`resolve-ai` 只应用 skip 场景
-  判定的既有保护保持不变（机械结论是护城河）。
+- 机械已判定的 pass 与 fail 场景不产生问题，且任何来源的判定都不得覆盖它们
+  （机械结论是护城河）。来源为 human 的判定可结算 skip、uncertain 与
+  pending_review；非 human 的调用者判定仍只结算 skip，保持既有行为。
+- 回答走同一份信封：问题带可选 `answer` 与结构化 `scenario_name`，
+  `resolve-ai` 同时接受回答信封与既有裸数组。解析时逐字段比对回答与当前
+  重新发出的问题，任一不符即拒绝并指名字段——防的是拿陈旧证据下的判定
+  结算今天的场景。
+- 验证信封带重放上下文（ai_mode 与变更路径），`resolve-ai` 据此以发出时的
+  同一配置复算，而不是用调用者当时的默认值。
 - `evidence: Vec<String>` 以 additive 方式加入信封（默认空、空时不序列化），
   只有 verification 类问题填充。
 - 判定答案到 decisions JSON 的转换在 `verify --emit-questions` 的输出形状
@@ -92,6 +99,24 @@ risk: A
   假设 一份验证报告含机械判定为 pass 与 fail 的场景
   当 verify --emit-questions 运行
   那么 这两个场景均不产生判定问题
+
+场景: 人的判定结算未定论而不动机械结论
+  测试: test_human_answers_settle_uncertain_and_pending_review_only
+  假设 一份报告含机械 pass、uncertain 与 pending_review 三个场景
+  当 三个场景各收到一份来源为 human 的判定
+  那么 uncertain 与 pending_review 被结算而机械 pass 的 verdict 不变
+
+场景: 陈旧或伪造的绑定被拒绝
+  测试: test_answered_envelope_rejects_stale_or_foreign_binding
+  假设 一份问题字段已与当前发出内容不符的回答信封
+  当 resolve-ai 解析该信封
+  那么 解析失败且错误指名不符的字段
+
+场景: 遗漏 blocking 问题被拒绝
+  测试: test_answered_envelope_requires_every_blocking_question
+  假设 一份只回答了部分 blocking 判定问题的信封
+  当 resolve-ai 解析该信封
+  那么 解析失败且错误列出被遗漏的问题 id
 
 场景: 判定答案可直接喂给 resolve-ai
   测试: test_emitted_judgment_answers_feed_resolve_ai

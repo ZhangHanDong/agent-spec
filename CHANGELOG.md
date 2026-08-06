@@ -28,6 +28,20 @@ All notable changes to `agent-spec` are documented here. Format follows
   --emit-questions` turns scenarios the machine could not settle into judgment
   questions carrying scenario text, evidence, and the verdict vocabulary — the
   inverse of `resolve-ai`, emitting what it consumes.
+- Answered decision-point envelopes: the same envelope carries the answer
+  back. `resolve-ai` accepts either an answered envelope or the legacy array,
+  and validates an answered one field by field against freshly emitted
+  questions — a stale or altered binding is rejected naming the field, every
+  blocking question must be answered, the chosen verdict must be one the
+  question offered, and the answer's model must be `human`. Verification
+  envelopes carry a replay context (ai_mode, change paths) so the resolve pass
+  recomputes under the configuration the questions were emitted with, and
+  evidence is normalized against build noise so a cold and warm run bind
+  identically. Question ids combine a readable slug with a digest of the
+  scenario name so long shared prefixes cannot collide.
+- A human answer settles `skip`, `uncertain`, and `pending_review`; a
+  non-human caller decision still settles only `skip`, and a mechanically
+  decided pass or fail is never overridden by any source.
 - Human judgments as first-class provenance: a trace record can carry
   `HumanJudgment { source, verdict, reasoning, scenario_id, evidence_digest }`,
   and `replay` / `explain-failure` show which passes depended on one. Per
@@ -55,6 +69,9 @@ All notable changes to `agent-spec` are documented here. Format follows
   shrink-only baseline at `.agent-spec/orphan-baseline.json`;
   `dependency-kind-mismatch` (Warning) flags `ADR-*`/`LEP-*` ids under a
   requirement's `## Dependencies` and points at `## Source Trace`;
+  `orphan-spec` applies only to task contracts, since project, org, and
+  capability specs carry no `satisfies:`, and baseline entries match by path
+  identity rather than string equality;
   `produces-link-integrity` (Warning) requires an accepted proposal's produced
   decision to back-link the proposal, naming the missing direction.
 

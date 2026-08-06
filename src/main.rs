@@ -1716,11 +1716,31 @@ fn cmd_verify(
     format: &str,
     emit_questions: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let doc = crate::spec_parser::parse_spec(spec)?;
-    let resolved = crate::spec_parser::resolve_spec(doc, &[])?;
     let change_scope = GitChangeScope::parse(change_scope)?;
     let ai_mode = parse_ai_mode(ai_mode)?;
     let effective_changes = resolve_command_change_paths(spec, code, change, change_scope)?;
+
+    // An answered envelope is consumed by `resolve-ai`, so emission uses the
+    // same gateway verifier set and records the effective replay inputs.
+    if emit_questions {
+        let envelope =
+            build_verification_question_envelope(spec, code, &effective_changes, ai_mode)?;
+        if format == "json" {
+            println!("{}", serde_json::to_string_pretty(&envelope)?);
+        } else {
+            println!("judgment questions: {}", envelope.questions.len());
+            for question in &envelope.questions {
+                println!(
+                    "{} [{}] {}",
+                    question.id, question.diagnostic_code, question.prompt
+                );
+            }
+        }
+        return Ok(());
+    }
+
+    let doc = crate::spec_parser::parse_spec(spec)?;
+    let resolved = crate::spec_parser::resolve_spec(doc, &[])?;
 
     let ctx = crate::spec_verify::VerificationContext {
         code_paths: vec![code.to_path_buf()],
@@ -1737,30 +1757,6 @@ fn cmd_verify(
         vec![&structural, &boundaries, &test, &ai];
     let report = crate::spec_verify::run_verification(&ctx, &verifiers)?;
 
-    // Judgment agenda instead of a report: emit what `resolve-ai` consumes.
-    // Exits zero even with unsettled scenarios — the questions are the output,
-    // not a gate result.
-    if emit_questions {
-        let questions = crate::spec_knowledge::build_verification_questions(
-            &report.spec_name,
-            &spec.display().to_string(),
-            &report.results,
-        );
-        let envelope = crate::spec_knowledge::QuestionEnvelope::new(questions);
-        if format == "json" {
-            println!("{}", serde_json::to_string_pretty(&envelope)?);
-        } else {
-            println!("judgment questions: {}", envelope.questions.len());
-            for question in &envelope.questions {
-                println!(
-                    "{} [{}] {}",
-                    question.id, question.diagnostic_code, question.prompt
-                );
-            }
-        }
-        return Ok(());
-    }
-
     let out_format = parse_output_format(format);
     println!(
         "{}",
@@ -1776,6 +1772,38 @@ fn cmd_verify(
         .into())
     } else {
         Ok(())
+    }
+}
+
+fn build_verification_question_envelope(
+    spec: &Path,
+    code: &Path,
+    change_paths: &[PathBuf],
+    ai_mode: crate::spec_verify::AiMode,
+) -> Result<crate::spec_knowledge::QuestionEnvelope, Box<dyn std::error::Error>> {
+    let gateway = crate::spec_gateway::SpecGateway::load(spec)?;
+    let report = gateway.verify_with_changes_and_ai_mode(code, change_paths, ai_mode)?;
+    let questions = crate::spec_knowledge::build_verification_questions(
+        &report.spec_name,
+        &spec.display().to_string(),
+        &report.results,
+    );
+    Ok(
+        crate::spec_knowledge::QuestionEnvelope::new(questions).with_verification_context(
+            crate::spec_knowledge::VerificationQuestionContext {
+                ai_mode: ai_mode_value(ai_mode).into(),
+                change_paths: change_paths.to_vec(),
+            },
+        ),
+    )
+}
+
+fn ai_mode_value(mode: crate::spec_verify::AiMode) -> &'static str {
+    match mode {
+        crate::spec_verify::AiMode::Off => "off",
+        crate::spec_verify::AiMode::Stub => "stub",
+        crate::spec_verify::AiMode::External => "external",
+        crate::spec_verify::AiMode::Caller => "caller",
     }
 }
 
@@ -3955,11 +3983,14 @@ fn knowledge_gate_findings(
     if requirements_exist {
         let baseline = load_orphan_baseline(orphan_baseline);
         for spec in &plan.specs {
+            if spec.level != crate::spec_core::SpecLevel::Task {
+                continue;
+            }
             if !spec.satisfies.is_empty() {
                 continue;
             }
             let path_str = spec.path.display().to_string();
-            if baseline.contains(&path_str) {
+            if orphan_baseline_contains(&baseline, orphan_baseline, &spec.path) {
                 continue;
             }
             findings.push(Finding {
@@ -4001,6 +4032,33 @@ fn load_orphan_baseline(path: &Path) -> std::collections::BTreeSet<String> {
             })
         })
         .unwrap_or_default()
+}
+
+fn orphan_baseline_contains(
+    baseline: &std::collections::BTreeSet<String>,
+    baseline_path: &Path,
+    spec_path: &Path,
+) -> bool {
+    let spec_identity = canonical_existing_path(spec_path);
+    baseline.iter().any(|entry| {
+        if entry == &spec_path.display().to_string() {
+            return true;
+        }
+        let entry_path = Path::new(entry);
+        let mut candidates = vec![entry_path.to_path_buf()];
+        if let Some(parent) = baseline_path.parent() {
+            candidates.push(parent.join(entry_path));
+            if parent.file_name().is_some_and(|name| name == ".agent-spec")
+                && let Some(repo_root) = parent.parent()
+            {
+                candidates.push(repo_root.join(entry_path));
+            }
+        }
+        candidates
+            .into_iter()
+            .map(|candidate| canonical_existing_path(&candidate))
+            .any(|candidate| candidate == spec_identity)
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -7288,6 +7346,14 @@ struct ScenarioAiDecision {
     pub scenario_name: String,
     #[serde(flatten)]
     pub decision: crate::spec_core::AiDecision,
+    /// Set only for the answered verification envelope. The legacy decisions
+    /// array remains byte-for-byte unchanged and represents a model caller.
+    #[serde(skip)]
+    pub judgment_source: Option<crate::spec_core::JudgmentSource>,
+    /// Normalized evidence shown in the answered envelope. Human judgment
+    /// digests bind this reviewed snapshot, not volatile output from a rerun.
+    #[serde(skip)]
+    pub judgment_evidence: Option<Vec<String>>,
 }
 
 fn verdict_value(verdict: crate::spec_core::Verdict) -> &'static str {
@@ -7303,7 +7369,10 @@ fn verdict_value(verdict: crate::spec_core::Verdict) -> &'static str {
 /// Accept the legacy resolve-ai array or an answered decision-point envelope.
 /// The latter keeps `AiDecision` field names nested under `answer`, so a
 /// harness only fills the answer rather than renaming emitted fields.
-fn parse_scenario_ai_decisions(raw: &str) -> Result<Vec<ScenarioAiDecision>, String> {
+fn parse_scenario_ai_decisions(
+    raw: &str,
+    expected_questions: &[crate::spec_knowledge::ClarificationQuestion],
+) -> Result<Vec<ScenarioAiDecision>, String> {
     let value: serde_json::Value =
         serde_json::from_str(raw).map_err(|error| format!("invalid decisions JSON: {error}"))?;
     if value.is_array() {
@@ -7330,15 +7399,17 @@ fn parse_scenario_ai_decisions(raw: &str) -> Result<Vec<ScenarioAiDecision>, Str
     }
 
     let mut seen_scenarios = std::collections::BTreeSet::new();
+    let mut seen_question_ids = std::collections::BTreeSet::new();
     let mut decisions = Vec::new();
     for question in envelope.questions {
+        seen_question_ids.insert(question.id.clone());
         if question.kind != crate::spec_knowledge::QuestionKind::Verification {
             return Err(format!(
                 "question {} is {:?}, but resolve-ai accepts only verification answers",
                 question.id, question.kind
             ));
         }
-        let scenario_name = question.scenario_name.ok_or_else(|| {
+        let scenario_name = question.scenario_name.clone().ok_or_else(|| {
             format!(
                 "verification question {} has no structured scenario_name",
                 question.id
@@ -7349,9 +7420,27 @@ fn parse_scenario_ai_decisions(raw: &str) -> Result<Vec<ScenarioAiDecision>, Str
                 "answered envelope names scenario `{scenario_name}` more than once"
             ));
         }
-        let decision = question
+        let expected = expected_questions
+            .iter()
+            .find(|expected| expected.scenario_name.as_deref() == Some(&scenario_name))
+            .ok_or_else(|| {
+                format!(
+                    "verification question {} names scenario `{scenario_name}` that is not currently unsettled",
+                    question.id
+                )
+            })?;
+        validate_answered_question_binding(&question, expected)?;
+        let judgment_evidence = question.evidence.clone();
+        let mut decision = question
             .answer
             .ok_or_else(|| format!("verification question {} has no answer", question.id))?;
+        if !decision.model.eq_ignore_ascii_case("human") {
+            return Err(format!(
+                "verification question {} is a human answer envelope, so answer.model must be `human`",
+                question.id
+            ));
+        }
+        decision.model = "human".into();
         let selected = verdict_value(decision.verdict);
         if !question
             .options
@@ -7366,9 +7455,60 @@ fn parse_scenario_ai_decisions(raw: &str) -> Result<Vec<ScenarioAiDecision>, Str
         decisions.push(ScenarioAiDecision {
             scenario_name,
             decision,
+            judgment_source: Some(crate::spec_core::JudgmentSource::Human),
+            judgment_evidence: Some(judgment_evidence),
         });
     }
+    let missing = expected_questions
+        .iter()
+        .filter(|question| question.blocking && !seen_question_ids.contains(&question.id))
+        .map(|question| question.id.as_str())
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        return Err(format!(
+            "answered envelope omits blocking verification question(s): {}; answer every emitted blocking question or rerun verify --emit-questions",
+            missing.join(", ")
+        ));
+    }
     Ok(decisions)
+}
+
+fn validate_answered_question_binding(
+    supplied: &crate::spec_knowledge::ClarificationQuestion,
+    expected: &crate::spec_knowledge::ClarificationQuestion,
+) -> Result<(), String> {
+    let same_source = canonical_existing_path(Path::new(&supplied.source))
+        == canonical_existing_path(Path::new(&expected.source));
+    let mismatch = if supplied.id != expected.id {
+        Some("id")
+    } else if supplied.target_id != expected.target_id {
+        Some("target_id")
+    } else if !same_source {
+        Some("source")
+    } else if supplied.diagnostic_code != expected.diagnostic_code {
+        Some("diagnostic_code")
+    } else if supplied.blocking != expected.blocking {
+        Some("blocking")
+    } else if supplied.prompt != expected.prompt {
+        Some("prompt")
+    } else if supplied.kind != expected.kind {
+        Some("kind")
+    } else if supplied.multi_select != expected.multi_select {
+        Some("multi_select")
+    } else if supplied.options != expected.options {
+        Some("options")
+    } else if supplied.evidence != expected.evidence {
+        Some("evidence")
+    } else {
+        None
+    };
+    if let Some(field) = mismatch {
+        return Err(format!(
+            "verification question {} no longer matches the current `{field}`; rerun verify --emit-questions and review the fresh evidence",
+            supplied.id
+        ));
+    }
+    Ok(())
 }
 
 /// Merge externally-resolved AI decisions into verification results, replacing
@@ -7383,9 +7523,19 @@ fn merge_ai_decisions(
             .iter_mut()
             .find(|r| r.scenario_name == decision.scenario_name)
         {
-            // Only resolve Skip verdicts: a mechanically-proven pass/fail must
-            // never be overridden by a caller AI decision (mechanical is the moat).
-            if result.verdict != crate::spec_core::Verdict::Skip {
+            // Model callers preserve the legacy Skip-only moat. A human answer
+            // envelope may additionally settle the two explicitly-emitted
+            // non-mechanical states, but never a mechanical pass or fail.
+            let can_resolve = match decision.judgment_source {
+                Some(crate::spec_core::JudgmentSource::Human) => matches!(
+                    result.verdict,
+                    crate::spec_core::Verdict::Skip
+                        | crate::spec_core::Verdict::Uncertain
+                        | crate::spec_core::Verdict::PendingReview
+                ),
+                _ => result.verdict == crate::spec_core::Verdict::Skip,
+            };
+            if !can_resolve {
                 continue;
             }
             let prior_evidence = result
@@ -7396,18 +7546,21 @@ fn merge_ai_decisions(
                         .unwrap_or_else(|_| "<unserializable evidence>".into())
                 })
                 .collect::<Vec<_>>();
-            let source = if decision.decision.model.eq_ignore_ascii_case("human") {
-                crate::spec_core::JudgmentSource::Human
-            } else {
-                crate::spec_core::JudgmentSource::Model
-            };
-            let judgment = crate::spec_core::HumanJudgment::new(
-                source,
-                decision.decision.verdict,
-                decision.decision.reasoning.clone(),
-                decision.scenario_name.clone(),
-                &prior_evidence,
-            );
+            let judgment = decision.judgment_source.and_then(|source| {
+                (source == crate::spec_core::JudgmentSource::Human).then(|| {
+                    let reviewed_evidence = decision
+                        .judgment_evidence
+                        .as_deref()
+                        .unwrap_or(&prior_evidence);
+                    crate::spec_core::HumanJudgment::new(
+                        source,
+                        decision.decision.verdict,
+                        decision.decision.reasoning.clone(),
+                        decision.scenario_name.clone(),
+                        reviewed_evidence,
+                    )
+                })
+            });
             result.verdict = decision.decision.verdict;
             result.step_results = result
                 .step_results
@@ -7422,12 +7575,36 @@ fn merge_ai_decisions(
                 model: decision.decision.model.clone(),
                 confidence: decision.decision.confidence,
                 reasoning: decision.decision.reasoning.clone(),
-                human_judgment: Some(judgment),
+                human_judgment: judgment,
             }];
             result.provenance = Some(crate::spec_core::EvidenceProvenance::Inferential);
         }
     }
     results
+}
+
+fn answered_verification_context(
+    raw: &str,
+) -> Result<(crate::spec_verify::AiMode, Vec<PathBuf>), String> {
+    let value: serde_json::Value =
+        serde_json::from_str(raw).map_err(|error| format!("invalid decisions JSON: {error}"))?;
+    if value.is_array() {
+        return Ok((crate::spec_verify::AiMode::Caller, Vec::new()));
+    }
+    let envelope: crate::spec_knowledge::QuestionEnvelope = serde_json::from_value(value)
+        .map_err(|error| format!("invalid answered questions envelope: {error}"))?;
+    if envelope.envelope_version != crate::spec_knowledge::ENVELOPE_VERSION {
+        return Err(format!(
+            "answered envelope version {} does not match this build's version {}",
+            envelope.envelope_version,
+            crate::spec_knowledge::ENVELOPE_VERSION
+        ));
+    }
+    let Some(context) = envelope.verification_context else {
+        return Ok((crate::spec_verify::AiMode::Caller, Vec::new()));
+    };
+    let ai_mode = parse_ai_mode(&context.ai_mode).map_err(|error| error.to_string())?;
+    Ok((ai_mode, context.change_paths))
 }
 
 fn cmd_resolve_ai(
@@ -7436,16 +7613,26 @@ fn cmd_resolve_ai(
     decisions_path: &Path,
     format: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // 1. Load spec and run mechanical verification (caller mode skips AI internally)
-    let gw = crate::spec_gateway::SpecGateway::load(spec)?;
-    let verify_report = gw.verify_with_ai_mode(code, crate::spec_verify::AiMode::Caller)?;
-
-    // 2. Read external AI decisions
+    // 1. Load the answer and recover the exact verification configuration
+    // emitted with an envelope. Legacy arrays retain Caller/no-change behavior.
     let decisions_json = std::fs::read_to_string(decisions_path)?;
-    let decisions = parse_scenario_ai_decisions(&decisions_json)
+    let (ai_mode, change_paths) = answered_verification_context(&decisions_json)
         .map_err(|error| format!("{}: {error}", decisions_path.display()))?;
 
-    // 3. Merge: replace Skip verdicts with AI decisions
+    // 2. Replay the same verifier set/configuration against current state.
+    let gw = crate::spec_gateway::SpecGateway::load(spec)?;
+    let verify_report = gw.verify_with_changes_and_ai_mode(code, &change_paths, ai_mode)?;
+
+    // 3. Bind every supplied answer to the fresh question set.
+    let expected_questions = crate::spec_knowledge::build_verification_questions(
+        &verify_report.spec_name,
+        &spec.display().to_string(),
+        &verify_report.results,
+    );
+    let decisions = parse_scenario_ai_decisions(&decisions_json, &expected_questions)
+        .map_err(|error| format!("{}: {error}", decisions_path.display()))?;
+
+    // 4. Merge answers without overriding mechanically decided verdicts.
     let merged_results = merge_ai_decisions(verify_report.results, &decisions);
 
     let merged_report =
@@ -7473,9 +7660,12 @@ fn cmd_resolve_ai(
         )?;
     }
 
-    let passing = gw.is_passing(&merged_report);
+    // resolve-ai is an acceptance path: no unresolved human review may be
+    // reported as success merely because the general lifecycle default is
+    // `review-mode auto`.
+    let passing = gw.is_passing_with_review_mode(&merged_report, "strict");
 
-    // 4. Output
+    // 5. Output
     if format == "json" {
         let json_out = serde_json::json!({
             "stage": "resolve-ai",
@@ -8333,17 +8523,43 @@ name: "退款"
             true,
             "spec: task\nname: \"A\"\n---\n## Intent\nA.\n## Completion Criteria\nScenario: A\n  Test: test_a\n  Given A\n  When A\n  Then A\n",
         );
-        let baseline = dir.join("orphan-baseline.json");
-        let listed = specs.join("task-a.spec.md").display().to_string();
+        let baseline = dir.join(".agent-spec/orphan-baseline.json");
+        fs::create_dir_all(baseline.parent().unwrap()).unwrap();
+        let listed = "specs/task-a.spec.md";
         fs::write(
             &baseline,
             serde_json::to_string(&serde_json::json!({ "specs": [listed] })).unwrap(),
         )
         .unwrap();
-        let (_, findings) = super::knowledge_gate_findings(&knowledge, &specs, &baseline);
+        let absolute_specs = specs.canonicalize().unwrap();
+        let (_, findings) = super::knowledge_gate_findings(&knowledge, &absolute_specs, &baseline);
         assert!(
             !findings.iter().any(|f| f.diag.rule == "orphan-spec"),
-            "baselined orphan must not be diagnosed"
+            "repo-relative baseline entries must match an absolute --specs root"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_orphan_spec_applies_only_to_task_contracts() {
+        let (dir, knowledge, specs) = knowledge_gate_fixture(
+            "knowledge-gate-project-not-orphan",
+            true,
+            "spec: task\nname: \"A\"\nsatisfies: [REQ-A]\n---\n## Intent\nA.\n## Completion Criteria\nScenario: A\n  Test: test_a\n  Given A\n  When A\n  Then A\n",
+        );
+        fs::write(
+            specs.join("project.spec.md"),
+            "spec: project\nname: \"Project rules\"\n---\n## Intent\nShared project rules.\n",
+        )
+        .unwrap();
+
+        let (_, findings) =
+            super::knowledge_gate_findings(&knowledge, &specs, &dir.join("absent.json"));
+        assert!(
+            !findings.iter().any(|finding| {
+                finding.diag.rule == "orphan-spec" && finding.uri.ends_with("project.spec.md")
+            }),
+            "project/org/capability specs are not task contracts and need no satisfies link"
         );
         let _ = fs::remove_dir_all(dir);
     }
@@ -8513,6 +8729,7 @@ name: "退款"
         let mut questions =
             crate::spec_knowledge::build_verification_questions("S", "specs/s.spec.md", &results);
         assert_eq!(questions.len(), 1);
+        let expected_questions = questions.clone();
         questions[0].answer = Some(crate::spec_core::AiDecision {
             model: "human".into(),
             confidence: 1.0,
@@ -8523,7 +8740,7 @@ name: "退款"
         let answered_envelope =
             serde_json::to_string(&crate::spec_knowledge::QuestionEnvelope::new(questions))
                 .unwrap();
-        let parsed = super::parse_scenario_ai_decisions(&answered_envelope)
+        let parsed = super::parse_scenario_ai_decisions(&answered_envelope, &expected_questions)
             .expect("an answered emitted envelope feeds resolve-ai directly");
         assert_eq!(parsed[0].decision.verdict, crate::spec_core::Verdict::Pass);
         assert_eq!(parsed[0].scenario_name, "design intent holds");
@@ -8551,12 +8768,147 @@ name: "退款"
         }])
         .to_string();
 
-        let parsed = super::parse_scenario_ai_decisions(&raw)
+        let parsed = super::parse_scenario_ai_decisions(&raw, &[])
             .expect("the pre-envelope decisions array remains accepted");
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0].scenario_name, "legacy scenario");
         assert_eq!(parsed[0].decision.verdict, crate::spec_core::Verdict::Pass);
         assert_eq!(parsed[0].decision.model, "caller-model");
+        assert_eq!(parsed[0].judgment_source, None);
+    }
+
+    #[test]
+    fn test_answered_envelope_rejects_stale_or_foreign_binding() {
+        let results = vec![crate::spec_core::ScenarioResult {
+            scenario_name: "manual review".into(),
+            verdict: crate::spec_core::Verdict::Skip,
+            step_results: Vec::new(),
+            evidence: vec![crate::spec_core::Evidence::PatternMatch {
+                pattern: "current".into(),
+                matched: false,
+                locations: Vec::new(),
+            }],
+            duration_ms: 0,
+            provenance: None,
+        }];
+        let expected = crate::spec_knowledge::build_verification_questions(
+            "Current Spec",
+            "specs/current.spec.md",
+            &results,
+        );
+        let mut stale = expected.clone();
+        stale[0].evidence = vec!["stale evidence".into()];
+        stale[0].answer = Some(crate::spec_core::AiDecision {
+            model: "human".into(),
+            confidence: 1.0,
+            verdict: crate::spec_core::Verdict::Pass,
+            reasoning: "reviewed old evidence".into(),
+        });
+        let raw =
+            serde_json::to_string(&crate::spec_knowledge::QuestionEnvelope::new(stale)).unwrap();
+        let error = super::parse_scenario_ai_decisions(&raw, &expected).unwrap_err();
+        assert!(error.contains("current `evidence`"), "{error}");
+
+        let mut foreign = expected.clone();
+        foreign[0].target_id = "Foreign Spec".into();
+        foreign[0].answer = Some(crate::spec_core::AiDecision {
+            model: "human".into(),
+            confidence: 1.0,
+            verdict: crate::spec_core::Verdict::Pass,
+            reasoning: "reviewed another contract".into(),
+        });
+        let raw =
+            serde_json::to_string(&crate::spec_knowledge::QuestionEnvelope::new(foreign)).unwrap();
+        let error = super::parse_scenario_ai_decisions(&raw, &expected).unwrap_err();
+        assert!(error.contains("current `target_id`"), "{error}");
+    }
+
+    #[test]
+    fn test_answered_envelope_requires_every_blocking_question() {
+        let results = ["first review", "second review"]
+            .into_iter()
+            .map(|scenario_name| crate::spec_core::ScenarioResult {
+                scenario_name: scenario_name.into(),
+                verdict: crate::spec_core::Verdict::PendingReview,
+                step_results: Vec::new(),
+                evidence: Vec::new(),
+                duration_ms: 0,
+                provenance: None,
+            })
+            .collect::<Vec<_>>();
+        let expected = crate::spec_knowledge::build_verification_questions(
+            "Current Spec",
+            "specs/current.spec.md",
+            &results,
+        );
+        let mut answered = expected[0].clone();
+        answered.answer = Some(crate::spec_core::AiDecision {
+            model: "human".into(),
+            confidence: 1.0,
+            verdict: crate::spec_core::Verdict::Pass,
+            reasoning: "reviewed the first scenario".into(),
+        });
+        let raw = serde_json::to_string(&crate::spec_knowledge::QuestionEnvelope::new(vec![
+            answered,
+        ]))
+        .unwrap();
+
+        let error = super::parse_scenario_ai_decisions(&raw, &expected).unwrap_err();
+        assert!(
+            error.contains("omits blocking verification question"),
+            "{error}"
+        );
+        assert!(error.contains(&expected[1].id), "{error}");
+    }
+
+    #[test]
+    fn test_verification_envelope_records_replay_context() {
+        let dir = make_temp_dir("emit-questions-stub-mode");
+        let spec_path = dir.join("task.spec.md");
+        fs::write(
+            &spec_path,
+            "spec: task\nname: Replayable\n---\n## Intent\nReplay.\n## Completion Criteria\nScenario: Review\n  Given input\n  When reviewed\n  Then output is accepted\n",
+        )
+        .unwrap();
+
+        let explicit_change = vec![PathBuf::from("src/lib.rs")];
+        let envelope = super::build_verification_question_envelope(
+            &spec_path,
+            &dir,
+            &explicit_change,
+            crate::spec_verify::AiMode::Stub,
+        )
+        .unwrap();
+        let context = envelope.verification_context.as_ref().unwrap();
+        assert_eq!(context.ai_mode, "stub");
+        assert_eq!(context.change_paths, explicit_change);
+        assert_eq!(envelope.questions[0].diagnostic_code, "uncertain");
+
+        let mut answered = envelope.clone();
+        answered.questions[0].answer = Some(crate::spec_core::AiDecision {
+            model: "human".into(),
+            confidence: 1.0,
+            verdict: crate::spec_core::Verdict::Pass,
+            reasoning: "reviewed stub uncertainty".into(),
+        });
+        let raw = serde_json::to_string(&answered).unwrap();
+        let (ai_mode, change_paths) = super::answered_verification_context(&raw).unwrap();
+        assert_eq!(ai_mode, crate::spec_verify::AiMode::Stub);
+        assert_eq!(change_paths, explicit_change);
+
+        let gateway = crate::spec_gateway::SpecGateway::load(&spec_path).unwrap();
+        let report = gateway
+            .verify_with_changes_and_ai_mode(&dir, &change_paths, ai_mode)
+            .unwrap();
+        let expected = crate::spec_knowledge::build_verification_questions(
+            &report.spec_name,
+            &spec_path.display().to_string(),
+            &report.results,
+        );
+        let decisions = super::parse_scenario_ai_decisions(&raw, &expected).unwrap();
+        let merged = super::merge_ai_decisions(report.results, &decisions);
+        assert_eq!(merged[0].verdict, crate::spec_core::Verdict::Pass);
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -8570,7 +8922,11 @@ name: "退款"
             "[package]\nname = \"resolve-ai-human-trace\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
         )
         .unwrap();
-        fs::write(dir.join("src/lib.rs"), "pub fn fixture() {}\n").unwrap();
+        fs::write(
+            dir.join("src/lib.rs"),
+            "pub fn fixture() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn manual_review_test() {}\n}\n",
+        )
+        .unwrap();
         fs::write(
             dir.join("knowledge/requirements/req-human-trace.md"),
             "---\nkind: requirement\nid: REQ-HUMAN-TRACE\ntitle: \"Human trace\"\nstatus: accepted\nliveness: auto\n---\n\n## Problem\n\nA non-mechanical verdict needs provenance.\n\n## Requirements\n\n[REQ-HUMAN-TRACE] The system MUST retain human judgment evidence.\n\n## Scenarios\n\nScenario: Manual review\n  Given evidence requiring judgment\n  When a human resolves it\n  Then the trace records the judgment class\n\n## Source Trace\n\n- test\n\n## Open Questions\n\nNone.\n",
@@ -8579,21 +8935,27 @@ name: "退款"
         let spec_path = dir.join("specs/task-human-trace.spec.md");
         fs::write(
             &spec_path,
-            "spec: task\nname: \"Human Trace\"\nsatisfies: [REQ-HUMAN-TRACE]\n---\n\n## Intent\n\nRetain judgment provenance.\n\n## Completion Criteria\n\nScenario: Manual review\n  Test: test_that_intentionally_does_not_exist\n  Given evidence requiring judgment\n  When a human resolves it\n  Then the trace records the judgment class\n",
+            "spec: task\nname: \"Human Trace\"\nsatisfies: [REQ-HUMAN-TRACE]\n---\n\n## Intent\n\nRetain judgment provenance.\n\n## Completion Criteria\n\nScenario: Manual review\n  Review: human\n  Test: manual_review_test\n  Given evidence requiring judgment\n  When a human resolves it\n  Then the trace records the judgment class\n",
         )
         .unwrap();
 
-        let gw = crate::spec_gateway::SpecGateway::load(&spec_path).unwrap();
-        let report = gw
-            .verify_with_ai_mode(&dir, crate::spec_verify::AiMode::Caller)
-            .unwrap();
-        assert_eq!(report.results[0].verdict, crate::spec_core::Verdict::Skip);
-        let mut questions = crate::spec_knowledge::build_verification_questions(
-            "Human Trace",
-            "specs/task-human-trace.spec.md",
-            &report.results,
-        );
-        questions[0].answer = Some(crate::spec_core::AiDecision {
+        let mut envelope = super::build_verification_question_envelope(
+            &spec_path,
+            &dir,
+            &[],
+            crate::spec_verify::AiMode::Off,
+        )
+        .unwrap();
+        assert_eq!(envelope.questions[0].diagnostic_code, "pending-review");
+        let reviewed_evidence = envelope.questions[0].evidence.clone();
+        let empty_legacy = dir.join("empty-legacy-decisions.json");
+        fs::write(&empty_legacy, "[]").unwrap();
+        let error = super::cmd_resolve_ai(&spec_path, &dir, &empty_legacy, "json")
+            .expect_err("an unresolved pending review must not exit successfully")
+            .to_string();
+        assert!(error.contains("pending_review"), "{error}");
+
+        envelope.questions[0].answer = Some(crate::spec_core::AiDecision {
             model: "human".into(),
             confidence: 1.0,
             verdict: crate::spec_core::Verdict::Pass,
@@ -8602,8 +8964,7 @@ name: "退款"
         let decisions_path = dir.join("answered-questions.json");
         fs::write(
             &decisions_path,
-            serde_json::to_string_pretty(&crate::spec_knowledge::QuestionEnvelope::new(questions))
-                .unwrap(),
+            serde_json::to_string_pretty(&envelope).unwrap(),
         )
         .unwrap();
 
@@ -8633,6 +8994,13 @@ name: "退款"
                 .unwrap()
                 .evidence_digest
                 .is_empty()
+        );
+        assert_eq!(
+            record.human_judgment.as_ref().unwrap().evidence_digest,
+            blake3::hash(reviewed_evidence.join("\n").as_bytes())
+                .to_hex()
+                .to_string(),
+            "the trace digest binds the normalized evidence the human reviewed"
         );
 
         let _ = fs::remove_dir_all(dir);
@@ -10067,6 +10435,8 @@ name: "退款"
                     verdict: Verdict::Fail,
                     reasoning: "ai disagrees".into(),
                 },
+                judgment_source: None,
+                judgment_evidence: None,
             },
             ScenarioAiDecision {
                 scenario_name: "未覆盖".into(),
@@ -10076,6 +10446,8 @@ name: "退款"
                     verdict: Verdict::Pass,
                     reasoning: "ai approves".into(),
                 },
+                judgment_source: None,
+                judgment_evidence: None,
             },
         ];
         let merged = merge_ai_decisions(results, &decisions);
@@ -10099,6 +10471,56 @@ name: "退款"
     }
 
     #[test]
+    fn test_human_answers_settle_uncertain_and_pending_review_only() {
+        use crate::spec_core::{AiDecision, ScenarioResult, Verdict};
+        let results = [
+            ("mechanical pass", Verdict::Pass),
+            ("uncertain", Verdict::Uncertain),
+            ("pending", Verdict::PendingReview),
+        ]
+        .into_iter()
+        .map(|(scenario_name, verdict)| ScenarioResult {
+            scenario_name: scenario_name.into(),
+            verdict,
+            step_results: Vec::new(),
+            evidence: Vec::new(),
+            duration_ms: 0,
+            provenance: None,
+        })
+        .collect::<Vec<_>>();
+        let decisions = ["mechanical pass", "uncertain", "pending"]
+            .into_iter()
+            .map(|scenario_name| ScenarioAiDecision {
+                scenario_name: scenario_name.into(),
+                decision: AiDecision {
+                    model: "human".into(),
+                    confidence: 1.0,
+                    verdict: Verdict::Fail,
+                    reasoning: "reviewed current evidence".into(),
+                },
+                judgment_source: Some(crate::spec_core::JudgmentSource::Human),
+                judgment_evidence: Some(Vec::new()),
+            })
+            .collect::<Vec<_>>();
+
+        let merged = merge_ai_decisions(results, &decisions);
+        assert_eq!(merged[0].verdict, Verdict::Pass);
+        for result in &merged[1..] {
+            assert_eq!(result.verdict, Verdict::Fail);
+            assert!(matches!(
+                result.evidence.first(),
+                Some(crate::spec_core::Evidence::AiAnalysis {
+                    human_judgment: Some(crate::spec_core::HumanJudgment {
+                        source: crate::spec_core::JudgmentSource::Human,
+                        ..
+                    }),
+                    ..
+                })
+            ));
+        }
+    }
+
+    #[test]
     fn test_provenance_resolve_ai_is_inferential() {
         use crate::spec_core::{
             AiDecision, Evidence, EvidenceProvenance, ScenarioResult, StepVerdict, Verdict,
@@ -10118,11 +10540,13 @@ name: "退款"
         let decisions = vec![ScenarioAiDecision {
             scenario_name: "未覆盖场景".into(),
             decision: AiDecision {
-                model: "caller".into(),
+                model: "human".into(),
                 confidence: 0.9,
                 verdict: Verdict::Pass,
                 reasoning: "looks correct".into(),
             },
+            judgment_source: None,
+            judgment_evidence: None,
         }];
         let merged = merge_ai_decisions(results, &decisions);
         assert_eq!(merged[0].verdict, Verdict::Pass);
@@ -10137,6 +10561,16 @@ name: "退款"
                 .iter()
                 .any(|e| matches!(e, Evidence::AiAnalysis { .. })),
             "resolved result must carry AiAnalysis evidence"
+        );
+        assert!(
+            matches!(
+                merged[0].evidence.first(),
+                Some(Evidence::AiAnalysis {
+                    human_judgment: None,
+                    ..
+                })
+            ),
+            "a legacy model label must not grant the typed human judgment class"
         );
     }
 
@@ -12870,12 +13304,15 @@ Scenario: verification metadata stays visible
                 verdict: crate::spec_core::Verdict::Pass,
                 reasoning: "All steps verified by agent analysis".into(),
             },
+            judgment_source: None,
+            judgment_evidence: None,
         };
 
         let json = serde_json::to_string_pretty(&decision).unwrap();
         assert!(json.contains("scenario_name"));
         assert!(json.contains("claude-agent"));
         assert!(json.contains("0.92"));
+        assert!(!json.contains("judgment_source"));
 
         let parsed: super::ScenarioAiDecision = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.scenario_name, "AI 场景");

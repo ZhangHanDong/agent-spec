@@ -27,9 +27,17 @@ tags: [knowledge, questions, cli, verification]
 
 [REQ-DECISION-POINT-EMISSION-VERIFY] `verify --emit-questions` MUST 为每个 skip、uncertain 或 pending_review 场景产出 kind 标记为 verification 的信封，携带场景文本、已收集证据与 verdict 词汇表作为候选。
 
-[REQ-DECISION-POINT-EMISSION-MECHANICAL-MOAT] 发出的判定问题 MUST NOT 覆盖机械已判定的 pass 或 fail 场景；`resolve-ai` 只应用 skip 场景的判定这一既有保护 MUST 保持不变。
+[REQ-DECISION-POINT-EMISSION-MECHANICAL-MOAT] 机械已判定为 pass 或 fail 的场景 MUST NOT 被任何来源的判定覆盖。
 
-[REQ-DECISION-POINT-EMISSION-DECISIONS-OUT] 验收判定的答案 MUST 能转为 `resolve-ai` 既有 decisions JSON 格式而无需人工改写字段名。
+[REQ-DECISION-POINT-EMISSION-HUMAN-REACH] 来源为 human 的判定 MUST 能结算 skip、uncertain 与 pending_review 三种未定论场景；来源非 human 的调用者判定 MUST 仍只结算 skip。
+
+[REQ-DECISION-POINT-EMISSION-DECISIONS-OUT] 验收判定的答案 MUST 能转为 `resolve-ai` 既有 decisions JSON 格式而无需人工改写字段名；`resolve-ai` MUST 同时接受回答后的信封与既有的裸数组两种输入。
+
+[REQ-DECISION-POINT-EMISSION-ANSWER-BINDING] 回答信封中的每个问题 MUST 与当前重新发出的同名场景问题在 id、target_id、source、diagnostic_code、blocking、prompt、kind、multi_select、options 与 evidence 上全部一致；任一字段不符 MUST 被拒绝并指名该字段与重跑动作。
+
+[REQ-DECISION-POINT-EMISSION-ANSWER-SHAPE] 回答信封 MUST 被拒绝当其版本不符、问题 kind 非 verification、缺 scenario_name、缺答案、答案 model 非 human、所选 verdict 不在该问题发出的候选内，或同一场景被回答多次。
+
+[REQ-DECISION-POINT-EMISSION-ANSWER-COMPLETE] 回答信封 MUST 覆盖当前发出的全部 blocking 判定问题；遗漏时 MUST 被拒绝并列出遗漏的问题 id。
 
 [REQ-DECISION-POINT-EMISSION-NO-TTY] 三个发射点 MUST NOT 在 CLI 内发起交互式提问或等待标准输入。
 
@@ -62,10 +70,25 @@ Scenario: 机械已判定场景不发问题
   When verify --emit-questions 运行
   Then 该场景不产生任何判定问题
 
+Scenario: 人的判定结算未定论而不动机械结论
+  Given 一份报告含机械 pass、uncertain 与 pending_review 三个场景
+  When 三个场景各收到一份来源为 human 的判定
+  Then uncertain 与 pending_review 被结算而机械 pass 的 verdict 不变
+
 Scenario: 判定答案可直接喂给 resolve-ai
   Given 一组已回答的验收判定信封
   When 转换为 decisions JSON
   Then resolve-ai 读取该文件成功且不需要人工改写字段名
+
+Scenario: 陈旧或伪造的绑定被拒绝
+  Given 一份问题字段已与当前发出内容不符的回答信封
+  When resolve-ai 解析该信封
+  Then 解析失败且错误指名不符的字段与重跑 verify --emit-questions
+
+Scenario: 遗漏 blocking 问题被拒绝
+  Given 一份只回答了部分 blocking 判定问题的信封
+  When resolve-ai 解析该信封
+  Then 解析失败且错误列出被遗漏的问题 id
 
 Scenario: CLI 不发起交互
   Given 任一发射点在无终端环境运行

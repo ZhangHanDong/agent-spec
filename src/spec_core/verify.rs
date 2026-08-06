@@ -111,10 +111,10 @@ pub enum Evidence {
         model: String,
         confidence: f64,
         reasoning: String,
-        /// Present only when an external caller supplied the verdict. Keeping
-        /// this inside the evidence item lets the resolved report carry the
-        /// judgment into the requirement trace writer without changing the
-        /// legacy `ScenarioResult` shape.
+        /// Present only when an answered verification envelope explicitly
+        /// supplied a human verdict. Keeping this inside the evidence item
+        /// lets the resolved report carry the judgment into the requirement
+        /// trace writer without changing the legacy `ScenarioResult` shape.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         human_judgment: Option<HumanJudgment>,
     },

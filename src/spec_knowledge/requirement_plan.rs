@@ -24,6 +24,8 @@ pub struct RequirementPlanSpecNode {
     pub id: String,
     pub name: String,
     pub path: PathBuf,
+    #[serde(skip_serializing)]
+    pub level: crate::spec_core::SpecLevel,
     pub depends: Vec<String>,
     pub satisfies: Vec<String>,
     pub risk: Option<String>,
@@ -300,6 +302,7 @@ fn collect_spec_coverage(
             id,
             name: doc.meta.name.clone(),
             path: path.clone(),
+            level: doc.meta.level,
             depends: doc.meta.depends.clone(),
             satisfies: doc.meta.satisfies.clone(),
             risk: doc.meta.risk.clone(),
