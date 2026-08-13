@@ -1,7 +1,7 @@
 # agent-spec: BDD-spine 七期完成后的使用效果
 
 > 本文档描绘的是 `docs/comparison-openspec-speckit.md` §13 路线图全部落地后的最终使用状态。
-> 当前进度: Phase 1 已写成可执行合约(`specs/task-bdd-semantics-v1.spec.md`), Phase 2–7 待实施。
+> 当前进度: Phase 1 已写成可执行合约(已归档: `.agent-spec/archive/specs/task-bdd-semantics-v1.spec.md`), Phase 2–7 待实施。
 > 建议阅读顺序: 先读本文档建立**目标感**, 再读 comparison 文档理解**为什么这样选**, 最后看 v1 合约知道**第一步怎么走**。
 
 ---
@@ -235,7 +235,7 @@ agent-spec 自身完整, **不需要**它们。但提供**单向迁移坡道**(�
 ## 相关文档
 
 - 战略叙事 + 吸纳路线: [`docs/comparison-openspec-speckit.md`](comparison-openspec-speckit.md)
-- Phase 1 可执行合约: [`specs/task-bdd-semantics-v1.spec.md`](../specs/task-bdd-semantics-v1.spec.md)
+- Phase 1 可执行合约: [`specs/task-bdd-semantics-v1.spec.md`](../.agent-spec/archive/specs/task-bdd-semantics-v1.spec.md)
 - 项目级 Rules: [`specs/project.spec.md`](../specs/project.spec.md)
 
 ---
