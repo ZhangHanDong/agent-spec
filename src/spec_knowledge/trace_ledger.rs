@@ -1,4 +1,4 @@
-use crate::spec_core::{Evidence, Verdict, VerificationReport};
+use crate::spec_core::{Evidence, HumanJudgment, JudgmentSource, Verdict, VerificationReport};
 use crate::spec_knowledge::{
     AffectedExecutionBundle, IntentImpactGap, IntentImpactReport, QualityOutcome, RequirementPlan,
     WorktreeManifest,
@@ -121,6 +121,10 @@ pub struct RequirementTraceRecord {
     pub vcs: Option<VcsContext>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub wiki_articles: Vec<PathBuf>,
+    /// Set only when a human settled what the machine could not. Absent
+    /// records serialize byte-identically to before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub human_judgment: Option<HumanJudgment>,
     pub timestamp: u64,
 }
 
@@ -128,6 +132,40 @@ pub struct RequirementTraceRecord {
 pub struct RequirementTraceEvidence {
     pub kind: String,
     pub summary: String,
+}
+
+/// Field names the core must never carry (ADR-001). Checked mechanically so
+/// identity cannot creep in as the implementation evolves.
+pub const FORBIDDEN_IDENTITY_FIELDS: [&str; 4] = ["actor", "authority", "approval", "policy"];
+
+/// Scan a serialized record for forbidden identity keys, at any depth.
+/// Returns each offending field name so the caller can name it.
+pub fn forbidden_identity_fields(value: &serde_json::Value) -> Vec<String> {
+    let mut found = Vec::new();
+    scan_forbidden(value, &mut found);
+    found.sort();
+    found.dedup();
+    found
+}
+
+fn scan_forbidden(value: &serde_json::Value, found: &mut Vec<String>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, child) in map {
+                let lower = key.to_ascii_lowercase();
+                if FORBIDDEN_IDENTITY_FIELDS.contains(&lower.as_str()) {
+                    found.push(lower);
+                }
+                scan_forbidden(child, found);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                scan_forbidden(item, found);
+            }
+        }
+        _ => {}
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -154,6 +192,7 @@ impl RequirementTraceRecord {
             .find(|result| result.scenario_name == input.scenario_name)?;
         let mut code_targets = Vec::new();
         let mut evidence = Vec::new();
+        let mut human_judgment = None;
 
         code_targets.extend(
             input
@@ -165,6 +204,13 @@ impl RequirementTraceRecord {
         for item in &result.evidence {
             collect_code_targets(item, &mut code_targets);
             evidence.push(trace_evidence_summary(item));
+            if let Evidence::AiAnalysis {
+                human_judgment: Some(judgment),
+                ..
+            } = item
+            {
+                human_judgment = Some(judgment.clone());
+            }
         }
         code_targets.sort();
         code_targets.dedup();
@@ -185,6 +231,7 @@ impl RequirementTraceRecord {
             branch: input.branch,
             vcs: input.vcs,
             wiki_articles: Vec::new(),
+            human_judgment,
             timestamp: input.timestamp,
         })
     }
@@ -342,6 +389,19 @@ pub fn write_requirement_trace_ledger_to_dir(
     trace_dir: &Path,
     ledger: &RequirementTraceLedger,
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    for record in &ledger.records {
+        if let Some(judgment) = &record.human_judgment {
+            let value = serde_json::to_value(judgment)?;
+            let forbidden = forbidden_identity_fields(&value);
+            if !forbidden.is_empty() {
+                return Err(format!(
+                    "human judgment contains forbidden identity field(s): {}",
+                    forbidden.join(", ")
+                )
+                .into());
+            }
+        }
+    }
     let run_id = ledger
         .records
         .first()
@@ -1005,6 +1065,15 @@ pub fn format_requirement_replay_text(records: &[RequirementTraceRecord]) -> Str
                 .unwrap_or_else(|| "<none>".into()),
             record.verdict
         ));
+        if let Some(judgment) = &record.human_judgment {
+            out.push_str(&format!(
+                "{} judgment: {:?} verdict={:?} evidence_digest={}\n",
+                judgment_source_label(judgment.source),
+                judgment.source,
+                judgment.verdict,
+                judgment.evidence_digest
+            ));
+        }
     }
     out
 }
@@ -1053,8 +1122,24 @@ pub fn format_requirement_failure_text(explanation: &RequirementFailureExplanati
                     .join(", ")
             ));
         }
+        if let Some(judgment) = &record.human_judgment {
+            out.push_str(&format!(
+                "  {} judgment: {:?} verdict={:?} evidence_digest={}\n",
+                judgment_source_label(judgment.source),
+                judgment.source,
+                judgment.verdict,
+                judgment.evidence_digest
+            ));
+        }
     }
     out
+}
+
+fn judgment_source_label(source: JudgmentSource) -> &'static str {
+    match source {
+        JudgmentSource::Human => "human",
+        JudgmentSource::Model => "model",
+    }
 }
 
 pub fn format_requirement_trace_mermaid(records: &[RequirementTraceRecord]) -> String {
@@ -1326,6 +1411,257 @@ mod tests {
     };
     use crate::vcs::{VcsContext, VcsType};
     use std::path::PathBuf;
+
+    fn judged_record(judgment: Option<HumanJudgment>) -> RequirementTraceRecord {
+        RequirementTraceRecord {
+            run_id: "run-j".into(),
+            requirement_id: "REQ-J".into(),
+            requirement_source: PathBuf::from("knowledge/requirements/req-j.md"),
+            work_unit_id: "WU-REQ-J".into(),
+            spec_path: PathBuf::from("specs/task-j.spec.md"),
+            scenario_name: "design intent holds".into(),
+            test_selector: None,
+            code_targets: Vec::new(),
+            code_target_facts: Vec::new(),
+            verdict: Verdict::Pass,
+            evidence: Vec::new(),
+            worktree_path: None,
+            branch: None,
+            vcs: None,
+            wiki_articles: Vec::new(),
+            human_judgment: judgment,
+            timestamp: 7,
+        }
+    }
+
+    #[test]
+    fn test_human_judgment_enters_run_log() {
+        let prior_evidence = ["evidence line one".to_string(), "evidence line two".into()];
+        let judgment = HumanJudgment::new(
+            JudgmentSource::Human,
+            Verdict::Pass,
+            "reviewed against the contract",
+            "design intent holds",
+            &prior_evidence,
+        );
+        let report = VerificationReport::from_results(
+            "Judged".into(),
+            vec![ScenarioResult {
+                scenario_name: "design intent holds".into(),
+                verdict: Verdict::Pass,
+                step_results: Vec::new(),
+                evidence: vec![Evidence::AiAnalysis {
+                    model: "human".into(),
+                    confidence: 1.0,
+                    reasoning: "reviewed against the contract".into(),
+                    human_judgment: Some(judgment.clone()),
+                }],
+                duration_ms: 0,
+                provenance: Some(crate::spec_core::EvidenceProvenance::Inferential),
+            }],
+        );
+        let record = RequirementTraceRecord::from_parts(RequirementTraceRecordInput {
+            run_id: "run-j".into(),
+            timestamp: 7,
+            requirement_id: "REQ-J".into(),
+            requirement_source: PathBuf::from("knowledge/requirements/req-j.md"),
+            work_unit_id: "WU-REQ-J".into(),
+            spec_path: PathBuf::from("specs/task-j.spec.md"),
+            scenario_name: "design intent holds".into(),
+            test_selector: None,
+            report: &report,
+            worktree_path: None,
+            branch: None,
+            vcs: None,
+            code_target_facts: Vec::new(),
+        })
+        .unwrap_or_else(|| panic!("production trace constructor must keep the judgment"));
+        let json = serde_json::to_value(&record).unwrap();
+        let recorded = json
+            .get("human_judgment")
+            .unwrap_or_else(|| panic!("judgment is recorded"));
+
+        assert_eq!(
+            recorded.get("verdict").and_then(|v| v.as_str()),
+            Some("pass")
+        );
+        assert_eq!(
+            recorded.get("reasoning").and_then(|v| v.as_str()),
+            Some("reviewed against the contract")
+        );
+        assert_eq!(
+            recorded.get("scenario_id").and_then(|v| v.as_str()),
+            Some("design intent holds")
+        );
+        let digest = recorded
+            .get("evidence_digest")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        assert!(
+            !digest.is_empty(),
+            "the judgment binds to an evidence digest"
+        );
+        assert_eq!(
+            digest,
+            crate::spec_knowledge::blake3_hex("evidence line one\nevidence line two".as_bytes()),
+            "digest covers the evidence it was decided on"
+        );
+    }
+
+    #[test]
+    fn test_judgment_records_class_not_identity() {
+        let record = judged_record(Some(HumanJudgment::new(
+            JudgmentSource::Human,
+            Verdict::Pass,
+            "reviewed",
+            "s",
+            &[],
+        )));
+        let json = serde_json::to_value(&record).unwrap();
+        assert_eq!(
+            json.pointer("/human_judgment/source")
+                .and_then(|v| v.as_str()),
+            Some("human"),
+            "source is a class"
+        );
+        assert!(
+            forbidden_identity_fields(&json).is_empty(),
+            "a judgment record carries no identity fields: {json}"
+        );
+        let text = serde_json::to_string(&json).unwrap();
+        for name in ["alice", "@", "user_id", "email"] {
+            assert!(
+                !text.contains(name),
+                "no approver identity may appear: found {name} in {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_forbidden_identity_field_is_rejected() {
+        let mut json = serde_json::to_value(judged_record(Some(HumanJudgment::new(
+            JudgmentSource::Human,
+            Verdict::Pass,
+            "reviewed",
+            "s",
+            &[],
+        ))))
+        .unwrap();
+        json.as_object_mut()
+            .unwrap()
+            .insert("actor".into(), serde_json::json!("alice"));
+
+        let found = forbidden_identity_fields(&json);
+        assert!(
+            found.contains(&"actor".to_string()),
+            "an injected actor field must be named: {found:?}"
+        );
+    }
+
+    #[test]
+    fn test_all_forbidden_fields_are_rejected() {
+        for field in FORBIDDEN_IDENTITY_FIELDS {
+            // Nested inside the judgment, to prove the scan is not shallow.
+            let mut json = serde_json::to_value(judged_record(Some(HumanJudgment::new(
+                JudgmentSource::Human,
+                Verdict::Pass,
+                "reviewed",
+                "s",
+                &[],
+            ))))
+            .unwrap();
+            json.pointer_mut("/human_judgment")
+                .and_then(|v| v.as_object_mut())
+                .unwrap()
+                .insert(field.into(), serde_json::json!("x"));
+
+            let found = forbidden_identity_fields(&json);
+            assert_eq!(
+                found,
+                vec![field.to_string()],
+                "nested `{field}` must be named exactly once"
+            );
+        }
+    }
+
+    #[test]
+    fn test_replay_shows_human_judgment_dependency() {
+        let judged = judged_record(Some(HumanJudgment::new(
+            JudgmentSource::Human,
+            Verdict::Pass,
+            "reviewed",
+            "design intent holds",
+            &["e".to_string()],
+        )));
+        let text = format_requirement_replay_text(&[judged]);
+        assert!(
+            text.contains("human judgment"),
+            "replay marks the judgment dependency: {text}"
+        );
+        assert!(text.contains("evidence_digest="), "{text}");
+    }
+
+    #[test]
+    fn test_explain_failure_shows_human_judgment() {
+        let judged = judged_record(Some(HumanJudgment::new(
+            JudgmentSource::Human,
+            Verdict::Fail,
+            "does not meet the contract",
+            "design intent holds",
+            &["e".to_string()],
+        )));
+        let explanation = RequirementFailureExplanation {
+            requirement_id: "REQ-J".into(),
+            non_pass_records: vec![judged],
+            diagnostics: Vec::new(),
+        };
+        let text = format_requirement_failure_text(&explanation);
+        assert!(
+            text.contains("human judgment"),
+            "explain-failure marks which scenarios were human-judged: {text}"
+        );
+    }
+
+    #[test]
+    fn test_replay_and_explain_label_model_judgment_as_model() {
+        let judged = judged_record(Some(HumanJudgment::new(
+            JudgmentSource::Model,
+            Verdict::Fail,
+            "model review failed",
+            "design intent holds",
+            &["e".to_string()],
+        )));
+        let replay = format_requirement_replay_text(std::slice::from_ref(&judged));
+        assert!(replay.contains("model judgment"), "{replay}");
+        assert!(!replay.contains("human judgment"), "{replay}");
+
+        let explanation = RequirementFailureExplanation {
+            requirement_id: "REQ-J".into(),
+            non_pass_records: vec![judged],
+            diagnostics: Vec::new(),
+        };
+        let failure = format_requirement_failure_text(&explanation);
+        assert!(failure.contains("model judgment"), "{failure}");
+        assert!(!failure.contains("human judgment"), "{failure}");
+    }
+
+    #[test]
+    fn test_machine_only_run_output_unchanged() {
+        let machine = judged_record(None);
+        let json = serde_json::to_string(&machine).unwrap();
+        assert!(
+            !json.contains("human_judgment"),
+            "an unjudged record serializes exactly as before the field existed: {json}"
+        );
+        let text = format_requirement_replay_text(std::slice::from_ref(&machine));
+        assert!(!text.contains("human judgment"), "{text}");
+        let explanation = RequirementFailureExplanation {
+            requirement_id: "REQ-J".into(),
+            non_pass_records: vec![machine],
+            diagnostics: Vec::new(),
+        };
+        assert!(!format_requirement_failure_text(&explanation).contains("human judgment"));
+    }
 
     #[test]
     fn test_requirement_trace_ledger_records_req_to_scenario_test_code_and_vcs() {
@@ -2020,6 +2356,7 @@ mod tests {
             branch: Some("feat/wu-req-note-create".into()),
             vcs: None,
             wiki_articles: Vec::new(),
+            human_judgment: None,
             timestamp,
         }
     }

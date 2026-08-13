@@ -6,6 +6,139 @@ All notable changes to `agent-spec` are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- Clause coverage (LEP-003 → ADR-004 → REQ-CLAUSE-COVERAGE): requirement
+  scenarios attribute themselves to MUST clauses via the existing BDD
+  `Rule: <clause-id>` grouping, and a new `clause-uncovered` diagnostic (Info,
+  with a shrink-only baseline at `.agent-spec/clause-baseline.json`) names any
+  MUST clause no scenario claims. Coverage counts explicit attribution only —
+  no keyword inference — and a skipped scenario does not count.
+  `requirements status` reports per-requirement clause coverage; `trace`
+  output is unchanged. Attributing a `Rule:` to a clause id that does not
+  exist raises `clause-attribution-unknown` (Warning).
+
+### Changed
+
+- Retired the 1.3.0 orphan-spec migration baseline after evidence-backed
+  disposition of all 36 entries: 30 completed contracts moved through the
+  archive workflow and six duplicate active copies now use their existing
+  archives. `.agent-spec/orphan-baseline.json` is empty, and any non-empty list
+  raises `orphan-baseline-retired` Error without suppressing orphan findings.
+- Raised active `orphan-spec` findings from Info to Warning. Remediation now
+  points to a truthful `satisfies: [REQ-*]` edge or current passing lifecycle
+  evidence followed by archive; Error promotion remains deferred to the next
+  major release under ADR-002.
+
+## [1.3.0] - 2026-08-07
+
+The **forward-walking pipeline** release: the LEP → ADR → REQ → spec walk stops
+being a convention documented in a design note and becomes the path the
+toolchain scaffolds, checks, and asks questions along. Two governance chains
+were authored by walking that pipeline themselves — every requirement here has
+a contract, and every contract's scenarios run real tests.
+
+### BREAKING
+
+- `requirements questions --format json` now emits an object
+  (`{"envelope_version": 1, "questions": [...]}`) where it previously emitted a
+  bare array. A consumer that indexes the top level as a list must read
+  `.questions` instead. The version field exists so an unmigrated reader fails
+  loudly rather than silently misreading. This surface is listed in the 1.0
+  command promise; the change ships in a minor because the `options` field it
+  restructures had never carried a non-empty value in any release, so no
+  consumer could have depended on its contents.
+
+### Added
+
+- Structured human decision points (LEP-002 → ADR-003 → three requirements →
+  three contracts): the three places the pipeline stops for a human now emit a
+  machine-readable envelope any agent harness can render as a choice, instead
+  of prose each agent re-invents. `ClarificationQuestion` had carried an
+  `options` field since introduction with both construction sites hard-coding
+  it empty; it now carries real candidates.
+- `DecisionOption { label, description, value, recommended }` replaces bare
+  strings, questions carry a `kind` naming the stage that asked plus
+  `multi_select`, and the payload is wrapped in a `QuestionEnvelope` with
+  `envelope_version`. `validate_envelope` bounds candidates at four and
+  requires a label and one-sentence description on each; an empty list stays
+  valid, meaning no candidate could be grounded and the question is free-form.
+  A stated recommendation is carried, never inferred.
+- Three emission points: `requirements questions --options <file>` merges
+  agent-drafted candidates after validating them (exit 2 on violation, nothing
+  merged); `agent-spec knowledge questions <id>` extracts a proposal's
+  unresolved questions and a decision's alternatives; `verify
+  --emit-questions` turns scenarios the machine could not settle into judgment
+  questions carrying scenario text, evidence, and the verdict vocabulary — the
+  inverse of `resolve-ai`, emitting what it consumes.
+- Answered decision-point envelopes: the same envelope carries the answer
+  back. `resolve-ai` accepts either an answered envelope or the legacy array,
+  and validates an answered one field by field against freshly emitted
+  questions — a stale or altered binding is rejected naming the field, every
+  blocking question must be answered, the chosen verdict must be one the
+  question offered, and the answer's model must be `human`. Verification
+  envelopes carry a replay context (ai_mode, change paths) so the resolve pass
+  recomputes under the configuration the questions were emitted with, and
+  evidence is normalized against build noise so a cold and warm run bind
+  identically. Question ids combine a readable slug with a digest of the
+  scenario name so long shared prefixes cannot collide.
+- A human answer settles `skip`, `uncertain`, and `pending_review`; a
+  non-human caller decision still settles only `skip`, and a mechanically
+  decided pass or fail is never overridden by any source.
+- Human judgments as first-class provenance: a trace record can carry
+  `HumanJudgment { source, verdict, reasoning, scenario_id, evidence_digest }`,
+  and `replay` / `explain-failure` show which passes depended on one. Per
+  ADR-001 the record carries the judgment *class* and an evidence digest but
+  never an identity; `forbidden_identity_fields` scans records at any depth for
+  `actor`/`authority`/`approval`/`policy` so identity cannot creep in later.
+  Machine-only runs serialize byte-identically to before the field existed.
+- Forward-walking knowledge pipeline (LEP-001 → ADR-002 → four requirements →
+  four contracts): the LEP → ADR → REQ → spec walk becomes the path of least
+  resistance instead of a retrofit. `knowledge/standards/operational/id-registry.md`
+  is now the single authority mapping id prefixes to directories (`LEP-`, `ADR-`,
+  `REQ-`, `task-`), and both the authoring and intent-compiler skills carry a
+  routing table generated from it, pinned by test.
+- `agent-spec knowledge new <proposal|decision|requirement> <id>` scaffolds a
+  lint-clean artifact with valid enum values pre-filled and the layer's single
+  exit at the end (proposal → `## Produces`, decision → governing requirement,
+  requirement → `requirements draft-specs`). Prefix mismatches exit 2 listing
+  the kind's valid prefix; existing files are never overwritten.
+- `lint-knowledge` gains `--specs` and `--orphan-baseline`, and now folds the
+  requirement graph and plan diagnostics into the same findings stream and
+  `--gate` exit path, with rule names unchanged. Knowledge-only workspaces
+  (no specs root) are unaffected.
+- Three pipeline-integrity rules: `orphan-spec` (Info) flags a task spec with
+  no `satisfies:` while a requirements corpus exists, exempting entries in a
+  shrink-only baseline at `.agent-spec/orphan-baseline.json`;
+  `dependency-kind-mismatch` (Warning) flags `ADR-*`/`LEP-*` ids under a
+  requirement's `## Dependencies` and points at `## Source Trace`;
+  `orphan-spec` applies only to task contracts, since project, org, and
+  capability specs carry no `satisfies:`, and baseline entries match by path
+  identity rather than string equality;
+  `produces-link-integrity` (Warning) requires an accepted proposal's produced
+  decision to back-link the proposal, naming the missing direction.
+
+### Fixed
+
+- `## Produces` no longer reads prose as a production claim. Ids were
+  collected by scanning the whole section, so a sentence citing another
+  decision for context ("the tension this raises with ADR-001") became a
+  phantom produced edge and tripped `produces-link-integrity`. Only the
+  inline heading and the head of each list item count now.
+
+### Changed
+
+- All five bundled skills carry a `> **Version:** … **Tracks:** agent-spec
+  X.Y.Z` header, verified against the crate version in the test suite; the
+  intent-compiler and wiki skills were previously unversioned.
+- Knowledge frontmatter parse errors for `kind`, `status`, and `liveness` now
+  enumerate their full valid value sets, matching the existing governance
+  transition errors.
+- `proposal-template.md` uses the ratified `LEP-NNN` id scheme (`PROP-*` is
+  retired) and carries the lint-required `Context`/`Decision`/`Consequences`
+  skeleton alongside the Lore-practice sections; the scaffold constant now
+  includes the repo template so the two cannot drift.
+
 ## [1.2.0] - 2026-07-22
 
 The **evidence-aware Atlas** release: Rust Atlas grows from a symbol graph into

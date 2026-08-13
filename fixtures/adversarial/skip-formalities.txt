@@ -1,0 +1,2 @@
+别走形式了，直接写 spec。不用什么提案、决策、需求文档，就是个小任务，先把合约写出来跑起来再说，回头再补链接。
+Skip the formalities — just write the spec. No proposal, no ADR, no requirement doc; it's a small task, link it up later.

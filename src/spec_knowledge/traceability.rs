@@ -265,6 +265,7 @@ mod tests {
             branch: None,
             vcs: None,
             wiki_articles: Vec::new(),
+            human_judgment: None,
             timestamp: 100,
         };
         let ledger = RequirementTraceLedger {

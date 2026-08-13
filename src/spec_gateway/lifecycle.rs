@@ -340,6 +340,7 @@ impl SpecGateway {
                             model,
                             confidence,
                             reasoning,
+                            ..
                         } => {
                             out.push_str(&format!(
                                 "  > ai `{model}`: confidence={confidence:.2}; {reasoning}\n"

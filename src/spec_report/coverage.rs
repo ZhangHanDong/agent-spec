@@ -476,6 +476,7 @@ name: "x"
                 model: "m".into(),
                 confidence: 0.5,
                 reasoning: "r".into(),
+                human_judgment: None,
             }],
             duration_ms: 0,
             provenance: None,

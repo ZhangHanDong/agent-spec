@@ -2,7 +2,9 @@
 
 use crate::spec_core::{LintDiagnostic, Severity, Span};
 use crate::spec_knowledge::model::{DecisionDoc, DecisionStatus, KnowledgeDoc};
-use crate::spec_knowledge::requirement::{extract_requirements, normative_token_count};
+use crate::spec_knowledge::requirement::{
+    clause_coverage, extract_requirements, normative_token_count,
+};
 
 const REQUIRED: [&str; 3] = ["Context", "Decision", "Consequences"];
 
@@ -330,6 +332,52 @@ pub fn lint_requirement(doc: &KnowledgeDoc) -> Vec<LintDiagnostic> {
         }
     }
 
+    let clause_coverage = clause_coverage(doc);
+    for clause_id in clause_coverage.uncovered {
+        out.push(diag(
+            "clause-uncovered",
+            Severity::Info,
+            format!(
+                "MUST clause `{clause_id}` in {} has no scenario attributed with `Rule: {clause_id}`",
+                doc.source_path.display()
+            ),
+            Some("group at least one requirement scenario under the clause's `Rule: <clause-id>`"),
+        ));
+    }
+    for rule_id in clause_coverage.unknown_rule_ids {
+        out.push(diag(
+            "clause-attribution-unknown",
+            Severity::Warning,
+            format!(
+                "scenario attribution `Rule: {rule_id}` in {} names no requirement clause",
+                doc.source_path.display()
+            ),
+            Some("correct the Rule id or add the corresponding requirement clause"),
+        ));
+    }
+
+    // `## Dependencies` is the REQ-* ordering-edge section; decision and
+    // proposal ids listed there silently fall out of the requirement graph
+    // (or surface as misleading "missing requirement" errors downstream).
+    if let Some(section) = doc.section("Dependencies") {
+        for tok in section
+            .body
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
+        {
+            if (tok.starts_with("ADR-") || tok.starts_with("LEP-"))
+                && tok.len() > 4
+                && tok[4..].chars().any(|c| c.is_ascii_alphanumeric())
+            {
+                out.push(diag(
+                    "dependency-kind-mismatch",
+                    Severity::Warning,
+                    format!("`## Dependencies` lists {tok}; dependencies are REQ-* ordering edges"),
+                    Some("move the ADR-*/LEP-* entry to `## Source Trace`"),
+                ));
+            }
+        }
+    }
+
     out
 }
 
@@ -475,6 +523,40 @@ mod tests {
 
     fn parse(input: &str) -> DecisionDoc {
         parse_decision_str(input, Path::new("adr-001-x.md")).unwrap()
+    }
+
+    #[test]
+    fn test_dependency_kind_mismatch_suggests_source_trace() {
+        let doc = crate::spec_knowledge::parser::parse_knowledge_str(
+            "---\nkind: requirement\nid: REQ-A\ntitle: \"A\"\nliveness: auto\n---\n## Problem\nA.\n## Requirements\n[REQ-A] The system MUST do A.\n## Scenarios\nScenario: A\n  Given input A\n  When A runs\n  Then output A is visible\n## Dependencies\n- ADR-001\n- REQ-B\n## Source Trace\n- test\n",
+            Path::new("req-a.md"),
+        )
+        .unwrap();
+        let diags = lint_requirement(&doc);
+        let hit = diags
+            .iter()
+            .find(|d| d.rule == "dependency-kind-mismatch")
+            .unwrap_or_else(|| panic!("ADR id under ## Dependencies must be diagnosed"));
+        assert!(
+            hit.message.contains("ADR-001"),
+            "message names the id: {}",
+            hit.message
+        );
+        assert!(
+            hit.suggestion
+                .as_deref()
+                .unwrap_or_default()
+                .contains("Source Trace"),
+            "suggestion names the correct section"
+        );
+        // REQ-* dependencies stay silent.
+        assert_eq!(
+            diags
+                .iter()
+                .filter(|d| d.rule == "dependency-kind-mismatch")
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -638,6 +720,62 @@ mod tests {
                 .iter()
                 .any(|diag| diag.rule == "requirement-state-machine-transition-uncovered")
         );
+    }
+
+    #[test]
+    fn test_clause_uncovered_names_clause_and_document() {
+        let doc = crate::spec_knowledge::parser::parse_requirement_str(
+            "---\nkind: requirement\nid: REQ-X\n---\n## Problem\np\n## Requirements\n[REQ-X-ALPHA] The system MUST emit alpha.\n## Scenarios\nScenario: Unattributed\n  Given input\n  When alpha runs\n  Then output is visible\n",
+            Path::new("knowledge/requirements/req-x.md"),
+        )
+        .unwrap();
+        let hit = lint_requirement(&doc)
+            .into_iter()
+            .find(|diag| diag.rule == "clause-uncovered")
+            .unwrap_or_else(|| panic!("an unattributed MUST clause must be diagnosed"));
+        assert!(hit.message.contains("REQ-X-ALPHA"), "{}", hit.message);
+        assert!(
+            hit.message.contains("knowledge/requirements/req-x.md"),
+            "{}",
+            hit.message
+        );
+    }
+
+    #[test]
+    fn test_clause_attribution_unknown_id_is_named() {
+        let doc = parse_req(
+            "---\nkind: requirement\nid: REQ-X\n---\n## Problem\np\n## Requirements\n[REQ-X-ALPHA] The system MUST emit alpha.\n## Scenarios\nRule: REQ-X-MISSING\nScenario: Typo\n  Given input\n  When alpha runs\n  Then output is visible\n",
+        );
+        let hit = lint_requirement(&doc)
+            .into_iter()
+            .find(|diag| diag.rule == "clause-attribution-unknown")
+            .unwrap_or_else(|| panic!("an unknown Rule id must be diagnosed"));
+        assert_eq!(hit.severity, Severity::Warning);
+        assert!(hit.message.contains("REQ-X-MISSING"), "{}", hit.message);
+    }
+
+    #[test]
+    fn test_clause_uncovered_skips_should_and_may() {
+        let doc = parse_req(
+            "---\nkind: requirement\nid: REQ-X\n---\n## Problem\np\n## Requirements\n[REQ-X-SHOULD] The system SHOULD emit alpha.\n[REQ-X-MAY] The system MAY emit beta.\n",
+        );
+        assert!(
+            lint_requirement(&doc)
+                .iter()
+                .all(|diag| diag.rule != "clause-uncovered")
+        );
+    }
+
+    #[test]
+    fn test_clause_uncovered_ships_at_info() {
+        let doc = parse_req(
+            "---\nkind: requirement\nid: REQ-X\n---\n## Problem\np\n## Requirements\n[REQ-X-ALPHA] The system MUST emit alpha.\n",
+        );
+        let hit = lint_requirement(&doc)
+            .into_iter()
+            .find(|diag| diag.rule == "clause-uncovered")
+            .unwrap_or_else(|| panic!("an uncovered MUST clause must be diagnosed"));
+        assert_eq!(hit.severity, Severity::Info);
     }
 
     // ---- guidance lint (§6.4) ----

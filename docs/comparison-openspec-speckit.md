@@ -836,7 +836,7 @@ Spec Kit 和 OpenSpec 都会让 Agent/LLM 在文档层做分析。agent-spec 可
 
 ### Phase 1: Formulation v1 — Rule → Example 基元
 
-合约: [`specs/task-bdd-semantics-v1.spec.md`](../specs/task-bdd-semantics-v1.spec.md)。
+合约: [`specs/task-bdd-semantics-v1.spec.md`](../.agent-spec/archive/specs/task-bdd-semantics-v1.spec.md)。
 
 具体动作:
 

@@ -13,7 +13,26 @@ description: |
 
 # Agent Spec Authoring
 
-> **Version:** 3.5.0 | **Last Updated:** 2026-07-12 | **Tracks agent-spec:** 1.2.0 (stability promise)
+> **Version:** 3.6.0 | **Last Updated:** 2026-08-07 | **Tracks:** agent-spec 1.3.0
+
+## Routing: What You Hold, Where It Goes
+
+Before writing anything, route the artifact. This table copies
+`knowledge/standards/operational/id-registry.md` — the registry is the
+authority, this copy is checked against it in CI.
+
+| You hold | Directory | Id prefix | Scaffold |
+|---|---|---|---|
+| A debate: should we do this, and why | `knowledge/proposals/` | `LEP-` | `agent-spec knowledge new proposal LEP-NNN` |
+| A settled architectural ruling | `knowledge/decisions/` | `ADR-` | `agent-spec knowledge new decision ADR-NNN` |
+| An obligation the system must satisfy | `knowledge/requirements/` | `REQ-` | `agent-spec knowledge new requirement REQ-NNN` |
+| An executable, verifiable task contract | `specs/` | `task-` | `agent-spec init --level task` |
+
+HARD GATE: when the workspace has a `knowledge/requirements/` corpus, do NOT
+write a task contract without `satisfies: [REQ-*]` — the orphan-spec lint
+diagnoses the jump. "This is just a small task" and "I'll link it later" are
+the rationalizations that produced orphan contracts before; route first, then
+write.
 
 You are an expert at writing agent-spec Task Contracts. Help users by:
 - **Creating specs**: Scaffold new `.spec.md` files with correct structure (`.spec` also supported)

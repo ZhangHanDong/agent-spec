@@ -86,6 +86,10 @@ enum Commands {
         /// Output format: text, json, md
         #[arg(long, default_value = "text")]
         format: String,
+        /// Emit judgment questions for scenarios the machine could not settle
+        /// instead of the verification report.
+        #[arg(long)]
+        emit_questions: bool,
     },
     /// Render the coverage matrix (Rule × Scenario × Test × Verdict × Provenance)
     Matrix {
@@ -305,7 +309,7 @@ enum Commands {
         /// Code directory
         #[arg(long, default_value = ".")]
         code: PathBuf,
-        /// Path to AI decisions JSON file
+        /// Path to an AI decisions array or answered questions envelope
         #[arg(long)]
         decisions: PathBuf,
         /// Output format: text, json
@@ -345,11 +349,23 @@ enum Commands {
         #[command(subcommand)]
         action: WikiCommands,
     },
-    /// Lint the knowledge corpus (per-doc rules + governance integrity).
+    /// Lint the knowledge corpus (per-doc rules + governance integrity +
+    /// requirement graph/plan pipeline integrity).
     LintKnowledge {
         /// Knowledge root.
         #[arg(long, default_value = "knowledge")]
         knowledge: PathBuf,
+        /// Specs root for pipeline-integrity checks (satisfies coverage,
+        /// orphan specs).
+        #[arg(long, default_value = "specs")]
+        specs: PathBuf,
+        /// Retired orphan migration baseline. Its `specs` list must stay empty.
+        #[arg(long, default_value = ".agent-spec/orphan-baseline.json")]
+        orphan_baseline: PathBuf,
+        /// Clause-coverage baseline file; listed clause ids are exempt from
+        /// the clause-uncovered diagnostic.
+        #[arg(long, default_value = ".agent-spec/clause-baseline.json")]
+        clause_baseline: PathBuf,
         /// Output format: text | json | sarif.
         #[arg(long, default_value = "text")]
         format: String,
@@ -368,6 +384,12 @@ enum Commands {
         /// Code directory to verify against (for liveness).
         #[arg(long, default_value = ".")]
         code: PathBuf,
+    },
+    /// Knowledge-layer scaffolding: walk the pipeline forward instead of
+    /// retrofitting (see knowledge/standards/operational/id-registry.md).
+    Knowledge {
+        #[command(subcommand)]
+        action: KnowledgeCommands,
     },
     /// Trace a decision/requirement to satisfying specs and report liveness.
     Trace {
@@ -901,6 +923,36 @@ enum AtlasProviderCommands {
 }
 
 #[derive(Subcommand)]
+enum KnowledgeCommands {
+    /// Scaffold a lint-clean knowledge artifact with valid enum values
+    /// pre-filled and the layer's single exit at the end.
+    New {
+        /// Artifact kind: proposal | decision | requirement.
+        kind: String,
+        /// Stable id matching the registry prefix (LEP-* / ADR-* / REQ-*).
+        id: String,
+        /// Human-readable title; also used for the filename slug.
+        #[arg(long)]
+        title: Option<String>,
+        /// Knowledge root.
+        #[arg(long, default_value = "knowledge")]
+        knowledge: PathBuf,
+    },
+    /// Emit the decision points a knowledge artifact leaves open: a
+    /// proposal's unresolved questions and a decision's alternatives.
+    Questions {
+        /// Knowledge id (e.g. LEP-002 or ADR-003), case-insensitive.
+        id: String,
+        /// Knowledge root.
+        #[arg(long, default_value = "knowledge")]
+        knowledge: PathBuf,
+        /// Output format: text | json.
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum WikiCommands {
     /// Scaffold or refresh the repo-local code live wiki.
     Init {
@@ -1299,6 +1351,10 @@ enum RequirementCommands {
         specs: PathBuf,
         #[arg(long, default_value = "text")]
         format: String,
+        /// Agent-drafted candidate answers to merge and validate: a questions
+        /// envelope JSON whose questions carry `options`.
+        #[arg(long)]
+        options: Option<PathBuf>,
     },
     /// Generate deterministic git worktree execution entries for ready work units
     Worktrees {
@@ -1405,7 +1461,16 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             change_scope,
             ai_mode,
             format,
-        } => cmd_verify(&spec, &code, &change, &change_scope, &ai_mode, &format),
+            emit_questions,
+        } => cmd_verify(
+            &spec,
+            &code,
+            &change,
+            &change_scope,
+            &ai_mode,
+            &format,
+            emit_questions,
+        ),
         Commands::Matrix {
             spec,
             code,
@@ -1513,9 +1578,20 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Commands::Wiki { action } => cmd_wiki(action),
         Commands::LintKnowledge {
             knowledge,
+            specs,
+            orphan_baseline,
+            clause_baseline,
             format,
             gate,
-        } => cmd_lint_knowledge(&knowledge, &format, gate),
+        } => cmd_lint_knowledge(
+            &knowledge,
+            &specs,
+            &orphan_baseline,
+            &clause_baseline,
+            &format,
+            gate,
+        ),
+        Commands::Knowledge { action } => cmd_knowledge(action),
         Commands::Mcp {
             knowledge,
             specs,
@@ -1649,12 +1725,33 @@ fn cmd_verify(
     change_scope: &str,
     ai_mode: &str,
     format: &str,
+    emit_questions: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let doc = crate::spec_parser::parse_spec(spec)?;
-    let resolved = crate::spec_parser::resolve_spec(doc, &[])?;
     let change_scope = GitChangeScope::parse(change_scope)?;
     let ai_mode = parse_ai_mode(ai_mode)?;
     let effective_changes = resolve_command_change_paths(spec, code, change, change_scope)?;
+
+    // An answered envelope is consumed by `resolve-ai`, so emission uses the
+    // same gateway verifier set and records the effective replay inputs.
+    if emit_questions {
+        let envelope =
+            build_verification_question_envelope(spec, code, &effective_changes, ai_mode)?;
+        if format == "json" {
+            println!("{}", serde_json::to_string_pretty(&envelope)?);
+        } else {
+            println!("judgment questions: {}", envelope.questions.len());
+            for question in &envelope.questions {
+                println!(
+                    "{} [{}] {}",
+                    question.id, question.diagnostic_code, question.prompt
+                );
+            }
+        }
+        return Ok(());
+    }
+
+    let doc = crate::spec_parser::parse_spec(spec)?;
+    let resolved = crate::spec_parser::resolve_spec(doc, &[])?;
 
     let ctx = crate::spec_verify::VerificationContext {
         code_paths: vec![code.to_path_buf()],
@@ -1686,6 +1783,38 @@ fn cmd_verify(
         .into())
     } else {
         Ok(())
+    }
+}
+
+fn build_verification_question_envelope(
+    spec: &Path,
+    code: &Path,
+    change_paths: &[PathBuf],
+    ai_mode: crate::spec_verify::AiMode,
+) -> Result<crate::spec_knowledge::QuestionEnvelope, Box<dyn std::error::Error>> {
+    let gateway = crate::spec_gateway::SpecGateway::load(spec)?;
+    let report = gateway.verify_with_changes_and_ai_mode(code, change_paths, ai_mode)?;
+    let questions = crate::spec_knowledge::build_verification_questions(
+        &report.spec_name,
+        &spec.display().to_string(),
+        &report.results,
+    );
+    Ok(
+        crate::spec_knowledge::QuestionEnvelope::new(questions).with_verification_context(
+            crate::spec_knowledge::VerificationQuestionContext {
+                ai_mode: ai_mode_value(ai_mode).into(),
+                change_paths: change_paths.to_vec(),
+            },
+        ),
+    )
+}
+
+fn ai_mode_value(mode: crate::spec_verify::AiMode) -> &'static str {
+    match mode {
+        crate::spec_verify::AiMode::Off => "off",
+        crate::spec_verify::AiMode::Stub => "stub",
+        crate::spec_verify::AiMode::External => "external",
+        crate::spec_verify::AiMode::Caller => "caller",
     }
 }
 
@@ -3652,44 +3781,16 @@ fn cmd_init(
 
 fn cmd_lint_knowledge(
     knowledge: &Path,
+    specs: &Path,
+    orphan_baseline: &Path,
+    clause_baseline: &Path,
     format: &str,
     gate: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::spec_core::{LintDiagnostic, Severity, Span};
-    use crate::spec_knowledge::sarif::Finding;
+    use crate::spec_core::Severity;
 
-    let collection = crate::spec_knowledge::collect_knowledge_checked(knowledge);
-    let docs = collection.docs;
-    let mut findings: Vec<Finding> = Vec::new();
-    for err in collection.parse_errors {
-        findings.push(Finding {
-            uri: err.path.display().to_string(),
-            diag: LintDiagnostic {
-                rule: "knowledge-parse-error".into(),
-                severity: Severity::Error,
-                message: format!("cannot parse knowledge doc: {}", err.message),
-                span: Span::default(),
-                suggestion: Some(
-                    "fix the knowledge frontmatter or remove the malformed artifact".into(),
-                ),
-            },
-        });
-    }
-    for d in &docs {
-        let uri = d.source_path.display().to_string();
-        for diag in crate::spec_knowledge::lint_doc(d) {
-            findings.push(Finding {
-                uri: uri.clone(),
-                diag,
-            });
-        }
-    }
-    for diag in crate::spec_knowledge::lint_corpus(&docs) {
-        findings.push(Finding {
-            uri: String::new(),
-            diag,
-        });
-    }
+    let (doc_count, findings) =
+        knowledge_gate_findings(knowledge, specs, orphan_baseline, clause_baseline);
 
     let errors = findings
         .iter()
@@ -3724,8 +3825,7 @@ fn cmd_lint_knowledge(
                 );
             }
             println!(
-                "{} docs, {} findings ({errors} errors)",
-                docs.len(),
+                "{doc_count} docs, {} findings ({errors} errors)",
                 findings.len()
             );
         }
@@ -3736,6 +3836,257 @@ fn cmd_lint_knowledge(
         std::process::exit(2);
     }
     Ok(())
+}
+
+fn cmd_knowledge(action: KnowledgeCommands) -> Result<(), Box<dyn std::error::Error>> {
+    match action {
+        KnowledgeCommands::New {
+            kind,
+            id,
+            title,
+            knowledge,
+        } => {
+            let Some(kind) = crate::spec_knowledge::scaffold::KnowledgeNewKind::parse(&kind) else {
+                eprintln!(
+                    "unknown knowledge kind `{kind}`; expected proposal, decision, or requirement"
+                );
+                std::process::exit(2);
+            };
+            match crate::spec_knowledge::scaffold::knowledge_new(
+                &knowledge,
+                kind,
+                &id,
+                title.as_deref(),
+                &crate::spec_knowledge::scaffold::today_utc(),
+            ) {
+                Ok(path) => {
+                    println!("created {}", path.display());
+                    Ok(())
+                }
+                Err(msg) => {
+                    eprintln!("{msg}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        KnowledgeCommands::Questions {
+            id,
+            knowledge,
+            format,
+        } => {
+            let wanted = id.to_ascii_uppercase();
+            let collection = crate::spec_knowledge::collect_knowledge_checked(&knowledge);
+            let Some(doc) = collection.docs.iter().find(|d| d.meta.id == wanted) else {
+                eprintln!(
+                    "no knowledge artifact with id {wanted} under {}; run `agent-spec lint-knowledge` to list the corpus",
+                    knowledge.display()
+                );
+                std::process::exit(2);
+            };
+            let questions = crate::spec_knowledge::build_knowledge_questions(doc);
+            match format {
+                f if f == "json" => println!(
+                    "{}",
+                    serde_json::to_string_pretty(&crate::spec_knowledge::QuestionEnvelope::new(
+                        questions
+                    ))?
+                ),
+                _ => {
+                    println!("decision points: {}", questions.len());
+                    for question in &questions {
+                        println!(
+                            "{} [{}]{} {}",
+                            question.id,
+                            question.diagnostic_code,
+                            if question.blocking { " (blocking)" } else { "" },
+                            question.prompt
+                        );
+                        for option in &question.options {
+                            println!(
+                                "    - {}{}",
+                                option.label,
+                                if option.recommended {
+                                    " (recommended)"
+                                } else {
+                                    ""
+                                }
+                            );
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Collect every gate-relevant knowledge finding: per-doc lint, corpus
+/// governance, and the requirement graph/plan pipeline-integrity diagnostics
+/// that previously ran only under `requirements graph`/`requirements plan`.
+/// Returns `(doc_count, findings)`; extracted from `cmd_lint_knowledge` so
+/// tests can assert on findings without exercising `process::exit`.
+fn knowledge_gate_findings(
+    knowledge: &Path,
+    specs: &Path,
+    orphan_baseline: &Path,
+    clause_baseline: &Path,
+) -> (usize, Vec<crate::spec_knowledge::sarif::Finding>) {
+    use crate::spec_core::{LintDiagnostic, Severity, Span};
+    use crate::spec_knowledge::sarif::Finding;
+
+    let collection = crate::spec_knowledge::collect_knowledge_checked(knowledge);
+    let docs = collection.docs;
+    let clause_baseline = load_clause_baseline(clause_baseline);
+    let mut findings: Vec<Finding> = Vec::new();
+    for err in collection.parse_errors {
+        findings.push(Finding {
+            uri: err.path.display().to_string(),
+            diag: LintDiagnostic {
+                rule: "knowledge-parse-error".into(),
+                severity: Severity::Error,
+                message: format!("cannot parse knowledge doc: {}", err.message),
+                span: Span::default(),
+                suggestion: Some(
+                    "fix the knowledge frontmatter or remove the malformed artifact".into(),
+                ),
+            },
+        });
+    }
+    for d in &docs {
+        let uri = d.source_path.display().to_string();
+        for diag in crate::spec_knowledge::lint_doc(d) {
+            if diag.rule == "clause-uncovered"
+                && clause_baseline
+                    .iter()
+                    .any(|clause_id| diag.message.contains(&format!("MUST clause `{clause_id}`")))
+            {
+                continue;
+            }
+            findings.push(Finding {
+                uri: uri.clone(),
+                diag,
+            });
+        }
+    }
+    for diag in crate::spec_knowledge::lint_corpus(&docs) {
+        findings.push(Finding {
+            uri: String::new(),
+            diag,
+        });
+    }
+
+    // Pipeline integrity (ADR-002): fold the requirement graph/plan
+    // diagnostics into this gate. `build_requirement_plan` also validates the
+    // knowledge-only graph and reports a missing specs root as a blocking
+    // `spec-root-missing` diagnostic, so a typo cannot disable the gate. The
+    // plan's knowledge parse errors are skipped: the collection above already
+    // reported them.
+    let plan = crate::spec_knowledge::build_requirement_plan(knowledge, specs);
+    for d in &plan.diagnostics {
+        findings.push(Finding {
+            uri: String::new(),
+            diag: LintDiagnostic {
+                rule: d.code.clone(),
+                severity: match d.severity.as_str() {
+                    "error" => Severity::Error,
+                    "info" => Severity::Info,
+                    _ => Severity::Warning,
+                },
+                message: d.message.clone(),
+                span: Span::default(),
+                suggestion: None,
+            },
+        });
+    }
+
+    let baseline = load_orphan_baseline(orphan_baseline);
+    if !baseline.is_empty() {
+        findings.push(Finding {
+            uri: orphan_baseline.display().to_string(),
+            diag: LintDiagnostic {
+                rule: "orphan-baseline-retired".into(),
+                severity: Severity::Error,
+                message: format!(
+                    "the orphan-spec migration baseline is retired and must stay empty; remove all {} entr{} from {} and either declare a truthful `satisfies: [REQ-*]` link or archive each completed contract with current passing lifecycle evidence",
+                    baseline.len(),
+                    if baseline.len() == 1 { "y" } else { "ies" },
+                    orphan_baseline.display()
+                ),
+                span: Span::default(),
+                suggestion: None,
+            },
+        });
+    }
+
+    let requirements_exist = docs
+        .iter()
+        .any(|d| d.meta.kind == crate::spec_knowledge::KnowledgeKind::Requirement);
+    if requirements_exist {
+        for spec in &plan.specs {
+            if spec.level != crate::spec_core::SpecLevel::Task {
+                continue;
+            }
+            if !spec.satisfies.is_empty() {
+                continue;
+            }
+            let path_str = spec.path.display().to_string();
+            findings.push(Finding {
+                uri: path_str,
+                diag: LintDiagnostic {
+                    rule: "orphan-spec".into(),
+                    severity: Severity::Warning,
+                    message: "task spec declares no `satisfies:` while a requirements corpus exists; declare a truthful `satisfies: [REQ-*]` link, or if the contract is complete, record current passing lifecycle evidence and archive it out of the active spec set".into(),
+                    span: Span::default(),
+                    suggestion: None,
+                },
+            });
+        }
+    }
+
+    (docs.len(), findings)
+}
+
+/// Read the retired orphan-spec baseline: a JSON object
+/// `{"specs": ["path", ...]}`. A missing or unreadable file is empty. Any
+/// remaining entry is diagnosed by the gate and never exempts an orphan.
+fn load_orphan_baseline(path: &Path) -> std::collections::BTreeSet<String> {
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return Default::default();
+    };
+    serde_json::from_str::<serde_json::Value>(&raw)
+        .ok()
+        .and_then(|v| {
+            v.get("specs").and_then(|s| {
+                s.as_array().map(|arr| {
+                    arr.iter()
+                        .filter_map(|e| e.as_str().map(str::to_string))
+                        .collect()
+                })
+            })
+        })
+        .unwrap_or_default()
+}
+
+/// Read the clause-coverage baseline. The baseline is intentionally read-only:
+/// the linter can honor entries but never add or write them, so repository
+/// history is the only expansion path.
+fn load_clause_baseline(path: &Path) -> std::collections::BTreeSet<String> {
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return Default::default();
+    };
+    serde_json::from_str::<serde_json::Value>(&raw)
+        .ok()
+        .and_then(|value| {
+            value.get("clauses").and_then(|clauses| {
+                clauses.as_array().map(|entries| {
+                    entries
+                        .iter()
+                        .filter_map(|entry| entry.as_str().map(|id| id.to_ascii_uppercase()))
+                        .collect()
+                })
+            })
+        })
+        .unwrap_or_default()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4707,7 +5058,7 @@ fn cmd_requirements(action: RequirementCommands) -> Result<(), Box<dyn std::erro
                 &specs,
                 &archive_dir,
                 &id,
-                |spec_path| crate::spec_knowledge::verify_spec_rollup(spec_path, &code),
+                |spec_path| crate::spec_knowledge::verify_spec_for_status(spec_path, &code),
             )?;
             if format == "json" {
                 println!("{}", serde_json::to_string_pretty(&report)?);
@@ -4809,7 +5160,8 @@ fn cmd_requirements(action: RequirementCommands) -> Result<(), Box<dyn std::erro
             knowledge,
             specs,
             format,
-        } => cmd_requirements_questions(&knowledge, &specs, &format),
+            options,
+        } => cmd_requirements_questions(&knowledge, &specs, &format, options.as_deref()),
         RequirementCommands::Worktrees {
             knowledge,
             specs,
@@ -5530,12 +5882,54 @@ fn cmd_requirements_questions(
     knowledge: &Path,
     specs: &Path,
     format: &str,
+    options: Option<&Path>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let plan = crate::spec_knowledge::build_requirement_plan(knowledge, specs);
     let lint_diagnostics = crate::spec_knowledge::collect_clarification_lint_diagnostics(knowledge);
-    let questions = crate::spec_knowledge::build_clarification_questions(&plan, &lint_diagnostics);
+    let mut questions =
+        crate::spec_knowledge::build_clarification_questions(&plan, &lint_diagnostics);
+
+    // Agent-drafted candidates: merge by question id, then validate shape.
+    // The CLI never authors an option; it only checks the ones handed to it.
+    if let Some(path) = options {
+        let raw = std::fs::read_to_string(path).unwrap_or_else(|error| {
+            eprintln!("cannot read options envelope {}: {error}", path.display());
+            std::process::exit(2);
+        });
+        let supplied: crate::spec_knowledge::QuestionEnvelope = serde_json::from_str(&raw)
+            .unwrap_or_else(|error| {
+                eprintln!("invalid options envelope {}: {error}", path.display());
+                std::process::exit(2);
+            });
+        if supplied.envelope_version != crate::spec_knowledge::ENVELOPE_VERSION {
+            eprintln!(
+                "envelope_version {} in {} does not match this build's version {}",
+                supplied.envelope_version,
+                path.display(),
+                crate::spec_knowledge::ENVELOPE_VERSION
+            );
+            std::process::exit(2);
+        }
+        let diagnostics =
+            crate::spec_knowledge::merge_drafted_options(&mut questions, &supplied.questions);
+        if !diagnostics.is_empty() {
+            for diagnostic in &diagnostics {
+                eprintln!(
+                    "[{:?}] {} — {}",
+                    diagnostic.severity, diagnostic.rule, diagnostic.message
+                );
+                if let Some(suggestion) = &diagnostic.suggestion {
+                    eprintln!("    suggestion: {suggestion}");
+                }
+            }
+            std::process::exit(2);
+        }
+    }
     match format {
-        "json" => println!("{}", serde_json::to_string_pretty(&questions)?),
+        "json" => println!(
+            "{}",
+            serde_json::to_string_pretty(&crate::spec_knowledge::QuestionEnvelope::new(questions))?
+        ),
         _ => {
             println!("clarification questions: {}", questions.len());
             for question in questions {
@@ -6980,6 +7374,169 @@ struct ScenarioAiDecision {
     pub scenario_name: String,
     #[serde(flatten)]
     pub decision: crate::spec_core::AiDecision,
+    /// Set only for the answered verification envelope. The legacy decisions
+    /// array remains byte-for-byte unchanged and represents a model caller.
+    #[serde(skip)]
+    pub judgment_source: Option<crate::spec_core::JudgmentSource>,
+    /// Normalized evidence shown in the answered envelope. Human judgment
+    /// digests bind this reviewed snapshot, not volatile output from a rerun.
+    #[serde(skip)]
+    pub judgment_evidence: Option<Vec<String>>,
+}
+
+fn verdict_value(verdict: crate::spec_core::Verdict) -> &'static str {
+    match verdict {
+        crate::spec_core::Verdict::Pass => "pass",
+        crate::spec_core::Verdict::Fail => "fail",
+        crate::spec_core::Verdict::Skip => "skip",
+        crate::spec_core::Verdict::Uncertain => "uncertain",
+        crate::spec_core::Verdict::PendingReview => "pendingreview",
+    }
+}
+
+/// Accept the legacy resolve-ai array or an answered decision-point envelope.
+/// The latter keeps `AiDecision` field names nested under `answer`, so a
+/// harness only fills the answer rather than renaming emitted fields.
+fn parse_scenario_ai_decisions(
+    raw: &str,
+    expected_questions: &[crate::spec_knowledge::ClarificationQuestion],
+) -> Result<Vec<ScenarioAiDecision>, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(raw).map_err(|error| format!("invalid decisions JSON: {error}"))?;
+    if value.is_array() {
+        return serde_json::from_value(value)
+            .map_err(|error| format!("invalid resolve-ai decisions array: {error}"));
+    }
+
+    let envelope: crate::spec_knowledge::QuestionEnvelope = serde_json::from_value(value)
+        .map_err(|error| format!("invalid answered questions envelope: {error}"))?;
+    if envelope.envelope_version != crate::spec_knowledge::ENVELOPE_VERSION {
+        return Err(format!(
+            "answered envelope version {} does not match this build's version {}",
+            envelope.envelope_version,
+            crate::spec_knowledge::ENVELOPE_VERSION
+        ));
+    }
+    let diagnostics = crate::spec_knowledge::validate_envelope(&envelope.questions);
+    if !diagnostics.is_empty() {
+        return Err(diagnostics
+            .into_iter()
+            .map(|diagnostic| format!("{}: {}", diagnostic.rule, diagnostic.message))
+            .collect::<Vec<_>>()
+            .join("; "));
+    }
+
+    let mut seen_scenarios = std::collections::BTreeSet::new();
+    let mut seen_question_ids = std::collections::BTreeSet::new();
+    let mut decisions = Vec::new();
+    for question in envelope.questions {
+        seen_question_ids.insert(question.id.clone());
+        if question.kind != crate::spec_knowledge::QuestionKind::Verification {
+            return Err(format!(
+                "question {} is {:?}, but resolve-ai accepts only verification answers",
+                question.id, question.kind
+            ));
+        }
+        let scenario_name = question.scenario_name.clone().ok_or_else(|| {
+            format!(
+                "verification question {} has no structured scenario_name",
+                question.id
+            )
+        })?;
+        if !seen_scenarios.insert(scenario_name.clone()) {
+            return Err(format!(
+                "answered envelope names scenario `{scenario_name}` more than once"
+            ));
+        }
+        let expected = expected_questions
+            .iter()
+            .find(|expected| expected.scenario_name.as_deref() == Some(&scenario_name))
+            .ok_or_else(|| {
+                format!(
+                    "verification question {} names scenario `{scenario_name}` that is not currently unsettled",
+                    question.id
+                )
+            })?;
+        validate_answered_question_binding(&question, expected)?;
+        let judgment_evidence = question.evidence.clone();
+        let mut decision = question
+            .answer
+            .ok_or_else(|| format!("verification question {} has no answer", question.id))?;
+        if !decision.model.eq_ignore_ascii_case("human") {
+            return Err(format!(
+                "verification question {} is a human answer envelope, so answer.model must be `human`",
+                question.id
+            ));
+        }
+        decision.model = "human".into();
+        let selected = verdict_value(decision.verdict);
+        if !question
+            .options
+            .iter()
+            .any(|option| option.value == selected)
+        {
+            return Err(format!(
+                "answer for question {} selects verdict `{selected}` outside its emitted options",
+                question.id
+            ));
+        }
+        decisions.push(ScenarioAiDecision {
+            scenario_name,
+            decision,
+            judgment_source: Some(crate::spec_core::JudgmentSource::Human),
+            judgment_evidence: Some(judgment_evidence),
+        });
+    }
+    let missing = expected_questions
+        .iter()
+        .filter(|question| question.blocking && !seen_question_ids.contains(&question.id))
+        .map(|question| question.id.as_str())
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        return Err(format!(
+            "answered envelope omits blocking verification question(s): {}; answer every emitted blocking question or rerun verify --emit-questions",
+            missing.join(", ")
+        ));
+    }
+    Ok(decisions)
+}
+
+fn validate_answered_question_binding(
+    supplied: &crate::spec_knowledge::ClarificationQuestion,
+    expected: &crate::spec_knowledge::ClarificationQuestion,
+) -> Result<(), String> {
+    let same_source = canonical_existing_path(Path::new(&supplied.source))
+        == canonical_existing_path(Path::new(&expected.source));
+    let mismatch = if supplied.id != expected.id {
+        Some("id")
+    } else if supplied.target_id != expected.target_id {
+        Some("target_id")
+    } else if !same_source {
+        Some("source")
+    } else if supplied.diagnostic_code != expected.diagnostic_code {
+        Some("diagnostic_code")
+    } else if supplied.blocking != expected.blocking {
+        Some("blocking")
+    } else if supplied.prompt != expected.prompt {
+        Some("prompt")
+    } else if supplied.kind != expected.kind {
+        Some("kind")
+    } else if supplied.multi_select != expected.multi_select {
+        Some("multi_select")
+    } else if supplied.options != expected.options {
+        Some("options")
+    } else if supplied.evidence != expected.evidence {
+        Some("evidence")
+    } else {
+        None
+    };
+    if let Some(field) = mismatch {
+        return Err(format!(
+            "verification question {} no longer matches the current `{field}`; rerun verify --emit-questions and review the fresh evidence",
+            supplied.id
+        ));
+    }
+    Ok(())
 }
 
 /// Merge externally-resolved AI decisions into verification results, replacing
@@ -6994,11 +7551,44 @@ fn merge_ai_decisions(
             .iter_mut()
             .find(|r| r.scenario_name == decision.scenario_name)
         {
-            // Only resolve Skip verdicts: a mechanically-proven pass/fail must
-            // never be overridden by a caller AI decision (mechanical is the moat).
-            if result.verdict != crate::spec_core::Verdict::Skip {
+            // Model callers preserve the legacy Skip-only moat. A human answer
+            // envelope may additionally settle the two explicitly-emitted
+            // non-mechanical states, but never a mechanical pass or fail.
+            let can_resolve = match decision.judgment_source {
+                Some(crate::spec_core::JudgmentSource::Human) => matches!(
+                    result.verdict,
+                    crate::spec_core::Verdict::Skip
+                        | crate::spec_core::Verdict::Uncertain
+                        | crate::spec_core::Verdict::PendingReview
+                ),
+                _ => result.verdict == crate::spec_core::Verdict::Skip,
+            };
+            if !can_resolve {
                 continue;
             }
+            let prior_evidence = result
+                .evidence
+                .iter()
+                .map(|evidence| {
+                    serde_json::to_string(evidence)
+                        .unwrap_or_else(|_| "<unserializable evidence>".into())
+                })
+                .collect::<Vec<_>>();
+            let judgment = decision.judgment_source.and_then(|source| {
+                (source == crate::spec_core::JudgmentSource::Human).then(|| {
+                    let reviewed_evidence = decision
+                        .judgment_evidence
+                        .as_deref()
+                        .unwrap_or(&prior_evidence);
+                    crate::spec_core::HumanJudgment::new(
+                        source,
+                        decision.decision.verdict,
+                        decision.decision.reasoning.clone(),
+                        decision.scenario_name.clone(),
+                        reviewed_evidence,
+                    )
+                })
+            });
             result.verdict = decision.decision.verdict;
             result.step_results = result
                 .step_results
@@ -7013,11 +7603,36 @@ fn merge_ai_decisions(
                 model: decision.decision.model.clone(),
                 confidence: decision.decision.confidence,
                 reasoning: decision.decision.reasoning.clone(),
+                human_judgment: judgment,
             }];
             result.provenance = Some(crate::spec_core::EvidenceProvenance::Inferential);
         }
     }
     results
+}
+
+fn answered_verification_context(
+    raw: &str,
+) -> Result<(crate::spec_verify::AiMode, Vec<PathBuf>), String> {
+    let value: serde_json::Value =
+        serde_json::from_str(raw).map_err(|error| format!("invalid decisions JSON: {error}"))?;
+    if value.is_array() {
+        return Ok((crate::spec_verify::AiMode::Caller, Vec::new()));
+    }
+    let envelope: crate::spec_knowledge::QuestionEnvelope = serde_json::from_value(value)
+        .map_err(|error| format!("invalid answered questions envelope: {error}"))?;
+    if envelope.envelope_version != crate::spec_knowledge::ENVELOPE_VERSION {
+        return Err(format!(
+            "answered envelope version {} does not match this build's version {}",
+            envelope.envelope_version,
+            crate::spec_knowledge::ENVELOPE_VERSION
+        ));
+    }
+    let Some(context) = envelope.verification_context else {
+        return Ok((crate::spec_verify::AiMode::Caller, Vec::new()));
+    };
+    let ai_mode = parse_ai_mode(&context.ai_mode).map_err(|error| error.to_string())?;
+    Ok((ai_mode, context.change_paths))
 }
 
 fn cmd_resolve_ai(
@@ -7026,23 +7641,59 @@ fn cmd_resolve_ai(
     decisions_path: &Path,
     format: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // 1. Load spec and run mechanical verification (caller mode skips AI internally)
-    let gw = crate::spec_gateway::SpecGateway::load(spec)?;
-    let verify_report = gw.verify_with_ai_mode(code, crate::spec_verify::AiMode::Caller)?;
-
-    // 2. Read external AI decisions
+    // 1. Load the answer and recover the exact verification configuration
+    // emitted with an envelope. Legacy arrays retain Caller/no-change behavior.
     let decisions_json = std::fs::read_to_string(decisions_path)?;
-    let decisions: Vec<ScenarioAiDecision> = serde_json::from_str(&decisions_json)?;
+    let (ai_mode, change_paths) = answered_verification_context(&decisions_json)
+        .map_err(|error| format!("{}: {error}", decisions_path.display()))?;
 
-    // 3. Merge: replace Skip verdicts with AI decisions
+    // 2. Replay the same verifier set/configuration against current state.
+    let gw = crate::spec_gateway::SpecGateway::load(spec)?;
+    let verify_report = gw.verify_with_changes_and_ai_mode(code, &change_paths, ai_mode)?;
+
+    // 3. Bind every supplied answer to the fresh question set.
+    let expected_questions = crate::spec_knowledge::build_verification_questions(
+        &verify_report.spec_name,
+        &spec.display().to_string(),
+        &verify_report.results,
+    );
+    let decisions = parse_scenario_ai_decisions(&decisions_json, &expected_questions)
+        .map_err(|error| format!("{}: {error}", decisions_path.display()))?;
+
+    // 4. Merge answers without overriding mechanically decided verdicts.
     let merged_results = merge_ai_decisions(verify_report.results, &decisions);
 
     let merged_report =
         crate::spec_core::VerificationReport::from_results(verify_report.spec_name, merged_results);
 
-    let passing = gw.is_passing(&merged_report);
+    if merged_report.results.iter().any(|result| {
+        result.evidence.iter().any(|evidence| {
+            matches!(
+                evidence,
+                crate::spec_core::Evidence::AiAnalysis {
+                    human_judgment: Some(_),
+                    ..
+                }
+            )
+        })
+    }) {
+        write_lifecycle_requirement_trace(
+            spec,
+            code,
+            code,
+            &gw,
+            &merged_report,
+            current_unix_timestamp(),
+            vcs::get_vcs_context(code),
+        )?;
+    }
 
-    // 4. Output
+    // resolve-ai is an acceptance path: no unresolved human review may be
+    // reported as success merely because the general lifecycle default is
+    // `review-mode auto`.
+    let passing = gw.is_passing_with_review_mode(&merged_report, "strict");
+
+    // 5. Output
     if format == "json" {
         let json_out = serde_json::json!({
             "stage": "resolve-ai",
@@ -7805,6 +8456,380 @@ name: "退款"
         }
     }
 
+    fn knowledge_gate_fixture(prefix: &str, req: bool, spec: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let dir = make_temp_dir(prefix);
+        let knowledge = dir.join("knowledge");
+        let specs = dir.join("specs");
+        fs::create_dir_all(knowledge.join("requirements")).unwrap();
+        fs::create_dir_all(&specs).unwrap();
+        if req {
+            fs::write(
+                knowledge.join("requirements/req-a.md"),
+                "---\nkind: requirement\nid: REQ-A\ntitle: \"A\"\nstatus: accepted\nliveness: auto\n---\n## Problem\nA.\n## Requirements\n[REQ-A] The system MUST do A.\n## Scenarios\nScenario: A\n  Given input A\n  When A runs\n  Then output A is visible\n## Source Trace\n- test\n## Open Questions\nNone.\n",
+            )
+            .unwrap();
+        }
+        fs::write(specs.join("task-a.spec.md"), spec).unwrap();
+        (dir, knowledge, specs)
+    }
+
+    #[test]
+    fn test_gate_includes_graph_and_plan_diagnostics() {
+        let (dir, knowledge, specs) = knowledge_gate_fixture(
+            "knowledge-gate-merged",
+            true,
+            "spec: task\nname: \"A\"\nsatisfies: [REQ-MISSING]\n---\n## Intent\nA.\n## Completion Criteria\nScenario: A\n  Test: test_a\n  Given A\n  When A\n  Then A\n",
+        );
+        let (_, findings) = super::knowledge_gate_findings(
+            &knowledge,
+            &specs,
+            &dir.join("absent.json"),
+            &dir.join("absent-clauses.json"),
+        );
+        let dangling = findings
+            .iter()
+            .find(|f| f.diag.rule == "dangling-spec-coverage")
+            .expect("plan diagnostics must reach the knowledge gate");
+        assert_eq!(dangling.diag.severity, crate::spec_core::Severity::Error);
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.diag.rule == "requirement-uncovered"),
+            "graph/plan validation must reach the knowledge gate"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_gate_rejects_missing_specs_root_without_skipping_plan() {
+        let (dir, knowledge, specs) = knowledge_gate_fixture(
+            "knowledge-gate-missing-specs",
+            true,
+            "spec: task\nname: \"A\"\nsatisfies: [REQ-A]\n---\n## Intent\nA.\n## Completion Criteria\nScenario: A\n  Test: test_a\n  Given A\n  When A\n  Then A\n",
+        );
+        let missing_specs = dir.join("missing-specs");
+        let (_, findings) = super::knowledge_gate_findings(
+            &knowledge,
+            &missing_specs,
+            &dir.join("absent.json"),
+            &dir.join("absent-clauses.json"),
+        );
+        let missing = findings
+            .iter()
+            .find(|finding| finding.diag.rule == "spec-root-missing")
+            .expect("a missing --specs root must be a gate diagnostic");
+        assert_eq!(missing.diag.severity, crate::spec_core::Severity::Error);
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.diag.rule == "requirement-uncovered"),
+            "graph/plan validation still runs when the specs root is missing"
+        );
+        assert!(specs.is_dir(), "the fixture's real specs root still exists");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_orphan_spec_is_warning_with_current_remedies() {
+        let (dir, knowledge, specs) = knowledge_gate_fixture(
+            "knowledge-gate-orphan",
+            true,
+            "spec: task\nname: \"A\"\n---\n## Intent\nA.\n## Completion Criteria\nScenario: A\n  Test: test_a\n  Given A\n  When A\n  Then A\n",
+        );
+        let (_, findings) = super::knowledge_gate_findings(
+            &knowledge,
+            &specs,
+            &dir.join("absent.json"),
+            &dir.join("absent-clauses.json"),
+        );
+        let orphan = findings
+            .iter()
+            .find(|f| f.diag.rule == "orphan-spec")
+            .expect("orphan spec must be diagnosed when a requirements corpus exists");
+        assert_eq!(orphan.diag.severity, crate::spec_core::Severity::Warning);
+        assert!(
+            orphan.diag.message.contains("satisfies: [REQ-*]")
+                && orphan.diag.message.contains("passing lifecycle evidence")
+                && orphan.diag.message.contains("archive"),
+            "message must name both remedies: {}",
+            orphan.diag.message
+        );
+        assert!(
+            !orphan.diag.message.contains("baseline"),
+            "a retired baseline must not be recommended as remediation: {}",
+            orphan.diag.message
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_non_empty_orphan_baseline_is_rejected_after_retirement() {
+        let (dir, knowledge, specs) = knowledge_gate_fixture(
+            "knowledge-gate-baseline",
+            true,
+            "spec: task\nname: \"A\"\n---\n## Intent\nA.\n## Completion Criteria\nScenario: A\n  Test: test_a\n  Given A\n  When A\n  Then A\n",
+        );
+        let baseline = dir.join(".agent-spec/orphan-baseline.json");
+        fs::create_dir_all(baseline.parent().unwrap()).unwrap();
+        let listed = "specs/task-a.spec.md";
+        fs::write(
+            &baseline,
+            serde_json::to_string(&serde_json::json!({ "specs": [listed] })).unwrap(),
+        )
+        .unwrap();
+        let (_, findings) = super::knowledge_gate_findings(
+            &knowledge,
+            &specs,
+            &baseline,
+            &dir.join("absent-clauses.json"),
+        );
+        let retired = findings
+            .iter()
+            .find(|finding| finding.diag.rule == "orphan-baseline-retired")
+            .expect("a non-empty retired baseline must be rejected");
+        assert_eq!(retired.diag.severity, crate::spec_core::Severity::Error);
+        assert!(
+            retired.diag.message.contains("must stay empty")
+                && retired.diag.message.contains("satisfies: [REQ-*]")
+                && retired.diag.message.contains("archive"),
+            "retirement diagnostic must name the two valid dispositions: {}",
+            retired.diag.message
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.diag.rule == "orphan-spec"),
+            "a retired baseline entry must not suppress the orphan diagnostic"
+        );
+
+        fs::remove_file(knowledge.join("requirements/req-a.md")).unwrap();
+        let (_, findings_without_requirements) = super::knowledge_gate_findings(
+            &knowledge,
+            &specs,
+            &baseline,
+            &dir.join("absent-clauses.json"),
+        );
+        assert!(
+            findings_without_requirements
+                .iter()
+                .any(|finding| finding.diag.rule == "orphan-baseline-retired"),
+            "baseline retirement must be enforced even without a requirements corpus"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    const RETIRED_ORPHAN_SPECS: &[&str] = &[
+        "task-add-ai-verifier-skeleton.spec.md",
+        "task-add-behavior-completeness-linters.spec.md",
+        "task-audit-v1.spec.md",
+        "task-bdd-semantics-v1.spec.md",
+        "task-capability-promote-v1.spec.md",
+        "task-coverage-matrix-v1.spec.md",
+        "task-derive-change-set-from-staged-git-index.spec.md",
+        "task-discover-from-codebase-v1.spec.md",
+        "task-discovery-questions-v1.spec.md",
+        "task-enforce-boundaries-with-explicit-change-set.spec.md",
+        "task-fail-on-skipped.spec.md",
+        "task-fix-contract-fidelity.spec.md",
+        "task-fix-inheritance.spec.md",
+        "task-formalize-test-binding.spec.md",
+        "task-gen-integrations-v1.spec.md",
+        "task-host-injected-ai-backend.spec.md",
+        "task-jj-vcs-integration.spec.md",
+        "task-lint-ack-dimensions-v1.spec.md",
+        "task-make-contract-default.spec.md",
+        "task-phase1-contract-review-loop.spec.md",
+        "task-phase2-run-history-and-vcs-context.spec.md",
+        "task-phase3-spec-governance.spec.md",
+        "task-phase4-ai-verification-expansion.spec.md",
+        "task-phase5-ecosystem-integrations.spec.md",
+        "task-phase6-advanced-verification.spec.md",
+        "task-pluggable-ai-backend-interface.spec.md",
+        "task-probe-abstraction-v1.spec.md",
+        "task-require-explicit-test-selectors.spec.md",
+        "task-ship-claude-code-tool-first-skills.spec.md",
+        "task-stage-roadmap-specs.spec.md",
+        "task-structural-check-v1.spec.md",
+        "task-structure-test-selectors.spec.md",
+        "task-support-change-scope-in-verify-and-lifecycle.spec.md",
+        "task-support-git-worktree-change-scope.spec.md",
+        "task-support-spec-md-extension.spec.md",
+        "task-support-step-tables.spec.md",
+    ];
+
+    #[test]
+    fn test_repository_orphan_baseline_is_empty() {
+        let baseline_path = repo_root().join(".agent-spec/orphan-baseline.json");
+        let baseline: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(&baseline_path).expect("tracked orphan baseline must exist"),
+        )
+        .expect("tracked orphan baseline must be valid JSON");
+        let entries = baseline["specs"]
+            .as_array()
+            .expect("orphan baseline must contain a specs array");
+        assert!(
+            entries.is_empty(),
+            "the retired orphan baseline must stay empty: {}",
+            baseline_path.display()
+        );
+    }
+
+    #[test]
+    fn test_repository_retired_orphans_have_archive_evidence() {
+        let root = repo_root();
+        let summary_path = root.join("knowledge/context/spec-archives.md");
+        let summary = fs::read_to_string(&summary_path)
+            .expect("the archive summary must preserve retirement evidence");
+        assert_eq!(
+            RETIRED_ORPHAN_SPECS.len(),
+            36,
+            "the retirement inventory must remain the 1.3.0 baseline set"
+        );
+        for file_name in RETIRED_ORPHAN_SPECS {
+            let active = root.join("specs").join(file_name);
+            let archived = root.join(".agent-spec/archive/specs").join(file_name);
+            assert!(
+                !active.exists(),
+                "retired orphan remains in the active scan set: {}",
+                active.display()
+            );
+            assert!(
+                archived.is_file(),
+                "retired orphan has no archived contract: {}",
+                archived.display()
+            );
+            let retired_path = format!("specs/{file_name}");
+            assert!(
+                summary.contains(&retired_path),
+                "archive summary omits retired path {retired_path}: {}",
+                summary_path.display()
+            );
+        }
+    }
+
+    #[test]
+    fn test_repository_active_task_specs_are_requirement_linked() {
+        let root = repo_root();
+        let plan = crate::spec_knowledge::build_requirement_plan(
+            &root.join("knowledge"),
+            &root.join("specs"),
+        );
+        let orphans = plan
+            .specs
+            .iter()
+            .filter(|spec| {
+                spec.level == crate::spec_core::SpecLevel::Task && spec.satisfies.is_empty()
+            })
+            .map(|spec| spec.path.display().to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            orphans.is_empty(),
+            "active task specs must be requirement-linked: {orphans:#?}"
+        );
+        let dangling = plan
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "dangling-spec-coverage")
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            dangling.is_empty(),
+            "active satisfies links must resolve: {dangling:#?}"
+        );
+    }
+
+    #[test]
+    fn test_orphan_retirement_contract_excludes_clause_migration() {
+        let contract =
+            fs::read_to_string(repo_root().join("specs/task-orphan-baseline-retirement.spec.md"))
+                .expect("orphan retirement contract must exist");
+        assert!(contract.contains("clause baseline 的清理或严重级别升级"));
+        assert!(contract.contains("不改动 clause-coverage 实现与 clause baseline"));
+    }
+
+    #[test]
+    fn test_clause_baseline_exempts_listed_clauses() {
+        let (dir, knowledge, specs) = knowledge_gate_fixture(
+            "knowledge-gate-clause-baseline",
+            true,
+            "spec: task\nname: \"A\"\nsatisfies: [REQ-A]\n---\n## Intent\nA.\n## Completion Criteria\nScenario: A\n  Test: test_a\n  Given A\n  When A\n  Then A\n",
+        );
+        let baseline = dir.join(".agent-spec/clause-baseline.json");
+        fs::create_dir_all(baseline.parent().unwrap()).unwrap();
+        fs::write(
+            &baseline,
+            serde_json::to_string(&serde_json::json!({ "clauses": ["REQ-A"] })).unwrap(),
+        )
+        .unwrap();
+        let (_, findings) = super::knowledge_gate_findings(
+            &knowledge,
+            &specs,
+            &dir.join(".agent-spec/orphan-baseline.json"),
+            &baseline,
+        );
+        assert!(
+            !findings
+                .iter()
+                .any(|finding| finding.diag.rule == "clause-uncovered"),
+            "a listed clause must be exempt from the knowledge gate"
+        );
+        assert!(
+            findings
+                .iter()
+                .all(|finding| finding.diag.severity != crate::spec_core::Severity::Error),
+            "the gate must remain successful"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_orphan_spec_applies_only_to_task_contracts() {
+        let (dir, knowledge, specs) = knowledge_gate_fixture(
+            "knowledge-gate-project-not-orphan",
+            true,
+            "spec: task\nname: \"A\"\nsatisfies: [REQ-A]\n---\n## Intent\nA.\n## Completion Criteria\nScenario: A\n  Test: test_a\n  Given A\n  When A\n  Then A\n",
+        );
+        fs::write(
+            specs.join("project.spec.md"),
+            "spec: project\nname: \"Project rules\"\n---\n## Intent\nShared project rules.\n",
+        )
+        .unwrap();
+
+        let (_, findings) = super::knowledge_gate_findings(
+            &knowledge,
+            &specs,
+            &dir.join("absent.json"),
+            &dir.join("absent-clauses.json"),
+        );
+        assert!(
+            !findings.iter().any(|finding| {
+                finding.diag.rule == "orphan-spec" && finding.uri.ends_with("project.spec.md")
+            }),
+            "project/org/capability specs are not task contracts and need no satisfies link"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_orphan_spec_silent_without_requirements() {
+        let (dir, knowledge, specs) = knowledge_gate_fixture(
+            "knowledge-gate-no-reqs",
+            false,
+            "spec: task\nname: \"A\"\n---\n## Intent\nA.\n## Completion Criteria\nScenario: A\n  Test: test_a\n  Given A\n  When A\n  Then A\n",
+        );
+        let (_, findings) = super::knowledge_gate_findings(
+            &knowledge,
+            &specs,
+            &dir.join("absent.json"),
+            &dir.join("absent-clauses.json"),
+        );
+        assert!(
+            !findings.iter().any(|f| f.diag.rule == "orphan-spec"),
+            "no requirements corpus means no orphan-spec claims"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn test_requirements_plan_json_includes_batches_edges_and_coverage() {
         let dir = make_temp_dir("requirements-plan-cli-json");
@@ -7835,6 +8860,424 @@ name: "退款"
         assert!(json.contains("\"kind\": \"work_unit\""));
 
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_requirements_questions_emit_requirements_kind() {
+        let (dir, knowledge, specs) = knowledge_gate_fixture(
+            "emit-req-kind",
+            true,
+            "spec: task\nname: \"A\"\nsatisfies: [REQ-A]\n---\n## Intent\nA.\n## Completion Criteria\nScenario: A\n  Test: test_a\n  Given A\n  When A\n  Then A\n",
+        );
+        fs::write(
+            knowledge.join("requirements/req-compound.md"),
+            "---\nkind: requirement\nid: REQ-COMPOUND\ntitle: \"C\"\nstatus: accepted\nliveness: auto\n---\n## Problem\nC.\n## Requirements\n[REQ-COMPOUND] The system MUST parse input and MUST write output.\n## Scenarios\nScenario: C\n  Given input C\n  When C runs\n  Then output C is visible\n## Source Trace\n- test\n## Open Questions\nNone.\n",
+        )
+        .unwrap();
+
+        let plan = crate::spec_knowledge::build_requirement_plan(&knowledge, &specs);
+        let diags = crate::spec_knowledge::collect_clarification_lint_diagnostics(&knowledge);
+        let questions = crate::spec_knowledge::build_clarification_questions(&plan, &diags);
+        let compound = questions
+            .iter()
+            .find(|q| q.diagnostic_code == "requirement-compound-clause")
+            .unwrap_or_else(|| panic!("compound clause must raise a question: {questions:?}"));
+        assert_eq!(
+            compound.kind,
+            crate::spec_knowledge::QuestionKind::Requirements
+        );
+        assert_eq!(compound.diagnostic_code, "requirement-compound-clause");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_requirements_questions_validates_supplied_options() {
+        // Five candidates exceed the bound; validation must reject them before
+        // anything is merged.
+        let drafted = crate::spec_knowledge::QuestionEnvelope::new(vec![
+            crate::spec_knowledge::ClarificationQuestion {
+                id: "Q-REQ-A-1".into(),
+                target_id: "REQ-A".into(),
+                diagnostic_code: "requirement-compound-clause".into(),
+                blocking: false,
+                prompt: "p".into(),
+                source: "knowledge/requirements/req-a.md".into(),
+                kind: crate::spec_knowledge::QuestionKind::Requirements,
+                multi_select: false,
+                options: (1..=5)
+                    .map(|i| crate::spec_knowledge::DecisionOption {
+                        label: format!("O{i}"),
+                        description: "d".into(),
+                        value: format!("v{i}"),
+                        recommended: false,
+                    })
+                    .collect(),
+                evidence: Vec::new(),
+                scenario_name: None,
+                answer: None,
+            },
+        ]);
+        let diagnostics = crate::spec_knowledge::validate_envelope(&drafted.questions);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.rule == "envelope-too-many-options"),
+            "supplied options are validated: {diagnostics:?}"
+        );
+        // Round-trips through the on-disk form the CLI reads.
+        let json = serde_json::to_string(&drafted).unwrap();
+        let parsed: crate::spec_knowledge::QuestionEnvelope = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            parsed.envelope_version,
+            crate::spec_knowledge::ENVELOPE_VERSION
+        );
+        assert_eq!(parsed.questions[0].options.len(), 5);
+    }
+
+    #[test]
+    fn test_emission_points_emit_empty_set_without_questions() {
+        let dir = make_temp_dir("emit-empty");
+        let knowledge = dir.join("knowledge");
+        let specs = dir.join("specs");
+        fs::create_dir_all(knowledge.join("requirements")).unwrap();
+        fs::create_dir_all(knowledge.join("proposals")).unwrap();
+        fs::create_dir_all(&specs).unwrap();
+
+        // Requirements stage: empty corpus, no questions.
+        let plan = crate::spec_knowledge::build_requirement_plan(&knowledge, &specs);
+        let diags = crate::spec_knowledge::collect_clarification_lint_diagnostics(&knowledge);
+        assert!(crate::spec_knowledge::build_clarification_questions(&plan, &diags).is_empty());
+
+        // Knowledge stage: a proposal with nothing unresolved.
+        let doc = crate::spec_knowledge::parse_knowledge_str(
+            "---\nkind: proposal\nid: LEP-020\nstatus: accepted\nliveness: n/a\n---\n## Context\nc\n## Decision\nd\n## Consequences\ng/b\n## Unresolved Questions\n\nNone.\n",
+            Path::new("lep-020.md"),
+        )
+        .unwrap();
+        assert!(crate::spec_knowledge::build_knowledge_questions(&doc).is_empty());
+
+        // Verification stage: everything mechanically settled.
+        assert!(
+            crate::spec_knowledge::build_verification_questions("S", "specs/s.spec.md", &[])
+                .is_empty()
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_emitted_judgment_answers_feed_resolve_ai() {
+        // An answered judgment question becomes a ScenarioAiDecision without
+        // any field renaming: the emitted vocabulary is resolve-ai's own.
+        let results = vec![crate::spec_core::ScenarioResult {
+            scenario_name: "design intent holds".into(),
+            verdict: crate::spec_core::Verdict::Skip,
+            step_results: Vec::new(),
+            evidence: Vec::new(),
+            duration_ms: 0,
+            provenance: None,
+        }];
+        let mut questions =
+            crate::spec_knowledge::build_verification_questions("S", "specs/s.spec.md", &results);
+        assert_eq!(questions.len(), 1);
+        let expected_questions = questions.clone();
+        questions[0].answer = Some(crate::spec_core::AiDecision {
+            model: "human".into(),
+            confidence: 1.0,
+            verdict: crate::spec_core::Verdict::Pass,
+            reasoning: "reviewed against the contract".into(),
+        });
+
+        let answered_envelope =
+            serde_json::to_string(&crate::spec_knowledge::QuestionEnvelope::new(questions))
+                .unwrap();
+        let parsed = super::parse_scenario_ai_decisions(&answered_envelope, &expected_questions)
+            .expect("an answered emitted envelope feeds resolve-ai directly");
+        assert_eq!(parsed[0].decision.verdict, crate::spec_core::Verdict::Pass);
+        assert_eq!(parsed[0].scenario_name, "design intent holds");
+        let merged = super::merge_ai_decisions(results, &parsed);
+        assert!(matches!(
+            merged[0].evidence.first(),
+            Some(crate::spec_core::Evidence::AiAnalysis {
+                human_judgment: Some(crate::spec_core::HumanJudgment {
+                    source: crate::spec_core::JudgmentSource::Human,
+                    ..
+                }),
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn test_resolve_ai_keeps_legacy_decisions_array() {
+        let raw = serde_json::json!([{
+            "scenario_name": "legacy scenario",
+            "model": "caller-model",
+            "confidence": 0.75,
+            "verdict": "pass",
+            "reasoning": "legacy payload remains accepted"
+        }])
+        .to_string();
+
+        let parsed = super::parse_scenario_ai_decisions(&raw, &[])
+            .expect("the pre-envelope decisions array remains accepted");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].scenario_name, "legacy scenario");
+        assert_eq!(parsed[0].decision.verdict, crate::spec_core::Verdict::Pass);
+        assert_eq!(parsed[0].decision.model, "caller-model");
+        assert_eq!(parsed[0].judgment_source, None);
+    }
+
+    #[test]
+    fn test_answered_envelope_rejects_stale_or_foreign_binding() {
+        let results = vec![crate::spec_core::ScenarioResult {
+            scenario_name: "manual review".into(),
+            verdict: crate::spec_core::Verdict::Skip,
+            step_results: Vec::new(),
+            evidence: vec![crate::spec_core::Evidence::PatternMatch {
+                pattern: "current".into(),
+                matched: false,
+                locations: Vec::new(),
+            }],
+            duration_ms: 0,
+            provenance: None,
+        }];
+        let expected = crate::spec_knowledge::build_verification_questions(
+            "Current Spec",
+            "specs/current.spec.md",
+            &results,
+        );
+        let mut stale = expected.clone();
+        stale[0].evidence = vec!["stale evidence".into()];
+        stale[0].answer = Some(crate::spec_core::AiDecision {
+            model: "human".into(),
+            confidence: 1.0,
+            verdict: crate::spec_core::Verdict::Pass,
+            reasoning: "reviewed old evidence".into(),
+        });
+        let raw =
+            serde_json::to_string(&crate::spec_knowledge::QuestionEnvelope::new(stale)).unwrap();
+        let error = super::parse_scenario_ai_decisions(&raw, &expected).unwrap_err();
+        assert!(error.contains("current `evidence`"), "{error}");
+
+        let mut foreign = expected.clone();
+        foreign[0].target_id = "Foreign Spec".into();
+        foreign[0].answer = Some(crate::spec_core::AiDecision {
+            model: "human".into(),
+            confidence: 1.0,
+            verdict: crate::spec_core::Verdict::Pass,
+            reasoning: "reviewed another contract".into(),
+        });
+        let raw =
+            serde_json::to_string(&crate::spec_knowledge::QuestionEnvelope::new(foreign)).unwrap();
+        let error = super::parse_scenario_ai_decisions(&raw, &expected).unwrap_err();
+        assert!(error.contains("current `target_id`"), "{error}");
+    }
+
+    #[test]
+    fn test_answered_envelope_requires_every_blocking_question() {
+        let results = ["first review", "second review"]
+            .into_iter()
+            .map(|scenario_name| crate::spec_core::ScenarioResult {
+                scenario_name: scenario_name.into(),
+                verdict: crate::spec_core::Verdict::PendingReview,
+                step_results: Vec::new(),
+                evidence: Vec::new(),
+                duration_ms: 0,
+                provenance: None,
+            })
+            .collect::<Vec<_>>();
+        let expected = crate::spec_knowledge::build_verification_questions(
+            "Current Spec",
+            "specs/current.spec.md",
+            &results,
+        );
+        let mut answered = expected[0].clone();
+        answered.answer = Some(crate::spec_core::AiDecision {
+            model: "human".into(),
+            confidence: 1.0,
+            verdict: crate::spec_core::Verdict::Pass,
+            reasoning: "reviewed the first scenario".into(),
+        });
+        let raw = serde_json::to_string(&crate::spec_knowledge::QuestionEnvelope::new(vec![
+            answered,
+        ]))
+        .unwrap();
+
+        let error = super::parse_scenario_ai_decisions(&raw, &expected).unwrap_err();
+        assert!(
+            error.contains("omits blocking verification question"),
+            "{error}"
+        );
+        assert!(error.contains(&expected[1].id), "{error}");
+    }
+
+    #[test]
+    fn test_verification_envelope_records_replay_context() {
+        let dir = make_temp_dir("emit-questions-stub-mode");
+        let spec_path = dir.join("task.spec.md");
+        fs::write(
+            &spec_path,
+            "spec: task\nname: Replayable\n---\n## Intent\nReplay.\n## Completion Criteria\nScenario: Review\n  Given input\n  When reviewed\n  Then output is accepted\n",
+        )
+        .unwrap();
+
+        let explicit_change = vec![PathBuf::from("src/lib.rs")];
+        let envelope = super::build_verification_question_envelope(
+            &spec_path,
+            &dir,
+            &explicit_change,
+            crate::spec_verify::AiMode::Stub,
+        )
+        .unwrap();
+        let context = envelope.verification_context.as_ref().unwrap();
+        assert_eq!(context.ai_mode, "stub");
+        assert_eq!(context.change_paths, explicit_change);
+        assert_eq!(envelope.questions[0].diagnostic_code, "uncertain");
+
+        let mut answered = envelope.clone();
+        answered.questions[0].answer = Some(crate::spec_core::AiDecision {
+            model: "human".into(),
+            confidence: 1.0,
+            verdict: crate::spec_core::Verdict::Pass,
+            reasoning: "reviewed stub uncertainty".into(),
+        });
+        let raw = serde_json::to_string(&answered).unwrap();
+        let (ai_mode, change_paths) = super::answered_verification_context(&raw).unwrap();
+        assert_eq!(ai_mode, crate::spec_verify::AiMode::Stub);
+        assert_eq!(change_paths, explicit_change);
+
+        let gateway = crate::spec_gateway::SpecGateway::load(&spec_path).unwrap();
+        let report = gateway
+            .verify_with_changes_and_ai_mode(&dir, &change_paths, ai_mode)
+            .unwrap();
+        let expected = crate::spec_knowledge::build_verification_questions(
+            &report.spec_name,
+            &spec_path.display().to_string(),
+            &report.results,
+        );
+        let decisions = super::parse_scenario_ai_decisions(&raw, &expected).unwrap();
+        let merged = super::merge_ai_decisions(report.results, &decisions);
+        assert_eq!(merged[0].verdict, crate::spec_core::Verdict::Pass);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_resolve_ai_writes_human_judgment_to_requirement_trace() {
+        let dir = make_temp_dir("resolve-ai-human-trace");
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::create_dir_all(dir.join("knowledge/requirements")).unwrap();
+        fs::create_dir_all(dir.join("specs")).unwrap();
+        fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"resolve-ai-human-trace\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("src/lib.rs"),
+            "pub fn fixture() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn manual_review_test() {}\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("knowledge/requirements/req-human-trace.md"),
+            "---\nkind: requirement\nid: REQ-HUMAN-TRACE\ntitle: \"Human trace\"\nstatus: accepted\nliveness: auto\n---\n\n## Problem\n\nA non-mechanical verdict needs provenance.\n\n## Requirements\n\n[REQ-HUMAN-TRACE] The system MUST retain human judgment evidence.\n\n## Scenarios\n\nScenario: Manual review\n  Given evidence requiring judgment\n  When a human resolves it\n  Then the trace records the judgment class\n\n## Source Trace\n\n- test\n\n## Open Questions\n\nNone.\n",
+        )
+        .unwrap();
+        let spec_path = dir.join("specs/task-human-trace.spec.md");
+        fs::write(
+            &spec_path,
+            "spec: task\nname: \"Human Trace\"\nsatisfies: [REQ-HUMAN-TRACE]\n---\n\n## Intent\n\nRetain judgment provenance.\n\n## Completion Criteria\n\nScenario: Manual review\n  Review: human\n  Test: manual_review_test\n  Given evidence requiring judgment\n  When a human resolves it\n  Then the trace records the judgment class\n",
+        )
+        .unwrap();
+
+        let mut envelope = super::build_verification_question_envelope(
+            &spec_path,
+            &dir,
+            &[],
+            crate::spec_verify::AiMode::Off,
+        )
+        .unwrap();
+        assert_eq!(envelope.questions[0].diagnostic_code, "pending-review");
+        let reviewed_evidence = envelope.questions[0].evidence.clone();
+        let empty_legacy = dir.join("empty-legacy-decisions.json");
+        fs::write(&empty_legacy, "[]").unwrap();
+        let error = super::cmd_resolve_ai(&spec_path, &dir, &empty_legacy, "json")
+            .expect_err("an unresolved pending review must not exit successfully")
+            .to_string();
+        assert!(error.contains("pending_review"), "{error}");
+
+        envelope.questions[0].answer = Some(crate::spec_core::AiDecision {
+            model: "human".into(),
+            confidence: 1.0,
+            verdict: crate::spec_core::Verdict::Pass,
+            reasoning: "reviewed against the requirement".into(),
+        });
+        let decisions_path = dir.join("answered-questions.json");
+        fs::write(
+            &decisions_path,
+            serde_json::to_string_pretty(&envelope).unwrap(),
+        )
+        .unwrap();
+
+        super::cmd_resolve_ai(&spec_path, &dir, &decisions_path, "json")
+            .expect("resolve-ai should merge the answer and persist its trace");
+        let ledger =
+            crate::spec_knowledge::read_requirement_trace_ledgers(&dir.join(".agent-spec/trace"));
+        let record = ledger
+            .records
+            .iter()
+            .find(|record| {
+                record.requirement_id == "REQ-HUMAN-TRACE"
+                    && record.scenario_name == "Manual review"
+            })
+            .expect("the resolved scenario should enter the requirement trace");
+        assert!(matches!(
+            record
+                .human_judgment
+                .as_ref()
+                .map(|judgment| judgment.source),
+            Some(crate::spec_core::JudgmentSource::Human)
+        ));
+        assert!(
+            !record
+                .human_judgment
+                .as_ref()
+                .unwrap()
+                .evidence_digest
+                .is_empty()
+        );
+        assert_eq!(
+            record.human_judgment.as_ref().unwrap().evidence_digest,
+            blake3::hash(reviewed_evidence.join("\n").as_bytes())
+                .to_hex()
+                .to_string(),
+            "the trace digest binds the normalized evidence the human reviewed"
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_knowledge_questions_unknown_id_names_corpus() {
+        let dir = make_temp_dir("emit-unknown-id");
+        let knowledge = dir.join("knowledge");
+        fs::create_dir_all(knowledge.join("proposals")).unwrap();
+        let collection = crate::spec_knowledge::collect_knowledge_checked(&knowledge);
+        assert!(
+            !collection.docs.iter().any(|d| d.meta.id == "LEP-999"),
+            "the id is genuinely absent, so the command must report it"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_emission_points_never_read_stdin() {
+        // The emitters are pure functions over already-loaded state: none of
+        // them touches stdin, so a closed stdin cannot block them.
+        let src = include_str!("spec_knowledge/questions.rs");
+        assert!(
+            !src.contains("stdin"),
+            "question emission must never read stdin"
+        );
     }
 
     #[test]
@@ -7948,6 +9391,7 @@ name: "退款"
                         knowledge,
                         specs,
                         format,
+                        options: _,
                     },
             } => {
                 assert_eq!(knowledge, PathBuf::from("knowledge"));
@@ -8499,6 +9943,7 @@ name: "退款"
             branch: Some("feat/wu-req-note-create".into()),
             vcs: None,
             wiki_articles: Vec::new(),
+            human_judgment: None,
             timestamp: 1,
         }
     }
@@ -8659,6 +10104,107 @@ name: "退款"
             assert!(
                 skill.contains(term),
                 "missing requirements skill term {term}"
+            );
+        }
+    }
+
+    /// Bundled-skill freshness check (REQ-SKILL-GUIDANCE-GOVERNANCE): every
+    /// SKILL.md must carry a `> **Version:** ... **Tracks:** agent-spec X.Y.Z`
+    /// header matching the crate version. Returns one violation message per
+    /// offending file, each naming its path.
+    fn skill_tracks_violations(skills_dir: &std::path::Path, crate_version: &str) -> Vec<String> {
+        let expected = format!("**Tracks:** agent-spec {crate_version}");
+        let Ok(entries) = std::fs::read_dir(skills_dir) else {
+            return vec![format!(
+                "skills directory missing: {}",
+                skills_dir.display()
+            )];
+        };
+        let mut out = Vec::new();
+        for entry in entries.flatten() {
+            let skill = entry.path().join("SKILL.md");
+            if !skill.is_file() {
+                continue;
+            }
+            let text = std::fs::read_to_string(&skill).unwrap_or_default();
+            let fresh = text
+                .lines()
+                .any(|l| l.starts_with("> **Version:**") && l.contains(&expected));
+            if !fresh {
+                out.push(format!(
+                    "{}: missing or stale version header; expected a `> **Version:** ...` line containing `{expected}`",
+                    skill.display()
+                ));
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn test_all_skills_track_current_crate_version() {
+        let skills = repo_root().join("skills");
+        let count = std::fs::read_dir(&skills)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.path().join("SKILL.md").is_file())
+            .count();
+        assert!(
+            count >= 5,
+            "expected the five bundled skills, found {count}"
+        );
+        let violations = skill_tracks_violations(&skills, env!("CARGO_PKG_VERSION"));
+        assert!(
+            violations.is_empty(),
+            "stale skill headers: {violations:#?}"
+        );
+    }
+
+    #[test]
+    fn test_stale_tracks_fails_with_file_path() {
+        let dir = make_temp_dir("skill-tracks-stale");
+        let stale = dir.join("some-skill");
+        fs::create_dir_all(&stale).unwrap();
+        let skill_md = stale.join("SKILL.md");
+        fs::write(
+            &skill_md,
+            "# Some Skill\n\n> **Version:** 1.0.0 | **Last Updated:** 2026-01-01 | **Tracks:** agent-spec 0.9.0\n",
+        )
+        .unwrap();
+        let violations = skill_tracks_violations(&dir, env!("CARGO_PKG_VERSION"));
+        assert_eq!(violations.len(), 1);
+        assert!(
+            violations[0].contains(&skill_md.display().to_string()),
+            "violation names the offending file: {}",
+            violations[0]
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_skip_formalities_routing_anchors_present() {
+        let adversarial =
+            fs::read_to_string(repo_root().join("fixtures/adversarial/skip-formalities.txt"))
+                .expect("adversarial routing fixture must exist");
+        assert!(
+            adversarial.contains("直接写 spec") && adversarial.contains("Skip the formalities"),
+            "fixture keeps the recorded rationalization verbatim"
+        );
+        for skill in [
+            "skills/agent-spec-authoring/SKILL.md",
+            "skills/agent-spec-intent-compiler/SKILL.md",
+        ] {
+            let text = fs::read_to_string(repo_root().join(skill)).unwrap();
+            assert!(
+                text.contains("Routing: What You Hold"),
+                "{skill} must keep the routing table anchor"
+            );
+            assert!(
+                text.contains("orphan-spec"),
+                "{skill} must keep the orphan-spec hard gate"
+            );
+            assert!(
+                text.contains("HARD GATE"),
+                "{skill} must keep the hard-gate wording"
             );
         }
     }
@@ -9139,6 +10685,8 @@ name: "退款"
                     verdict: Verdict::Fail,
                     reasoning: "ai disagrees".into(),
                 },
+                judgment_source: None,
+                judgment_evidence: None,
             },
             ScenarioAiDecision {
                 scenario_name: "未覆盖".into(),
@@ -9148,6 +10696,8 @@ name: "退款"
                     verdict: Verdict::Pass,
                     reasoning: "ai approves".into(),
                 },
+                judgment_source: None,
+                judgment_evidence: None,
             },
         ];
         let merged = merge_ai_decisions(results, &decisions);
@@ -9171,6 +10721,56 @@ name: "退款"
     }
 
     #[test]
+    fn test_human_answers_settle_uncertain_and_pending_review_only() {
+        use crate::spec_core::{AiDecision, ScenarioResult, Verdict};
+        let results = [
+            ("mechanical pass", Verdict::Pass),
+            ("uncertain", Verdict::Uncertain),
+            ("pending", Verdict::PendingReview),
+        ]
+        .into_iter()
+        .map(|(scenario_name, verdict)| ScenarioResult {
+            scenario_name: scenario_name.into(),
+            verdict,
+            step_results: Vec::new(),
+            evidence: Vec::new(),
+            duration_ms: 0,
+            provenance: None,
+        })
+        .collect::<Vec<_>>();
+        let decisions = ["mechanical pass", "uncertain", "pending"]
+            .into_iter()
+            .map(|scenario_name| ScenarioAiDecision {
+                scenario_name: scenario_name.into(),
+                decision: AiDecision {
+                    model: "human".into(),
+                    confidence: 1.0,
+                    verdict: Verdict::Fail,
+                    reasoning: "reviewed current evidence".into(),
+                },
+                judgment_source: Some(crate::spec_core::JudgmentSource::Human),
+                judgment_evidence: Some(Vec::new()),
+            })
+            .collect::<Vec<_>>();
+
+        let merged = merge_ai_decisions(results, &decisions);
+        assert_eq!(merged[0].verdict, Verdict::Pass);
+        for result in &merged[1..] {
+            assert_eq!(result.verdict, Verdict::Fail);
+            assert!(matches!(
+                result.evidence.first(),
+                Some(crate::spec_core::Evidence::AiAnalysis {
+                    human_judgment: Some(crate::spec_core::HumanJudgment {
+                        source: crate::spec_core::JudgmentSource::Human,
+                        ..
+                    }),
+                    ..
+                })
+            ));
+        }
+    }
+
+    #[test]
     fn test_provenance_resolve_ai_is_inferential() {
         use crate::spec_core::{
             AiDecision, Evidence, EvidenceProvenance, ScenarioResult, StepVerdict, Verdict,
@@ -9190,11 +10790,13 @@ name: "退款"
         let decisions = vec![ScenarioAiDecision {
             scenario_name: "未覆盖场景".into(),
             decision: AiDecision {
-                model: "caller".into(),
+                model: "human".into(),
                 confidence: 0.9,
                 verdict: Verdict::Pass,
                 reasoning: "looks correct".into(),
             },
+            judgment_source: None,
+            judgment_evidence: None,
         }];
         let merged = merge_ai_decisions(results, &decisions);
         assert_eq!(merged[0].verdict, Verdict::Pass);
@@ -9209,6 +10811,16 @@ name: "退款"
                 .iter()
                 .any(|e| matches!(e, Evidence::AiAnalysis { .. })),
             "resolved result must carry AiAnalysis evidence"
+        );
+        assert!(
+            matches!(
+                merged[0].evidence.first(),
+                Some(Evidence::AiAnalysis {
+                    human_judgment: None,
+                    ..
+                })
+            ),
+            "a legacy model label must not grant the typed human judgment class"
         );
     }
 
@@ -11942,12 +13554,15 @@ Scenario: verification metadata stays visible
                 verdict: crate::spec_core::Verdict::Pass,
                 reasoning: "All steps verified by agent analysis".into(),
             },
+            judgment_source: None,
+            judgment_evidence: None,
         };
 
         let json = serde_json::to_string_pretty(&decision).unwrap();
         assert!(json.contains("scenario_name"));
         assert!(json.contains("claude-agent"));
         assert!(json.contains("0.92"));
+        assert!(!json.contains("judgment_source"));
 
         let parsed: super::ScenarioAiDecision = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.scenario_name, "AI 场景");

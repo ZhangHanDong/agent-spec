@@ -67,3 +67,52 @@ agent-spec lint-knowledge --knowledge knowledge --gate
 `--format sarif` 可直接喂 GitHub Code Scanning。
 
 一键铺设整个知识工作区：`agent-spec init --workspace`（幂等）。
+
+## 向前走，而不是事后找补
+
+治理是单向的，每层只有一个出口：
+
+```text
+knowledge/proposals/    LEP-NNN   要不要做、为什么
+    │  ## Produces: ADR-NNN
+knowledge/decisions/    ADR-NNN   裁决与备选
+    │  一份治理需求
+knowledge/requirements/ REQ-*     MUST 条款 ＋ 场景
+    │  satisfies: [REQ-*]
+specs/                  task-*    可执行、可验收的合同
+```
+
+哪个前缀归哪一层，唯一权威是
+`knowledge/standards/operational/id-registry.md`。用
+`agent-spec knowledge new <kind> <id>` 建文件，枚举值、文件名与出口指引都一次到位，
+省得手写 frontmatter 猜错。
+
+同一道门禁负责拦住跳层：需求语料非空时，没有 `satisfies:` 的任务合同触发
+`orphan-spec`；需求文档 `## Dependencies` 里出现 `ADR-*` 触发
+`dependency-kind-mismatch`（那里只放 `REQ-*` 排序边，决策 id 属于
+`## Source Trace`）；已接受的提案若其产出的决策没有回链，触发
+`produces-link-integrity`。1.3.0 曾用只准缩小的
+`.agent-spec/orphan-baseline.json` 基线豁免存量合同；迁移完成后该列表必须
+保持为空，非空就是 Error，不再提供豁免。活动孤儿合同当前按 Warning 报告。
+
+## 决策点：让提问也结构化
+
+流水线有三处必须停下来等人拍板。CLI 在这三处都不交互、不猜答案，只发出
+机器可读的问题信封，再吃回答案：
+
+| 阶段 | 命令 | 问什么 |
+|------|------|--------|
+| 逆向访谈 | `requirements questions` | 需求 lint 发现的歧义 |
+| 治理选型 | `knowledge questions <id>` | 提案的未决问题、决策的备选方案 |
+| 验收判定 | `verify --emit-questions` | 机器判不了的场景，附带已收集证据 |
+
+三处发出的是同一种信封（`envelope_version` ＋ 每个问题的 `kind`、`prompt`、
+`source`、`options`），任何 agent harness 都能原样渲染成选择题，不必各自解析。
+候选由调用方 agent 从源文本起草，CLI 只校验形状——至多四项、每项要有标签和
+一句描述。**空候选表是合法且诚实的状态**：没有站得住的候选时，问题保持自由作答。
+
+验收判定的答案可直接转成 `resolve-ai` 既有的 decisions JSON。人判过的场景会作为
+一等证据进入 trace 证据链，记录判定的**类别**（`source: human`）、verdict、理由与
+证据 digest，但**绝不记录身份**——CLI 无法证明谁批准，所以 `actor`、`authority`、
+`approval`、`policy` 这四个字段被机械拒绝，绑定审批人是外部系统按 digest 做的事。
+没有人工判定的运行，序列化结果与该字段存在之前逐字节相同。

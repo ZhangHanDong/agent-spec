@@ -151,8 +151,11 @@ fn parse_knowledge_meta(lines: &[&str], path: &Path) -> Result<KnowledgeMeta, St
         let val = val.trim().trim_matches('"').trim();
         match key {
             "kind" => {
-                kind = KnowledgeKind::parse(val)
-                    .ok_or_else(|| format!("unsupported knowledge kind '{val}'"))?;
+                kind = KnowledgeKind::parse(val).ok_or_else(|| {
+                    format!(
+                        "unsupported knowledge kind '{val}'; expected decision, requirement, guidance, or proposal"
+                    )
+                })?;
             }
             "id" => {
                 validate_knowledge_id(val)?;
@@ -166,7 +169,11 @@ fn parse_knowledge_meta(lines: &[&str], path: &Path) -> Result<KnowledgeMeta, St
                     "superseded" => DecisionStatus::Superseded,
                     "deprecated" => DecisionStatus::Deprecated,
                     "rejected" => DecisionStatus::Rejected,
-                    other => return Err(format!("unknown status '{other}'")),
+                    other => {
+                        return Err(format!(
+                            "unknown status '{other}'; expected proposed, accepted, superseded, deprecated, or rejected"
+                        ));
+                    }
                 });
             }
             "supersedes" => {
@@ -177,7 +184,9 @@ fn parse_knowledge_meta(lines: &[&str], path: &Path) -> Result<KnowledgeMeta, St
                 liveness = match val.to_ascii_lowercase().as_str() {
                     "auto" => LivenessDeclared::Auto,
                     "n/a" | "na" => LivenessDeclared::Na,
-                    other => return Err(format!("unknown liveness '{other}'")),
+                    other => {
+                        return Err(format!("unknown liveness '{other}'; expected auto or n/a"));
+                    }
                 };
             }
             "tags" => {
@@ -239,7 +248,50 @@ fn parse_sections(lines: &[&str]) -> Vec<KSection> {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn test_unknown_status_error_lists_valid_values() {
+        let err = parse_knowledge_str(
+            "---\nkind: decision\nid: ADR-001\nstatus: drafted\n---\n## Context\nc\n",
+            Path::new("adr-001.md"),
+        )
+        .unwrap_err();
+        for valid in [
+            "proposed",
+            "accepted",
+            "superseded",
+            "deprecated",
+            "rejected",
+        ] {
+            assert!(err.contains(valid), "error must list `{valid}`: {err}");
+        }
+    }
+
+    #[test]
+    fn test_unknown_liveness_error_lists_valid_values() {
+        let err = parse_knowledge_str(
+            "---\nkind: requirement\nid: REQ-A\nliveness: always\n---\n## Problem\np\n",
+            Path::new("req-a.md"),
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("auto") && err.contains("n/a"),
+            "error must list auto and n/a: {err}"
+        );
+    }
+
+    #[test]
+    fn test_unknown_kind_error_lists_valid_values() {
+        let err = parse_knowledge_str(
+            "---\nkind: memo\nid: ADR-001\n---\n## Context\nc\n",
+            Path::new("memo.md"),
+        )
+        .unwrap_err();
+        for valid in ["decision", "requirement", "guidance", "proposal"] {
+            assert!(err.contains(valid), "error must list `{valid}`: {err}");
+        }
+    }
 
     #[test]
     fn test_id_from_frontmatter_is_uppercased() {

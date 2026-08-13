@@ -41,6 +41,7 @@ pub mod worktrees;
 pub mod yaml_export;
 pub mod yaml_frontend;
 
+pub use crate::spec_core::{HumanJudgment, JudgmentSource};
 pub use code_graph::{
     AtlasProvider, CODE_BINDINGS_SCHEMA_ID, CODE_IMPACT_SCHEMA_ID, CodeBindingEntry, CodeBindings,
     CodeGraphProvider, CodeImpactInput, CodeImpactOptions, CodeImpactProvider, CodeTarget,
@@ -93,10 +94,15 @@ pub use quality::{
     baseline_quality_profile, build_execution_bundle, outcome_passes_gate, render_execution_bundle,
 };
 pub use questions::{
-    ClarificationDiagnostic, ClarificationQuestion, build_clarification_questions,
-    collect_clarification_lint_diagnostics,
+    ClarificationDiagnostic, ClarificationQuestion, DecisionOption, ENVELOPE_VERSION, MAX_OPTIONS,
+    QuestionEnvelope, QuestionKind, VerificationQuestionContext, build_clarification_questions,
+    build_knowledge_questions, build_verification_questions,
+    collect_clarification_lint_diagnostics, merge_drafted_options, validate_envelope,
 };
-pub use requirement::{NormativeKeyword, RequirementClause, extract_requirements};
+pub use requirement::{
+    ClauseCoverage, NormativeKeyword, RequirementClause, clause_coverage,
+    clause_coverage_with_verdicts, extract_requirements,
+};
 pub use requirement_graph::{
     KnowledgeParseErrorView, RequirementClauseView, RequirementGraph, RequirementGraphDiagnostic,
     RequirementNode, RequirementScenario, RequirementStep, build_requirement_graph,
@@ -113,25 +119,28 @@ pub use run_manifest::{
 };
 pub use sarif::{Finding, render_sarif};
 pub use scaffold::scaffold_workspace;
-pub use status::{RequirementStatusReport, format_status_text, requirement_status};
+pub use status::{
+    RequirementStatusReport, RequirementVerification, format_status_text, requirement_status,
+    verify_spec_for_status,
+};
 pub use test_obligations::{
     TestObligation, TestObligationDiagnostic, TestObligationSet, build_test_obligations,
 };
 pub use trace::{TraceReport, build_trace, format_trace_text, verify_spec_rollup};
 pub use trace_ledger::{
     AffectedQualityOutcome, AffectedRequirementFailure, AffectedRequirementReplay,
-    AffectedTraceRecord, CodeTargetFact, REQUIREMENT_TRACE_LEDGER_VERSION,
-    RequirementFailureExplanation, RequirementTraceDiagnostic, RequirementTraceEvidence,
-    RequirementTraceLedger, RequirementTraceRecord, RequirementTraceRecordInput,
-    RequirementTraceRunInput, build_affected_trace_record, explain_affected_requirement_failure,
-    explain_requirement_failure, format_affected_requirement_failure_text,
-    format_affected_requirement_replay_text, format_affected_requirement_trace_mermaid,
-    format_requirement_failure_text, format_requirement_replay_text,
-    format_requirement_trace_mermaid, format_requirement_trace_text,
-    latest_requirement_trace_records, read_requirement_trace_ledgers, record_affected_trace,
-    record_requirement_trace_run, replay_affected_requirement, replay_requirement_trace,
-    write_affected_trace_record_to_dir, write_requirement_trace_ledger,
-    write_requirement_trace_ledger_to_dir,
+    AffectedTraceRecord, CodeTargetFact, FORBIDDEN_IDENTITY_FIELDS,
+    REQUIREMENT_TRACE_LEDGER_VERSION, RequirementFailureExplanation, RequirementTraceDiagnostic,
+    RequirementTraceEvidence, RequirementTraceLedger, RequirementTraceRecord,
+    RequirementTraceRecordInput, RequirementTraceRunInput, build_affected_trace_record,
+    explain_affected_requirement_failure, explain_requirement_failure, forbidden_identity_fields,
+    format_affected_requirement_failure_text, format_affected_requirement_replay_text,
+    format_affected_requirement_trace_mermaid, format_requirement_failure_text,
+    format_requirement_replay_text, format_requirement_trace_mermaid,
+    format_requirement_trace_text, latest_requirement_trace_records,
+    read_requirement_trace_ledgers, record_affected_trace, record_requirement_trace_run,
+    replay_affected_requirement, replay_requirement_trace, write_affected_trace_record_to_dir,
+    write_requirement_trace_ledger, write_requirement_trace_ledger_to_dir,
 };
 pub use traceability::{
     TRACEABILITY_SCHEMA_ID, TraceabilityProjection, build_traceability_projection,
