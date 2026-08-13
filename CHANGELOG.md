@@ -6,6 +6,13 @@ All notable changes to `agent-spec` are documented here. Format follows
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-08-14
+
+The **enforcement** release: the forward-walking pipeline stops reminding and
+starts holding. Clause coverage connects MUST clauses to the scenarios that
+prove them, the orphan-spec migration baseline is retired, and a layer jump is
+now a Warning backed by an empty-baseline Error.
+
 ### Added
 
 - Clause coverage (LEP-003 → ADR-004 → REQ-CLAUSE-COVERAGE): requirement
@@ -31,6 +38,9 @@ All notable changes to `agent-spec` are documented here. Format follows
   major release under ADR-002.
 
 ## [1.3.0] - 2026-08-07
+
+> Not published to crates.io: 1.3.0 was cut in-tree but never released, so its
+> content first reaches crates.io users in 1.4.0.
 
 The **forward-walking pipeline** release: the LEP → ADR → REQ → spec walk stops
 being a convention documented in a design note and becomes the path the
