@@ -127,9 +127,11 @@ hiding in a command nobody runs in CI:
 | `dangling-spec-coverage` | A `satisfies:` edge pointing at a requirement that does not exist |
 | `requirement-uncovered` | An accepted, ready requirement with no satisfying contract |
 
-`orphan-spec` phases in by severity rather than as a flag day: existing
-contracts are listed in a shrink-only baseline (`.agent-spec/orphan-baseline.json`),
-and only entries absent from it are reported. The id prefix each layer uses is
+`orphan-spec` phased in by severity rather than as a flag day. Version 1.3.0
+temporarily exempted existing contracts through a shrink-only baseline; that
+migration is complete, so `.agent-spec/orphan-baseline.json` must remain empty
+and any non-empty list is an Error. Active orphan task contracts are reported
+at Warning severity. The id prefix each layer uses is
 registered in `knowledge/standards/operational/id-registry.md`, and
 `agent-spec knowledge new <kind> <id>` scaffolds against that registry so a
 new artifact starts lint-clean with its single exit already stated.

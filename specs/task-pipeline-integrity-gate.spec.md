@@ -18,13 +18,13 @@ risk: A
 - 合流方式：`cmd_lint_knowledge` 在 corpus lint 之后追加调用
   `build_requirement_graph` 与 `build_requirement_plan`，诊断并入同一份
   输出与 SARIF，规则名保持既有字符串不变。
-- `orphan-spec`：需求语料非空且**任务合约**无 `satisfies:` 时触发；引入版本
-  严重级别为 Info；诊断文本给出两条补救动作（声明 satisfies 或进基线）。
-  project、org 与 capability 层级的 spec 不承载 satisfies，不在范围内。
-- 基线条目按路径身份匹配（规范化后比较），支持相对仓库根、相对基线文件与
-  绝对路径三种写法。
-- 基线文件：`.agent-spec/orphan-baseline.json`，仅允许人为缩小；lint 启动
-  时读取，缺失视为空基线。
+- `orphan-spec`：需求语料非空且**任务合约**无 `satisfies:` 时触发；1.3.0
+  引入时为 Info，存量迁移完成后为 Warning；诊断文本给出两条当前补救动作
+  （声明真实 satisfies，或带当前 passing lifecycle evidence 归档）。project、
+  org 与 capability 层级的 spec 不承载 satisfies，不在范围内。
+- `.agent-spec/orphan-baseline.json` 是 1.3.0 按路径身份豁免存量的迁移设施；
+  迁移完成后其列表必须为空，任意非空条目触发 `orphan-baseline-retired`
+  Error 且不再豁免孤儿。缺失文件仍视为空基线，以兼容既有调用。
 - `dependency-kind-mismatch`：`## Dependencies` 行内 id 前缀命中 `ADR-` 或
   `LEP-` 即触发 Warning，suggestion 固定为「move to `## Source Trace`」。
 - `produces-link-integrity`：仅对 status accepted 的 proposal 生效；目标
@@ -49,14 +49,14 @@ risk: A
 - specs/task-pipeline-integrity-gate.spec.md
 
 ### Forbidden
-- 不改变既有规则名与既有诊断的严重级别
-- 不在本合约内把 orphan-spec 升为 Warning 或 Error
+- 不改变其他既有规则名与诊断的严重级别
+- 不在本合约内把 orphan-spec 升为 Error
 - 不自动写入或扩充基线文件
 
 ## Out of Scope
 
 - `knowledge` 命令空间重组（ADR-002 已裁决另立提案）
-- orphan-spec 的 Warning/Error 升级（后续版本合约）
+- orphan-spec 的 Error 升级（后续 major 合约）
 - scenario 级 satisfies 粒度
 
 ## Completion Criteria
@@ -67,17 +67,17 @@ risk: A
   当 lint-knowledge --gate 运行
   那么 输出含 dangling-spec-coverage 且退出码非零
 
-场景: 基线内存量孤儿放行
-  测试: test_orphan_baseline_exempts_listed_specs
-  假设 基线文件列出 fixture 的全部存量孤儿 spec
+场景: 退休基线拒绝复活且不再豁免
+  测试: test_non_empty_orphan_baseline_is_rejected_after_retirement
+  假设 基线文件列出 fixture 的一份孤儿 spec
   当 lint-knowledge --gate 运行
-  那么 无 orphan-spec 诊断且退出码为零
+  那么 输出 orphan-baseline-retired Error 且该 spec 仍有 orphan-spec
 
 场景: 基线外新孤儿被指名
-  测试: test_new_orphan_spec_diagnosed_with_remedies
+  测试: test_orphan_spec_is_warning_with_current_remedies
   假设 需求语料非空且新增一份无 satisfies 的 spec 未进基线
   当 lint-knowledge 运行
-  那么 输出 orphan-spec Info 且文本含两条补救动作
+  那么 输出 orphan-spec Warning 且文本含两条当前补救动作
 
 场景: Dependencies 中的决策 id 被纠偏
   测试: test_dependency_kind_mismatch_suggests_source_trace

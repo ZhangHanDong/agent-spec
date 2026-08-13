@@ -6,6 +6,30 @@ All notable changes to `agent-spec` are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- Clause coverage (LEP-003 → ADR-004 → REQ-CLAUSE-COVERAGE): requirement
+  scenarios attribute themselves to MUST clauses via the existing BDD
+  `Rule: <clause-id>` grouping, and a new `clause-uncovered` diagnostic (Info,
+  with a shrink-only baseline at `.agent-spec/clause-baseline.json`) names any
+  MUST clause no scenario claims. Coverage counts explicit attribution only —
+  no keyword inference — and a skipped scenario does not count.
+  `requirements status` reports per-requirement clause coverage; `trace`
+  output is unchanged. Attributing a `Rule:` to a clause id that does not
+  exist raises `clause-attribution-unknown` (Warning).
+
+### Changed
+
+- Retired the 1.3.0 orphan-spec migration baseline after evidence-backed
+  disposition of all 36 entries: 30 completed contracts moved through the
+  archive workflow and six duplicate active copies now use their existing
+  archives. `.agent-spec/orphan-baseline.json` is empty, and any non-empty list
+  raises `orphan-baseline-retired` Error without suppressing orphan findings.
+- Raised active `orphan-spec` findings from Info to Warning. Remediation now
+  points to a truthful `satisfies: [REQ-*]` edge or current passing lifecycle
+  evidence followed by archive; Error promotion remains deferred to the next
+  major release under ADR-002.
+
 ## [1.3.0] - 2026-08-07
 
 The **forward-walking pipeline** release: the LEP → ADR → REQ → spec walk stops

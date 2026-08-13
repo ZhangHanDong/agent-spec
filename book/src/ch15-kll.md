@@ -91,8 +91,9 @@ specs/                  task-*    可执行、可验收的合同
 `orphan-spec`；需求文档 `## Dependencies` 里出现 `ADR-*` 触发
 `dependency-kind-mismatch`（那里只放 `REQ-*` 排序边，决策 id 属于
 `## Source Trace`）；已接受的提案若其产出的决策没有回链，触发
-`produces-link-integrity`。存量合同通过只准缩小的基线文件
-`.agent-spec/orphan-baseline.json` 豁免——分阶段收紧，而不是某天突然全仓报错。
+`produces-link-integrity`。1.3.0 曾用只准缩小的
+`.agent-spec/orphan-baseline.json` 基线豁免存量合同；迁移完成后该列表必须
+保持为空，非空就是 Error，不再提供豁免。活动孤儿合同当前按 Warning 报告。
 
 ## 决策点：让提问也结构化
 

@@ -31,6 +31,7 @@ Thumbs.db
 # agent-spec run logs
 .agent-spec/*
 !.agent-spec/orphan-baseline.json
+!.agent-spec/clause-baseline.json
 !.agent-spec/wiki/
 !.agent-spec/wiki/**
 !.agent-spec/archive/

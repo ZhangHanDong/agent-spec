@@ -3,11 +3,42 @@
 //! query, no conflation — per `docs/intent-compiler/architecture.md`,
 //! "Three Independent State Axes". Read-only: nothing is stored.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use crate::spec_core::Verdict;
+use crate::spec_core::{Verdict, VerificationReport};
+
+#[derive(Debug, Clone)]
+pub struct RequirementVerification {
+    pub verdict: Verdict,
+    pub scenario_verdicts: BTreeMap<String, Verdict>,
+}
+
+impl From<Verdict> for RequirementVerification {
+    fn from(verdict: Verdict) -> Self {
+        Self {
+            verdict,
+            scenario_verdicts: BTreeMap::new(),
+        }
+    }
+}
+
+impl From<VerificationReport> for RequirementVerification {
+    fn from(report: VerificationReport) -> Self {
+        let verdict = crate::spec_knowledge::spec_rollup(&report.summary);
+        let scenario_verdicts = report
+            .results
+            .into_iter()
+            .map(|result| (result.scenario_name, result.verdict))
+            .collect();
+        Self {
+            verdict,
+            scenario_verdicts,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RequirementStatusReport {
@@ -19,19 +50,21 @@ pub struct RequirementStatusReport {
     pub staged_specs: Vec<String>,
     pub archived_specs: Vec<String>,
     pub work_unit: Option<String>,
+    pub clause_coverage: crate::spec_knowledge::ClauseCoverage,
 }
 
 /// Aggregate the three axes for one requirement id. `verify_fn` runs
 /// verification for one active spec path (injectable for tests).
-pub fn requirement_status<F>(
+pub fn requirement_status<F, V>(
     knowledge_dir: &Path,
     specs_dir: &Path,
     archive_dir: &Path,
     id: &str,
-    verify_fn: F,
+    mut verify_fn: F,
 ) -> Result<RequirementStatusReport, String>
 where
-    F: FnMut(&Path) -> Verdict,
+    F: FnMut(&Path) -> V,
+    V: Into<RequirementVerification>,
 {
     let wanted = id.trim().to_ascii_uppercase();
     let graph = crate::spec_knowledge::build_requirement_graph(knowledge_dir);
@@ -79,7 +112,18 @@ where
     // axis 3: liveness (recomputed from active specs only)
     let doc = crate::spec_knowledge::parse_requirement(&node.source_path)
         .map_err(|e| format!("{}: {e}", node.source_path.display()))?;
-    let trace = crate::spec_knowledge::trace::build_trace(&doc, &active_index, verify_fn);
+    let mut verifications: BTreeMap<PathBuf, RequirementVerification> = active_index
+        .get(&wanted)
+        .into_iter()
+        .flatten()
+        .map(|path| (path.clone(), verify_fn(path).into()))
+        .collect();
+    let trace = crate::spec_knowledge::trace::build_trace(&doc, &active_index, |path| {
+        verifications
+            .get(path)
+            .map(|verification| verification.verdict)
+            .unwrap_or(Verdict::Uncertain)
+    });
     let liveness = match trace.liveness {
         crate::spec_knowledge::Liveness::Honored => "honored",
         crate::spec_knowledge::Liveness::Violated => "violated",
@@ -87,6 +131,27 @@ where
         crate::spec_knowledge::Liveness::Na => "na",
     }
     .to_string();
+
+    let mut scenario_verdicts = BTreeMap::new();
+    for verification in verifications.values_mut() {
+        for (scenario, verdict) in std::mem::take(&mut verification.scenario_verdicts) {
+            scenario_verdicts
+                .entry(scenario)
+                .and_modify(|existing| {
+                    if *existing == Verdict::Skip && verdict != Verdict::Skip {
+                        *existing = verdict;
+                    }
+                })
+                .or_insert(verdict);
+        }
+    }
+    if !trace.specs.is_empty() && trace.specs.iter().all(|spec| spec.verdict == Verdict::Skip) {
+        for scenario in crate::spec_knowledge::requirement::attributed_scenario_names(&doc) {
+            scenario_verdicts.entry(scenario).or_insert(Verdict::Skip);
+        }
+    }
+    let clause_coverage =
+        crate::spec_knowledge::clause_coverage_with_verdicts(&doc, &scenario_verdicts);
 
     // work unit state feeds the execution ladder
     let units = crate::spec_knowledge::build_work_units(&graph);
@@ -128,13 +193,28 @@ where
         staged_specs,
         archived_specs,
         work_unit,
+        clause_coverage,
     })
+}
+
+pub fn verify_spec_for_status(spec_path: &Path, code_path: &Path) -> RequirementVerification {
+    match crate::spec_gateway::SpecGateway::load(spec_path) {
+        Ok(gateway) => match gateway.verify(code_path) {
+            Ok(report) => report.into(),
+            Err(_) => Verdict::Uncertain.into(),
+        },
+        Err(_) => Verdict::Uncertain.into(),
+    }
 }
 
 /// Three-line human summary.
 pub fn format_status_text(report: &RequirementStatusReport) -> String {
+    let covered = report.clause_coverage.covered.len();
+    let uncovered = report.clause_coverage.uncovered.len();
+    let skipped = report.clause_coverage.attributed_but_skipped.len();
+    let total = covered + uncovered + skipped;
     format!(
-        "{}\n  governance: {}\n  execution:  {}{}\n  liveness:   {}\n",
+        "{}\n  governance: {}\n  execution:  {}{}\n  liveness:   {}\n  coverage:   {covered}/{total} MUST clauses covered ({uncovered} uncovered, {skipped} attributed but skipped)\n",
         report.id,
         report.governance,
         report.execution,
@@ -310,6 +390,37 @@ mod tests {
         let err = requirement_status(&knowledge, &specs, &archive, "REQ-GHOST", |_| Verdict::Pass)
             .unwrap_err();
         assert!(err.contains("REQ-GHOST"), "{err}");
+        fs::remove_dir_all(base).ok();
+    }
+
+    #[test]
+    fn test_status_reports_coverage_and_trace_unchanged() {
+        let (base, knowledge, specs, archive) = make_tree("status-clause-coverage");
+        fs::write(
+            knowledge.join("requirements/req-covered.md"),
+            "---\nkind: requirement\nid: REQ-COVERED\ntitle: Covered\nstatus: accepted\nliveness: auto\n---\n## Problem\np\n## Requirements\n[REQ-COVERED-ONE] The system MUST emit one.\n[REQ-COVERED-TWO] The system MUST emit two.\n## Scenarios\nRule: REQ-COVERED-ONE\nScenario: One\n  Given input\n  When one runs\n  Then output is visible\n",
+        )
+        .unwrap();
+        write_spec(&specs, "task-covered.spec.md", "REQ-COVERED");
+
+        let report = requirement_status(&knowledge, &specs, &archive, "REQ-COVERED", |_| {
+            Verdict::Pass
+        })
+        .unwrap();
+        let status_text = format_status_text(&report);
+        assert!(status_text.contains("coverage:"), "{status_text}");
+        assert!(status_text.contains("1/2"), "{status_text}");
+
+        let doc = crate::spec_knowledge::parse_requirement(
+            &knowledge.join("requirements/req-covered.md"),
+        )
+        .unwrap();
+        let index = crate::spec_knowledge::build_satisfies_index(&specs);
+        let trace = crate::spec_knowledge::build_trace(&doc, &index, |_| Verdict::Pass);
+        let trace_text = crate::spec_knowledge::format_trace_text(&trace);
+        assert!(!trace_text.to_ascii_lowercase().contains("coverage:"));
+        let trace_json = serde_json::to_string(&trace).unwrap();
+        assert!(!trace_json.contains("clause_coverage"));
         fs::remove_dir_all(base).ok();
     }
 }

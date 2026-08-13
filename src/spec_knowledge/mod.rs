@@ -99,7 +99,10 @@ pub use questions::{
     build_knowledge_questions, build_verification_questions,
     collect_clarification_lint_diagnostics, merge_drafted_options, validate_envelope,
 };
-pub use requirement::{NormativeKeyword, RequirementClause, extract_requirements};
+pub use requirement::{
+    ClauseCoverage, NormativeKeyword, RequirementClause, clause_coverage,
+    clause_coverage_with_verdicts, extract_requirements,
+};
 pub use requirement_graph::{
     KnowledgeParseErrorView, RequirementClauseView, RequirementGraph, RequirementGraphDiagnostic,
     RequirementNode, RequirementScenario, RequirementStep, build_requirement_graph,
@@ -116,7 +119,10 @@ pub use run_manifest::{
 };
 pub use sarif::{Finding, render_sarif};
 pub use scaffold::scaffold_workspace;
-pub use status::{RequirementStatusReport, format_status_text, requirement_status};
+pub use status::{
+    RequirementStatusReport, RequirementVerification, format_status_text, requirement_status,
+    verify_spec_for_status,
+};
 pub use test_obligations::{
     TestObligation, TestObligationDiagnostic, TestObligationSet, build_test_obligations,
 };

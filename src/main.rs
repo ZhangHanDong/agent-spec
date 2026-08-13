@@ -359,10 +359,13 @@ enum Commands {
         /// orphan specs).
         #[arg(long, default_value = "specs")]
         specs: PathBuf,
-        /// Orphan-spec baseline file; listed specs are exempt from the
-        /// orphan-spec diagnostic.
+        /// Retired orphan migration baseline. Its `specs` list must stay empty.
         #[arg(long, default_value = ".agent-spec/orphan-baseline.json")]
         orphan_baseline: PathBuf,
+        /// Clause-coverage baseline file; listed clause ids are exempt from
+        /// the clause-uncovered diagnostic.
+        #[arg(long, default_value = ".agent-spec/clause-baseline.json")]
+        clause_baseline: PathBuf,
         /// Output format: text | json | sarif.
         #[arg(long, default_value = "text")]
         format: String,
@@ -1577,9 +1580,17 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             knowledge,
             specs,
             orphan_baseline,
+            clause_baseline,
             format,
             gate,
-        } => cmd_lint_knowledge(&knowledge, &specs, &orphan_baseline, &format, gate),
+        } => cmd_lint_knowledge(
+            &knowledge,
+            &specs,
+            &orphan_baseline,
+            &clause_baseline,
+            &format,
+            gate,
+        ),
         Commands::Knowledge { action } => cmd_knowledge(action),
         Commands::Mcp {
             knowledge,
@@ -3772,12 +3783,14 @@ fn cmd_lint_knowledge(
     knowledge: &Path,
     specs: &Path,
     orphan_baseline: &Path,
+    clause_baseline: &Path,
     format: &str,
     gate: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use crate::spec_core::Severity;
 
-    let (doc_count, findings) = knowledge_gate_findings(knowledge, specs, orphan_baseline);
+    let (doc_count, findings) =
+        knowledge_gate_findings(knowledge, specs, orphan_baseline, clause_baseline);
 
     let errors = findings
         .iter()
@@ -3916,12 +3929,14 @@ fn knowledge_gate_findings(
     knowledge: &Path,
     specs: &Path,
     orphan_baseline: &Path,
+    clause_baseline: &Path,
 ) -> (usize, Vec<crate::spec_knowledge::sarif::Finding>) {
     use crate::spec_core::{LintDiagnostic, Severity, Span};
     use crate::spec_knowledge::sarif::Finding;
 
     let collection = crate::spec_knowledge::collect_knowledge_checked(knowledge);
     let docs = collection.docs;
+    let clause_baseline = load_clause_baseline(clause_baseline);
     let mut findings: Vec<Finding> = Vec::new();
     for err in collection.parse_errors {
         findings.push(Finding {
@@ -3940,6 +3955,13 @@ fn knowledge_gate_findings(
     for d in &docs {
         let uri = d.source_path.display().to_string();
         for diag in crate::spec_knowledge::lint_doc(d) {
+            if diag.rule == "clause-uncovered"
+                && clause_baseline
+                    .iter()
+                    .any(|clause_id| diag.message.contains(&format!("MUST clause `{clause_id}`")))
+            {
+                continue;
+            }
             findings.push(Finding {
                 uri: uri.clone(),
                 diag,
@@ -3977,11 +3999,29 @@ fn knowledge_gate_findings(
         });
     }
 
+    let baseline = load_orphan_baseline(orphan_baseline);
+    if !baseline.is_empty() {
+        findings.push(Finding {
+            uri: orphan_baseline.display().to_string(),
+            diag: LintDiagnostic {
+                rule: "orphan-baseline-retired".into(),
+                severity: Severity::Error,
+                message: format!(
+                    "the orphan-spec migration baseline is retired and must stay empty; remove all {} entr{} from {} and either declare a truthful `satisfies: [REQ-*]` link or archive each completed contract with current passing lifecycle evidence",
+                    baseline.len(),
+                    if baseline.len() == 1 { "y" } else { "ies" },
+                    orphan_baseline.display()
+                ),
+                span: Span::default(),
+                suggestion: None,
+            },
+        });
+    }
+
     let requirements_exist = docs
         .iter()
         .any(|d| d.meta.kind == crate::spec_knowledge::KnowledgeKind::Requirement);
     if requirements_exist {
-        let baseline = load_orphan_baseline(orphan_baseline);
         for spec in &plan.specs {
             if spec.level != crate::spec_core::SpecLevel::Task {
                 continue;
@@ -3990,18 +4030,12 @@ fn knowledge_gate_findings(
                 continue;
             }
             let path_str = spec.path.display().to_string();
-            if orphan_baseline_contains(&baseline, orphan_baseline, &spec.path) {
-                continue;
-            }
             findings.push(Finding {
                 uri: path_str,
                 diag: LintDiagnostic {
                     rule: "orphan-spec".into(),
-                    severity: Severity::Info,
-                    message: format!(
-                        "task spec declares no `satisfies:` while a requirements corpus exists; declare `satisfies: [REQ-*]` for the requirement this contract implements, or record the spec in {}",
-                        orphan_baseline.display()
-                    ),
+                    severity: Severity::Warning,
+                    message: "task spec declares no `satisfies:` while a requirements corpus exists; declare a truthful `satisfies: [REQ-*]` link, or if the contract is complete, record current passing lifecycle evidence and archive it out of the active spec set".into(),
                     span: Span::default(),
                     suggestion: None,
                 },
@@ -4012,10 +4046,9 @@ fn knowledge_gate_findings(
     (docs.len(), findings)
 }
 
-/// Read the orphan-spec baseline: a JSON object `{"specs": ["path", ...]}`.
-/// A missing or unreadable file is an empty baseline; entries are exact spec
-/// paths as the plan reports them. The file is only ever shrunk by hand —
-/// nothing here writes it.
+/// Read the retired orphan-spec baseline: a JSON object
+/// `{"specs": ["path", ...]}`. A missing or unreadable file is empty. Any
+/// remaining entry is diagnosed by the gate and never exempts an orphan.
 fn load_orphan_baseline(path: &Path) -> std::collections::BTreeSet<String> {
     let Ok(raw) = std::fs::read_to_string(path) else {
         return Default::default();
@@ -4034,31 +4067,26 @@ fn load_orphan_baseline(path: &Path) -> std::collections::BTreeSet<String> {
         .unwrap_or_default()
 }
 
-fn orphan_baseline_contains(
-    baseline: &std::collections::BTreeSet<String>,
-    baseline_path: &Path,
-    spec_path: &Path,
-) -> bool {
-    let spec_identity = canonical_existing_path(spec_path);
-    baseline.iter().any(|entry| {
-        if entry == &spec_path.display().to_string() {
-            return true;
-        }
-        let entry_path = Path::new(entry);
-        let mut candidates = vec![entry_path.to_path_buf()];
-        if let Some(parent) = baseline_path.parent() {
-            candidates.push(parent.join(entry_path));
-            if parent.file_name().is_some_and(|name| name == ".agent-spec")
-                && let Some(repo_root) = parent.parent()
-            {
-                candidates.push(repo_root.join(entry_path));
-            }
-        }
-        candidates
-            .into_iter()
-            .map(|candidate| canonical_existing_path(&candidate))
-            .any(|candidate| candidate == spec_identity)
-    })
+/// Read the clause-coverage baseline. The baseline is intentionally read-only:
+/// the linter can honor entries but never add or write them, so repository
+/// history is the only expansion path.
+fn load_clause_baseline(path: &Path) -> std::collections::BTreeSet<String> {
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return Default::default();
+    };
+    serde_json::from_str::<serde_json::Value>(&raw)
+        .ok()
+        .and_then(|value| {
+            value.get("clauses").and_then(|clauses| {
+                clauses.as_array().map(|entries| {
+                    entries
+                        .iter()
+                        .filter_map(|entry| entry.as_str().map(|id| id.to_ascii_uppercase()))
+                        .collect()
+                })
+            })
+        })
+        .unwrap_or_default()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -5030,7 +5058,7 @@ fn cmd_requirements(action: RequirementCommands) -> Result<(), Box<dyn std::erro
                 &specs,
                 &archive_dir,
                 &id,
-                |spec_path| crate::spec_knowledge::verify_spec_rollup(spec_path, &code),
+                |spec_path| crate::spec_knowledge::verify_spec_for_status(spec_path, &code),
             )?;
             if format == "json" {
                 println!("{}", serde_json::to_string_pretty(&report)?);
@@ -8452,8 +8480,12 @@ name: "退款"
             true,
             "spec: task\nname: \"A\"\nsatisfies: [REQ-MISSING]\n---\n## Intent\nA.\n## Completion Criteria\nScenario: A\n  Test: test_a\n  Given A\n  When A\n  Then A\n",
         );
-        let (_, findings) =
-            super::knowledge_gate_findings(&knowledge, &specs, &dir.join("absent.json"));
+        let (_, findings) = super::knowledge_gate_findings(
+            &knowledge,
+            &specs,
+            &dir.join("absent.json"),
+            &dir.join("absent-clauses.json"),
+        );
         let dangling = findings
             .iter()
             .find(|f| f.diag.rule == "dangling-spec-coverage")
@@ -8476,8 +8508,12 @@ name: "退款"
             "spec: task\nname: \"A\"\nsatisfies: [REQ-A]\n---\n## Intent\nA.\n## Completion Criteria\nScenario: A\n  Test: test_a\n  Given A\n  When A\n  Then A\n",
         );
         let missing_specs = dir.join("missing-specs");
-        let (_, findings) =
-            super::knowledge_gate_findings(&knowledge, &missing_specs, &dir.join("absent.json"));
+        let (_, findings) = super::knowledge_gate_findings(
+            &knowledge,
+            &missing_specs,
+            &dir.join("absent.json"),
+            &dir.join("absent-clauses.json"),
+        );
         let missing = findings
             .iter()
             .find(|finding| finding.diag.rule == "spec-root-missing")
@@ -8494,30 +8530,40 @@ name: "退款"
     }
 
     #[test]
-    fn test_new_orphan_spec_diagnosed_with_remedies() {
+    fn test_orphan_spec_is_warning_with_current_remedies() {
         let (dir, knowledge, specs) = knowledge_gate_fixture(
             "knowledge-gate-orphan",
             true,
             "spec: task\nname: \"A\"\n---\n## Intent\nA.\n## Completion Criteria\nScenario: A\n  Test: test_a\n  Given A\n  When A\n  Then A\n",
         );
-        let (_, findings) =
-            super::knowledge_gate_findings(&knowledge, &specs, &dir.join("absent.json"));
+        let (_, findings) = super::knowledge_gate_findings(
+            &knowledge,
+            &specs,
+            &dir.join("absent.json"),
+            &dir.join("absent-clauses.json"),
+        );
         let orphan = findings
             .iter()
             .find(|f| f.diag.rule == "orphan-spec")
             .expect("orphan spec must be diagnosed when a requirements corpus exists");
-        assert_eq!(orphan.diag.severity, crate::spec_core::Severity::Info);
+        assert_eq!(orphan.diag.severity, crate::spec_core::Severity::Warning);
         assert!(
             orphan.diag.message.contains("satisfies: [REQ-*]")
-                && orphan.diag.message.contains("record the spec in"),
+                && orphan.diag.message.contains("passing lifecycle evidence")
+                && orphan.diag.message.contains("archive"),
             "message must name both remedies: {}",
+            orphan.diag.message
+        );
+        assert!(
+            !orphan.diag.message.contains("baseline"),
+            "a retired baseline must not be recommended as remediation: {}",
             orphan.diag.message
         );
         let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
-    fn test_orphan_baseline_exempts_listed_specs() {
+    fn test_non_empty_orphan_baseline_is_rejected_after_retirement() {
         let (dir, knowledge, specs) = knowledge_gate_fixture(
             "knowledge-gate-baseline",
             true,
@@ -8531,11 +8577,207 @@ name: "退款"
             serde_json::to_string(&serde_json::json!({ "specs": [listed] })).unwrap(),
         )
         .unwrap();
-        let absolute_specs = specs.canonicalize().unwrap();
-        let (_, findings) = super::knowledge_gate_findings(&knowledge, &absolute_specs, &baseline);
+        let (_, findings) = super::knowledge_gate_findings(
+            &knowledge,
+            &specs,
+            &baseline,
+            &dir.join("absent-clauses.json"),
+        );
+        let retired = findings
+            .iter()
+            .find(|finding| finding.diag.rule == "orphan-baseline-retired")
+            .expect("a non-empty retired baseline must be rejected");
+        assert_eq!(retired.diag.severity, crate::spec_core::Severity::Error);
         assert!(
-            !findings.iter().any(|f| f.diag.rule == "orphan-spec"),
-            "repo-relative baseline entries must match an absolute --specs root"
+            retired.diag.message.contains("must stay empty")
+                && retired.diag.message.contains("satisfies: [REQ-*]")
+                && retired.diag.message.contains("archive"),
+            "retirement diagnostic must name the two valid dispositions: {}",
+            retired.diag.message
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.diag.rule == "orphan-spec"),
+            "a retired baseline entry must not suppress the orphan diagnostic"
+        );
+
+        fs::remove_file(knowledge.join("requirements/req-a.md")).unwrap();
+        let (_, findings_without_requirements) = super::knowledge_gate_findings(
+            &knowledge,
+            &specs,
+            &baseline,
+            &dir.join("absent-clauses.json"),
+        );
+        assert!(
+            findings_without_requirements
+                .iter()
+                .any(|finding| finding.diag.rule == "orphan-baseline-retired"),
+            "baseline retirement must be enforced even without a requirements corpus"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    const RETIRED_ORPHAN_SPECS: &[&str] = &[
+        "task-add-ai-verifier-skeleton.spec.md",
+        "task-add-behavior-completeness-linters.spec.md",
+        "task-audit-v1.spec.md",
+        "task-bdd-semantics-v1.spec.md",
+        "task-capability-promote-v1.spec.md",
+        "task-coverage-matrix-v1.spec.md",
+        "task-derive-change-set-from-staged-git-index.spec.md",
+        "task-discover-from-codebase-v1.spec.md",
+        "task-discovery-questions-v1.spec.md",
+        "task-enforce-boundaries-with-explicit-change-set.spec.md",
+        "task-fail-on-skipped.spec.md",
+        "task-fix-contract-fidelity.spec.md",
+        "task-fix-inheritance.spec.md",
+        "task-formalize-test-binding.spec.md",
+        "task-gen-integrations-v1.spec.md",
+        "task-host-injected-ai-backend.spec.md",
+        "task-jj-vcs-integration.spec.md",
+        "task-lint-ack-dimensions-v1.spec.md",
+        "task-make-contract-default.spec.md",
+        "task-phase1-contract-review-loop.spec.md",
+        "task-phase2-run-history-and-vcs-context.spec.md",
+        "task-phase3-spec-governance.spec.md",
+        "task-phase4-ai-verification-expansion.spec.md",
+        "task-phase5-ecosystem-integrations.spec.md",
+        "task-phase6-advanced-verification.spec.md",
+        "task-pluggable-ai-backend-interface.spec.md",
+        "task-probe-abstraction-v1.spec.md",
+        "task-require-explicit-test-selectors.spec.md",
+        "task-ship-claude-code-tool-first-skills.spec.md",
+        "task-stage-roadmap-specs.spec.md",
+        "task-structural-check-v1.spec.md",
+        "task-structure-test-selectors.spec.md",
+        "task-support-change-scope-in-verify-and-lifecycle.spec.md",
+        "task-support-git-worktree-change-scope.spec.md",
+        "task-support-spec-md-extension.spec.md",
+        "task-support-step-tables.spec.md",
+    ];
+
+    #[test]
+    fn test_repository_orphan_baseline_is_empty() {
+        let baseline_path = repo_root().join(".agent-spec/orphan-baseline.json");
+        let baseline: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(&baseline_path).expect("tracked orphan baseline must exist"),
+        )
+        .expect("tracked orphan baseline must be valid JSON");
+        let entries = baseline["specs"]
+            .as_array()
+            .expect("orphan baseline must contain a specs array");
+        assert!(
+            entries.is_empty(),
+            "the retired orphan baseline must stay empty: {}",
+            baseline_path.display()
+        );
+    }
+
+    #[test]
+    fn test_repository_retired_orphans_have_archive_evidence() {
+        let root = repo_root();
+        let summary_path = root.join("knowledge/context/spec-archives.md");
+        let summary = fs::read_to_string(&summary_path)
+            .expect("the archive summary must preserve retirement evidence");
+        assert_eq!(
+            RETIRED_ORPHAN_SPECS.len(),
+            36,
+            "the retirement inventory must remain the 1.3.0 baseline set"
+        );
+        for file_name in RETIRED_ORPHAN_SPECS {
+            let active = root.join("specs").join(file_name);
+            let archived = root.join(".agent-spec/archive/specs").join(file_name);
+            assert!(
+                !active.exists(),
+                "retired orphan remains in the active scan set: {}",
+                active.display()
+            );
+            assert!(
+                archived.is_file(),
+                "retired orphan has no archived contract: {}",
+                archived.display()
+            );
+            let retired_path = format!("specs/{file_name}");
+            assert!(
+                summary.contains(&retired_path),
+                "archive summary omits retired path {retired_path}: {}",
+                summary_path.display()
+            );
+        }
+    }
+
+    #[test]
+    fn test_repository_active_task_specs_are_requirement_linked() {
+        let root = repo_root();
+        let plan = crate::spec_knowledge::build_requirement_plan(
+            &root.join("knowledge"),
+            &root.join("specs"),
+        );
+        let orphans = plan
+            .specs
+            .iter()
+            .filter(|spec| {
+                spec.level == crate::spec_core::SpecLevel::Task && spec.satisfies.is_empty()
+            })
+            .map(|spec| spec.path.display().to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            orphans.is_empty(),
+            "active task specs must be requirement-linked: {orphans:#?}"
+        );
+        let dangling = plan
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "dangling-spec-coverage")
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            dangling.is_empty(),
+            "active satisfies links must resolve: {dangling:#?}"
+        );
+    }
+
+    #[test]
+    fn test_orphan_retirement_contract_excludes_clause_migration() {
+        let contract =
+            fs::read_to_string(repo_root().join("specs/task-orphan-baseline-retirement.spec.md"))
+                .expect("orphan retirement contract must exist");
+        assert!(contract.contains("clause baseline 的清理或严重级别升级"));
+        assert!(contract.contains("不改动 clause-coverage 实现与 clause baseline"));
+    }
+
+    #[test]
+    fn test_clause_baseline_exempts_listed_clauses() {
+        let (dir, knowledge, specs) = knowledge_gate_fixture(
+            "knowledge-gate-clause-baseline",
+            true,
+            "spec: task\nname: \"A\"\nsatisfies: [REQ-A]\n---\n## Intent\nA.\n## Completion Criteria\nScenario: A\n  Test: test_a\n  Given A\n  When A\n  Then A\n",
+        );
+        let baseline = dir.join(".agent-spec/clause-baseline.json");
+        fs::create_dir_all(baseline.parent().unwrap()).unwrap();
+        fs::write(
+            &baseline,
+            serde_json::to_string(&serde_json::json!({ "clauses": ["REQ-A"] })).unwrap(),
+        )
+        .unwrap();
+        let (_, findings) = super::knowledge_gate_findings(
+            &knowledge,
+            &specs,
+            &dir.join(".agent-spec/orphan-baseline.json"),
+            &baseline,
+        );
+        assert!(
+            !findings
+                .iter()
+                .any(|finding| finding.diag.rule == "clause-uncovered"),
+            "a listed clause must be exempt from the knowledge gate"
+        );
+        assert!(
+            findings
+                .iter()
+                .all(|finding| finding.diag.severity != crate::spec_core::Severity::Error),
+            "the gate must remain successful"
         );
         let _ = fs::remove_dir_all(dir);
     }
@@ -8553,8 +8795,12 @@ name: "退款"
         )
         .unwrap();
 
-        let (_, findings) =
-            super::knowledge_gate_findings(&knowledge, &specs, &dir.join("absent.json"));
+        let (_, findings) = super::knowledge_gate_findings(
+            &knowledge,
+            &specs,
+            &dir.join("absent.json"),
+            &dir.join("absent-clauses.json"),
+        );
         assert!(
             !findings.iter().any(|finding| {
                 finding.diag.rule == "orphan-spec" && finding.uri.ends_with("project.spec.md")
@@ -8571,8 +8817,12 @@ name: "退款"
             false,
             "spec: task\nname: \"A\"\n---\n## Intent\nA.\n## Completion Criteria\nScenario: A\n  Test: test_a\n  Given A\n  When A\n  Then A\n",
         );
-        let (_, findings) =
-            super::knowledge_gate_findings(&knowledge, &specs, &dir.join("absent.json"));
+        let (_, findings) = super::knowledge_gate_findings(
+            &knowledge,
+            &specs,
+            &dir.join("absent.json"),
+            &dir.join("absent-clauses.json"),
+        );
         assert!(
             !findings.iter().any(|f| f.diag.rule == "orphan-spec"),
             "no requirements corpus means no orphan-spec claims"

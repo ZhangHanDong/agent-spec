@@ -111,11 +111,13 @@ specs/                  task-*    executable, verifiable contract
 prefix lives where; scaffold each artifact with `agent-spec knowledge new
 <kind> <id>` so the enum values, filename, and exit pointer are right the first
 time. `lint-knowledge --gate` enforces the walk: a task contract with no
-`satisfies:` raises `orphan-spec`, an `ADR-*` id under a requirement's
-`## Dependencies` raises `dependency-kind-mismatch`, and an accepted proposal
-whose produced decision does not link back raises `produces-link-integrity`.
-Existing contracts are exempted through a shrink-only baseline at
-`.agent-spec/orphan-baseline.json` rather than a flag day.
+`satisfies:` raises `orphan-spec` at Warning severity, an `ADR-*` id under a
+requirement's `## Dependencies` raises `dependency-kind-mismatch`, and an
+accepted proposal whose produced decision does not link back raises
+`produces-link-integrity`.
+The 1.3.0 migration used a shrink-only baseline for existing contracts. That
+baseline is now retired and empty; any non-empty
+`.agent-spec/orphan-baseline.json` is an Error rather than an exemption.
 
 ### Decision points
 
