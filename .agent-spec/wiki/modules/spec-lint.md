@@ -25,6 +25,12 @@ Spec quality analysis and contract smell detection.
   because `disk` is not a type. See `strip_signature_arrows` /
   `is_rust_signature_span` in `linters.rs`.
 
+- `boundary-entry-shape` (Warning) names an Allowed Changes entry that can
+  never match: empty after normalization, or whitespace with a first/last
+  token that is not a path fragment (`` `Cargo.toml` (dev-dep only) ``). Path
+  normalization is `spec_core::normalize_boundary_pattern`, shared with the
+  verifier.
+
 ## Maintenance
 
 Update this page when any listed `source_files` change in a way that alters the project understanding an agent should reuse.

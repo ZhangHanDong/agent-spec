@@ -1610,6 +1610,70 @@ fn scenario_text_blob(scenario: &Scenario) -> String {
 // 13. BoundaryEntryPointLinter - warns when Boundaries list multiple entry
 //     points (bin/, main.rs) but scenarios don't reference each one
 // =============================================================================
+// boundary-entry-shape: an Allowed Changes entry that is not a single path
+// expression would be silently un-matchable; name it instead.
+// =============================================================================
+
+pub struct BoundaryEntryShapeLinter;
+
+/// An Allow entry is malformed when it is empty, or contains whitespace and
+/// its first or last whitespace-separated token no longer looks like a path
+/// fragment. `docs/foo (copy).md` keeps path fragments at both ends and is
+/// accepted; `` `Cargo.toml` (dev-dep only) `` and `Do not modify src/x.rs`
+/// do not.
+fn allow_entry_is_malformed(normalized: &str) -> bool {
+    if normalized.is_empty() {
+        return true;
+    }
+    if !normalized.chars().any(char::is_whitespace) {
+        return false;
+    }
+    let mut tokens = normalized.split_whitespace();
+    let first = tokens.next().unwrap_or("");
+    let last = tokens.next_back().unwrap_or(first);
+    let pathish = |t: &str| t.contains(['/', '.', '*']);
+    !(pathish(first) && pathish(last))
+}
+
+impl SpecLinter for BoundaryEntryShapeLinter {
+    fn name(&self) -> &str {
+        "boundary-entry-shape"
+    }
+
+    fn lint(&self, doc: &SpecDocument) -> Vec<LintDiagnostic> {
+        let mut diags = Vec::new();
+        for section in &doc.sections {
+            let Section::Boundaries { items, .. } = section else {
+                continue;
+            };
+            for item in items {
+                if item.category != crate::spec_core::BoundaryCategory::Allow {
+                    continue;
+                }
+                let normalized = crate::spec_core::normalize_boundary_pattern(&item.text);
+                if !allow_entry_is_malformed(&normalized) {
+                    continue;
+                }
+                diags.push(LintDiagnostic {
+                    rule: "boundary-entry-shape".into(),
+                    severity: Severity::Warning,
+                    message: format!(
+                        "Allowed Changes entry '{}' is not a single path expression and cannot match any change",
+                        item.text
+                    ),
+                    span: item.span,
+                    suggestion: Some(
+                        "write one path per entry; put annotations after ` — ` (e.g. `` `Cargo.toml` — dev-dep only ``) or move prose to Forbidden / Constraints"
+                            .into(),
+                    ),
+                });
+            }
+        }
+        diags
+    }
+}
+
+// =============================================================================
 
 pub struct BoundaryEntryPointLinter;
 
@@ -2896,6 +2960,48 @@ Scenario: Lookup works
         let doc = parse_spec_from_str(input).unwrap();
         let diags = PrecedenceFallbackCoverageLinter.lint(&doc);
         assert!(diags.is_empty(), "{diags:?}");
+    }
+
+    #[test]
+    fn test_boundary_entry_shape_warns_on_annotated_allow_entry() {
+        let input = r#"spec: task
+name: "test"
+---
+
+## Boundaries
+
+### Allowed Changes
+- `Cargo.toml` (dev-dep only)
+"#;
+        let doc = parse_spec_from_str(input).unwrap();
+        let diags = BoundaryEntryShapeLinter.lint(&doc);
+        assert_eq!(diags.len(), 1, "{diags:?}");
+        assert_eq!(diags[0].rule, "boundary-entry-shape");
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert!(diags[0].message.contains("(dev-dep only)"));
+        assert!(diags[0].suggestion.as_deref().unwrap_or("").contains(" — "));
+    }
+
+    #[test]
+    fn test_boundary_entry_shape_silent_on_valid_entries() {
+        let input = r#"spec: task
+name: "test"
+---
+
+## Boundaries
+
+### Allowed Changes
+- Cargo.toml
+- src/**
+- `Cargo.toml` — dev-dep only
+- docs/foo (copy).md
+- LICENSE
+
+### Forbidden
+- Do not modify `src/sliding_sync.rs`
+"#;
+        let doc = parse_spec_from_str(input).unwrap();
+        assert!(BoundaryEntryShapeLinter.lint(&doc).is_empty());
     }
 
     #[test]

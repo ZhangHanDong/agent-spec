@@ -12,6 +12,32 @@ All notable changes to `agent-spec` are documented here. Format follows
   (`` `f(&self, x) -> bool` ``, `` `|x| -> Option<T>` ``) as an ordering
   chain; `memory() -> disk` and `local -> cache -> remote` still warn.
   Reported from robrix2 practice.
+- Boundary path expressions (REQ-BOUNDARY-PATH-EXPRESSIONS, from robrix2
+  practice feedback B1/B2): `### Allowed Changes` entries are now path
+  expressions by definition. The old "looks like a path" whitelist (`/`, `*`
+  or a `.rs .ts .js .py .md .spec` suffix) silently dropped bare root files
+  (`Cargo.toml`, `LICENSE`, `Makefile`), any other extension (`.json`,
+  `.toml`, `.yml`, `.sh`) and backticked names such as `` `CLAUDE.md` `` —
+  fifteen entries in this repository's own specs were affected — so a
+  declared change still failed "not covered by any allowed boundary".
+  Every Allow entry is now normalized (trailing ` — note` / ` # note` outside
+  backticks stripped, backticks removed, `\` → `/`, leading `./` and
+  surrounding `/` trimmed; a bare filename is repo-root relative) and takes
+  part in matching. `### Forbidden` / general entries become a forbidden
+  pattern only when the whole entry is a single path token; paths quoted
+  inside prose are never extracted. Parentheses are never treated as a note.
+- The recognition/normalization/matching logic now lives once in
+  `spec_core::boundary_paths` and is shared by the boundaries verifier, plan
+  scanning and the MCP `spec_allows_path` tool, which previously matched raw
+  contract text with no normalization (so `./Cargo.toml` passed the verifier
+  but not MCP).
+### Added
+
+- Lint `boundary-entry-shape` (Warning): names an Allowed Changes entry that
+  cannot match any change — empty after normalization, or containing
+  whitespace with a first/last token that is not a path fragment
+  (`` `Cargo.toml` (dev-dep only) ``, `src/vcs.rs (new file)`) — and
+  suggests the ` — note` form. `docs/foo (copy).md` is accepted.
 
 ## [1.4.0] - 2026-08-14
 

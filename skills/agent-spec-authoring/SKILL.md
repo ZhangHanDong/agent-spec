@@ -498,9 +498,17 @@ Scenario: Batch validation
 ### Allowed Changes
 - crates/spec-parser/**
 - tests/parser_contract.rs
+- Cargo.toml
+- `CLAUDE.md` — docs only
 ```
 
-BoundariesVerifier checks actual changed files against these globs.
+BoundariesVerifier checks actual changed files against these globs. Every
+Allowed Changes entry is a path expression by definition: bare root files
+(`Cargo.toml`, `LICENSE`, `Makefile`), any extension, backticks and a
+trailing ` — note` / ` # note` (outside backticks) all work; a bare filename
+is repo-root relative. Parentheses are part of the path — write
+`` `Cargo.toml` — dev-dep only ``, not `` `Cargo.toml` (dev-dep only) ``; the
+latter can never match and lint `boundary-entry-shape` names it.
 
 ### Natural language prohibitions
 
