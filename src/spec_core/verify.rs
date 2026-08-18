@@ -177,8 +177,11 @@ pub struct AiDecision {
 }
 
 /// Summary of a full verification run.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct VerificationSummary {
+    /// Gate counts: every result including synthetic layer rows
+    /// (`[boundaries] …`, `[atlas-symbols] …`, `[complexity] …`). These feed
+    /// `is_passing` and existing consumers; their meaning is unchanged.
     pub total: usize,
     pub passed: usize,
     pub failed: usize,
@@ -186,9 +189,89 @@ pub struct VerificationSummary {
     pub uncertain: usize,
     #[serde(default)]
     pub pending_review: usize,
+    /// Counts over genuine scenarios only (names not starting with `[`).
+    /// Declared after the gate counts so JSON field order for the legacy
+    /// fields is unchanged.
+    #[serde(default, skip_serializing_if = "ScenarioCounts::is_empty")]
+    pub scenarios: ScenarioCounts,
+    /// One entry per synthetic verifier layer present in the results.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub layers: Vec<LayerVerdict>,
+}
+
+/// Verdict counts over genuine scenarios (synthetic layer rows excluded).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScenarioCounts {
+    pub total: usize,
+    pub passed: usize,
+    pub failed: usize,
+    pub skipped: usize,
+    pub uncertain: usize,
+    pub pending_review: usize,
+}
+
+impl ScenarioCounts {
+    pub fn is_empty(&self) -> bool {
+        self.total == 0
+    }
+}
+
+/// Verdict of one synthetic verifier layer (`[name] …` result row).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LayerVerdict {
+    pub name: String,
+    pub verdict: Verdict,
+}
+
+fn verdict_word(v: Verdict) -> &'static str {
+    match v {
+        Verdict::Pass => "pass",
+        Verdict::Fail => "fail",
+        Verdict::Skip => "skip",
+        Verdict::Uncertain => "uncertain",
+        Verdict::PendingReview => "pending_review",
+    }
+}
+
+/// Layer name of a synthetic result row (`[boundaries] …` → `boundaries`),
+/// or `None` for a genuine scenario.
+pub fn layer_name_of(scenario_name: &str) -> Option<&str> {
+    let rest = scenario_name.strip_prefix('[')?;
+    let end = rest.find(']')?;
+    let name = &rest[..end];
+    (!name.is_empty()).then_some(name)
 }
 
 impl VerificationSummary {
+    /// One human-readable line: genuine scenario counts, then each layer's
+    /// verdict when any layer ran.
+    pub fn human_line(&self) -> String {
+        let mut line = format!(
+            "{}/{} scenarios passed, {} failed, {} skipped, {} uncertain",
+            self.scenarios.passed,
+            self.scenarios.total,
+            self.scenarios.failed,
+            self.scenarios.skipped,
+            self.scenarios.uncertain,
+        );
+        if self.scenarios.pending_review > 0 {
+            line.push_str(&format!(
+                ", {} pending_review",
+                self.scenarios.pending_review
+            ));
+        }
+        if !self.layers.is_empty() {
+            let layers: Vec<String> = self
+                .layers
+                .iter()
+                .map(|l| format!("{}={}", l.name, verdict_word(l.verdict)))
+                .collect();
+            line.push_str(" · layers: ");
+            line.push_str(&layers.join(", "));
+        }
+        line
+    }
+
     pub fn pass_rate(&self) -> f64 {
         if self.total == 0 {
             return 0.0;
@@ -229,6 +312,27 @@ impl VerificationReport {
             .filter(|r| r.verdict == Verdict::PendingReview)
             .count();
 
+        let mut scenarios = ScenarioCounts::default();
+        let mut layers = Vec::new();
+        for r in &results {
+            match layer_name_of(&r.scenario_name) {
+                Some(name) => layers.push(LayerVerdict {
+                    name: name.to_string(),
+                    verdict: r.verdict,
+                }),
+                None => {
+                    scenarios.total += 1;
+                    match r.verdict {
+                        Verdict::Pass => scenarios.passed += 1,
+                        Verdict::Fail => scenarios.failed += 1,
+                        Verdict::Skip => scenarios.skipped += 1,
+                        Verdict::Uncertain => scenarios.uncertain += 1,
+                        Verdict::PendingReview => scenarios.pending_review += 1,
+                    }
+                }
+            }
+        }
+
         Self {
             spec_name,
             results,
@@ -239,6 +343,8 @@ impl VerificationReport {
                 skipped,
                 uncertain,
                 pending_review,
+                scenarios,
+                layers,
             },
         }
     }
@@ -248,6 +354,96 @@ impl VerificationReport {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    fn row(name: &str, verdict: Verdict) -> ScenarioResult {
+        ScenarioResult {
+            scenario_name: name.into(),
+            verdict,
+            step_results: vec![],
+            evidence: vec![],
+            duration_ms: 0,
+            provenance: None,
+        }
+    }
+
+    #[test]
+    fn test_summary_splits_scenarios_and_layers() {
+        let mut results: Vec<ScenarioResult> = (0..10)
+            .map(|i| row(&format!("s{i}"), Verdict::Pass))
+            .collect();
+        results.push(row(
+            "[boundaries] explicit change set respects declared paths",
+            Verdict::Fail,
+        ));
+        let report = VerificationReport::from_results("x".into(), results);
+        // Gate counts unchanged: layer rows still count.
+        assert_eq!(report.summary.total, 11);
+        assert_eq!(report.summary.passed, 10);
+        assert_eq!(report.summary.failed, 1);
+        // Genuine scenarios only.
+        assert_eq!(report.summary.scenarios.total, 10);
+        assert_eq!(report.summary.scenarios.passed, 10);
+        assert_eq!(report.summary.scenarios.failed, 0);
+        assert_eq!(
+            report.summary.layers,
+            vec![LayerVerdict {
+                name: "boundaries".into(),
+                verdict: Verdict::Fail
+            }]
+        );
+    }
+
+    #[test]
+    fn test_summary_without_layers_serializes_like_before() {
+        let report = VerificationReport::from_results("x".into(), vec![row("a", Verdict::Pass)]);
+        let json = serde_json::to_string(&report.summary).unwrap();
+        assert!(!json.contains("layers"), "{json}");
+        assert!(report.summary.layers.is_empty());
+        assert_eq!(report.summary.scenarios.total, 1);
+    }
+
+    #[test]
+    fn test_summary_json_keeps_legacy_field_order() {
+        let report = VerificationReport::from_results(
+            "x".into(),
+            vec![
+                row("a", Verdict::Pass),
+                row("[complexity] code quality gate", Verdict::Pass),
+            ],
+        );
+        let json = serde_json::to_string(&report.summary).unwrap();
+        let failed_at = json.find("\"failed\"").unwrap();
+        let scenarios_at = json.find("\"scenarios\"").unwrap();
+        let layers_at = json.find("\"layers\"").unwrap();
+        assert!(failed_at < scenarios_at, "{json}");
+        assert!(scenarios_at < layers_at, "{json}");
+    }
+
+    #[test]
+    fn test_text_summary_line_separates_scenarios_and_layers() {
+        let mut results: Vec<ScenarioResult> = (0..10)
+            .map(|i| row(&format!("s{i}"), Verdict::Pass))
+            .collect();
+        results.push(row("[boundaries] ok", Verdict::Pass));
+        let report = VerificationReport::from_results("x".into(), results);
+        let line = report.summary.human_line();
+        assert!(line.contains("10/10 scenarios passed"), "{line}");
+        assert!(line.contains("boundaries=pass"), "{line}");
+        // No layers → no layer suffix.
+        let plain = VerificationReport::from_results("y".into(), vec![row("a", Verdict::Skip)]);
+        assert_eq!(
+            plain.summary.human_line(),
+            "0/1 scenarios passed, 0 failed, 1 skipped, 0 uncertain"
+        );
+    }
+
+    #[test]
+    fn test_layer_name_of_recognizes_bracket_prefix() {
+        assert_eq!(layer_name_of("[boundaries] x"), Some("boundaries"));
+        assert_eq!(layer_name_of("[atlas-symbols] y"), Some("atlas-symbols"));
+        assert_eq!(layer_name_of("plain scenario"), None);
+        assert_eq!(layer_name_of("[] empty"), None);
+    }
 
     #[test]
     fn test_json_provenance_additive_only() {

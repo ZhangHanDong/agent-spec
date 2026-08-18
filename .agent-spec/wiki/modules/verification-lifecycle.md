@@ -129,3 +129,11 @@ loaded checkpoint with `checkpoint_staleness` (name changed / predates
 fingerprinting / content changed) and drops a stale one before
 `merge_checkpoint_results`, surfacing `checkpoint_diagnostic`. The merge
 logic itself is unchanged.
+
+## Summary split
+
+`VerificationReport::from_results` computes gate counts (unchanged, include
+`[layer]` rows) plus `summary.scenarios` (genuine rows) and `summary.layers`
+(`layer_name_of` on the `[name] …` prefix). `VerificationSummary::human_line`
+renders both for text reports and the run log. `apply_dependency_skips`
+recomputes through `from_results` so the split stays consistent.

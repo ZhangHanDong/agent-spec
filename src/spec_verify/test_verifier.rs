@@ -37,11 +37,56 @@ impl Verifier for TestVerifier {
 
         let legacy_bindings = collect_legacy_comment_bindings(&ctx.code_paths)?;
         let mut results = Vec::new();
+        // Workspace member names, fetched at most once and only when some
+        // binding names a package. `None` = metadata unavailable → fall back.
+        let mut members: Option<Option<Vec<String>>> = None;
 
         for scenario in &ctx.resolved_spec.all_scenarios {
             let Some(binding) = resolve_test_binding(scenario, &legacy_bindings) else {
                 continue;
             };
+
+            if let Some(package) = binding.selector.package.as_deref() {
+                let known = members
+                    .get_or_insert_with(|| cargo_workspace_members(&workspace_root))
+                    .as_deref();
+                if let Some(known) = known
+                    && !known.iter().any(|m| m == package)
+                {
+                    let selector_label = binding.selector.label();
+                    let reason = format!(
+                        "package `{package}` is not a member of the cargo workspace at {} \
+                         (members: {})",
+                        workspace_root.display(),
+                        known.join(", ")
+                    );
+                    results.push(ScenarioResult {
+                        scenario_name: scenario.name.clone(),
+                        verdict: Verdict::Uncertain,
+                        step_results: scenario
+                            .steps
+                            .iter()
+                            .map(|step| StepVerdict {
+                                step_text: step.text.clone(),
+                                verdict: Verdict::Uncertain,
+                                reason: reason.clone(),
+                            })
+                            .collect(),
+                        evidence: vec![Evidence::TestOutput {
+                            test_name: selector_label,
+                            stdout: String::new(),
+                            passed: false,
+                            package: binding.selector.package.clone(),
+                            level: binding.selector.level.clone(),
+                            test_double: binding.selector.test_double.clone(),
+                            targets: binding.selector.targets.clone(),
+                        }],
+                        duration_ms: 0,
+                        provenance: None,
+                    });
+                    continue;
+                }
+            }
 
             let started = Instant::now();
             let command_args = build_cargo_test_args(&binding.selector);
@@ -235,6 +280,28 @@ fn test_run_verdict(success: bool, executed_tests: usize, review: ReviewMode) ->
     }
 }
 
+/// Package names of the cargo workspace rooted at `root`, via
+/// `cargo metadata --no-deps`. `None` when cargo/metadata is unavailable so
+/// callers fall back to running the selector as before.
+fn cargo_workspace_members(root: &Path) -> Option<Vec<String>> {
+    let output = Command::new("cargo")
+        .args(["metadata", "--no-deps", "--format-version", "1"])
+        .current_dir(root)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    let names: Vec<String> = value
+        .get("packages")?
+        .as_array()?
+        .iter()
+        .filter_map(|p| p.get("name")?.as_str().map(str::to_string))
+        .collect();
+    (!names.is_empty()).then_some(names)
+}
+
 fn collect_rust_files(dir: &Path, files: &mut Vec<PathBuf>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
@@ -337,6 +404,30 @@ mod tests {
             ),
             1
         );
+    }
+
+    #[test]
+    fn test_package_reason_falls_back_without_metadata() {
+        // With no member list the verifier keeps the legacy build-failure
+        // wording for a non-success run that executed zero tests.
+        assert_eq!(
+            test_run_verdict(false, 0, ReviewMode::Auto),
+            Verdict::Uncertain
+        );
+        let reason = "could not run `x`: cargo exited before any test ran \
+                      (build/toolchain failure)";
+        assert!(reason.contains("build/toolchain failure"));
+        assert!(
+            super::cargo_workspace_members(std::path::Path::new("/nonexistent-dir-agent-spec"))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn test_cargo_workspace_members_lists_this_workspace() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let members = super::cargo_workspace_members(root).unwrap_or_default();
+        assert!(members.iter().any(|m| m == "agent-spec"), "{members:?}");
     }
 
     #[test]

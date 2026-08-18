@@ -261,6 +261,16 @@ Provenance is `Computational` (mechanical evidence) vs `Inferential` (AI). Share
 `verify`'s change-set and ai-mode flags and default semantics. Scenarios with no
 matching test surface as orphan rows.
 
+### Verification summary shape
+
+`summary.total/passed/failed/skipped/uncertain/pending_review` are the gate
+counts and include synthetic layer rows (`[boundaries] …`, `[atlas-symbols] …`,
+`[complexity] …`). `summary.scenarios` holds the same counts over genuine
+scenarios only and `summary.layers` lists each layer's verdict; text output
+and the run log show `N/M scenarios passed … · layers: boundaries=pass`.
+A `Package:` selector that is not a workspace member yields `uncertain` with
+``package `x` is not a member of the cargo workspace at … (members: …)``.
+
 ### promote
 
 ```bash

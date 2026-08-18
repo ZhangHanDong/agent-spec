@@ -77,7 +77,7 @@ enum Commands {
         /// Explicit changed file or directory to check against Boundaries (repeatable)
         #[arg(long = "change")]
         change: Vec<PathBuf>,
-        /// Auto-detected git change scope when --change is omitted: none, staged, worktree
+        /// Auto-detected git change scope when --change is omitted: none, staged, worktree, jj
         #[arg(long, default_value = "none")]
         change_scope: String,
         /// AI verification mode: off, stub
@@ -101,7 +101,7 @@ enum Commands {
         /// Explicit changed file or directory (repeatable)
         #[arg(long = "change")]
         change: Vec<PathBuf>,
-        /// Git change scope when --change is omitted: none, staged, worktree
+        /// Git change scope when --change is omitted: none, staged, worktree, jj
         #[arg(long, default_value = "none")]
         change_scope: String,
         /// AI verification mode: off, stub, caller
@@ -251,7 +251,7 @@ enum Commands {
         /// Explicit changed file or directory to check against Boundaries (repeatable)
         #[arg(long = "change")]
         change: Vec<PathBuf>,
-        /// Auto-detected git change scope when --change is omitted: staged, worktree
+        /// Auto-detected git change scope when --change is omitted: none, staged, worktree, jj
         #[arg(long, default_value = "staged")]
         change_scope: String,
         /// Minimum quality score
@@ -2588,14 +2588,7 @@ fn cmd_lifecycle(
             spec_path: canonical_existing_path(spec),
             spec_fingerprint: spec_fingerprint.clone(),
             passing,
-            summary: format!(
-                "{}/{} passed, {} failed, {} skipped, {} uncertain",
-                verify_report.summary.passed,
-                verify_report.summary.total,
-                verify_report.summary.failed,
-                verify_report.summary.skipped,
-                verify_report.summary.uncertain,
-            ),
+            summary: verify_report.summary.human_line(),
             timestamp: run_timestamp.unwrap_or_else(current_unix_timestamp),
             vcs: run_vcs_ctx,
         };
@@ -2837,40 +2830,11 @@ fn apply_dependency_skips(
     }
 
     // Recompute summary
-    let total = report.results.len();
-    let passed = report
-        .results
-        .iter()
-        .filter(|r| r.verdict == crate::spec_core::Verdict::Pass)
-        .count();
-    let failed = report
-        .results
-        .iter()
-        .filter(|r| r.verdict == crate::spec_core::Verdict::Fail)
-        .count();
-    let skipped = report
-        .results
-        .iter()
-        .filter(|r| r.verdict == crate::spec_core::Verdict::Skip)
-        .count();
-    let uncertain = report
-        .results
-        .iter()
-        .filter(|r| r.verdict == crate::spec_core::Verdict::Uncertain)
-        .count();
-    let pending_review = report
-        .results
-        .iter()
-        .filter(|r| r.verdict == crate::spec_core::Verdict::PendingReview)
-        .count();
-    report.summary = crate::spec_core::VerificationSummary {
-        total,
-        passed,
-        failed,
-        skipped,
-        uncertain,
-        pending_review,
-    };
+    // Recompute every count (gate counts, genuine-scenario counts, layers)
+    // through the single constructor so the split stays consistent.
+    let spec_name = std::mem::take(&mut report.spec_name);
+    let results = std::mem::take(&mut report.results);
+    *report = crate::spec_core::VerificationReport::from_results(spec_name, results);
 }
 
 /// Sort scenarios by topological order based on depends_on.
@@ -11889,6 +11853,7 @@ Scenario: verification metadata stays visible
                 skipped: 0,
                 uncertain: 0,
                 pending_review: 0,
+                ..Default::default()
             },
         };
 
@@ -11946,6 +11911,7 @@ Scenario: verification metadata stays visible
                 skipped: 0,
                 uncertain: 0,
                 pending_review: 0,
+                ..Default::default()
             },
         };
 
@@ -11971,6 +11937,7 @@ Scenario: verification metadata stays visible
             skipped: 0,
             uncertain: 0,
             pending_review: 0,
+            ..Default::default()
         };
 
         let trailers = build_stamp_trailers("my-contract", false, &summary, None);
@@ -12470,6 +12437,7 @@ Scenario: verification metadata stays visible
                 skipped: 0,
                 uncertain: 1,
                 pending_review: 0,
+                ..Default::default()
             },
         };
 
@@ -12536,6 +12504,7 @@ Scenario: verification metadata stays visible
             skipped: 0,
             uncertain: 0,
             pending_review: 0,
+            ..Default::default()
         };
         let jj_ctx = vcs::VcsContext {
             vcs_type: vcs::VcsType::Jj,
@@ -12564,6 +12533,7 @@ Scenario: verification metadata stays visible
             skipped: 0,
             uncertain: 0,
             pending_review: 0,
+            ..Default::default()
         };
         let git_ctx = vcs::VcsContext {
             vcs_type: vcs::VcsType::Git,
@@ -16706,6 +16676,66 @@ Scenario: pass
     }
 
     // ── legacy roadmap triage: context fidelity + status file ───
+
+    #[test]
+    fn test_package_selector_not_in_workspace_names_members() {
+        let dir = make_temp_dir("agent-spec-pkg-missing");
+        fs::create_dir_all(dir.join("specs")).unwrap();
+        let spec = dir.join("specs/task-pkg.spec.md");
+        fs::write(
+            &spec,
+            "spec: task\nname: \"Pkg\"\n---\n## Intent\nx.\n## Completion Criteria\nScenario: missing package\n  Test:\n    Package: not-a-crate\n    Filter: test_history_single_run_no_delta\n  Given a spec\n  When verified\n  Then it passes\n",
+        )
+        .unwrap();
+        let gw = crate::spec_gateway::SpecGateway::load(&spec).unwrap();
+        let report = gw.verify(Path::new(".")).unwrap();
+        let r = report
+            .results
+            .iter()
+            .find(|r| r.scenario_name == "missing package")
+            .expect("scenario present");
+        assert_eq!(r.verdict, crate::spec_core::Verdict::Uncertain, "{r:?}");
+        let reason = &r.step_results[0].reason;
+        assert!(reason.contains("not a member of the cargo"), "{reason}");
+        assert!(reason.contains("agent-spec"), "{reason}");
+        assert!(!reason.contains("build/toolchain failure"), "{reason}");
+        let stdout = r.evidence.iter().find_map(|e| match e {
+            crate::spec_core::Evidence::TestOutput { stdout, .. } => Some(stdout.clone()),
+            _ => None,
+        });
+        assert_eq!(stdout.as_deref(), Some(""), "no cargo test must have run");
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn test_package_selector_member_still_runs() {
+        let dir = make_temp_dir("agent-spec-pkg-member");
+        fs::create_dir_all(dir.join("specs")).unwrap();
+        let spec = dir.join("specs/task-pkg.spec.md");
+        fs::write(
+            &spec,
+            "spec: task\nname: \"Pkg\"\n---\n## Intent\nx.\n## Completion Criteria\nScenario: member package\n  Test:\n    Package: agent-spec\n    Filter: test_history_single_run_no_delta\n  Given a spec\n  When verified\n  Then it passes\n",
+        )
+        .unwrap();
+        let gw = crate::spec_gateway::SpecGateway::load(&spec).unwrap();
+        let report = gw.verify(Path::new(".")).unwrap();
+        let r = report
+            .results
+            .iter()
+            .find(|r| r.scenario_name == "member package")
+            .expect("scenario present");
+        assert_eq!(r.verdict, crate::spec_core::Verdict::Pass, "{r:?}");
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn test_guard_change_scope_help_lists_all_values() {
+        use clap::CommandFactory;
+        let mut cmd = super::Cli::command();
+        let guard = cmd.find_subcommand_mut("guard").expect("guard subcommand");
+        let help = guard.render_long_help().to_string();
+        assert!(help.contains("none, staged, worktree, jj"), "{help}");
+    }
 
     #[test]
     fn test_existing_json_format_unchanged() {

@@ -69,6 +69,28 @@ All notable changes to `agent-spec` are documented here. Format follows
   before. Editing a spec between runs therefore always forces a full rerun
   instead of silently keeping the old verdicts.
 
+- Verification diagnostics (REQ-VERIFICATION-DIAGNOSTICS, robrix2 feedback
+  C2 / A5 / A4):
+  - A `Package:` selector naming a crate that is not a member of the cargo
+    workspace is now reported as such — verdict `uncertain`, reason
+    ``package `x` is not a member of the cargo workspace at <root> (members:
+    …)`` — instead of running cargo and surfacing the same
+    "cargo exited before any test ran (build/toolchain failure)" wording as
+    a genuine build break. Membership comes from one `cargo metadata
+    --no-deps` call per verification; when metadata is unavailable the
+    previous behavior is kept.
+  - `VerificationSummary` now separates genuine scenarios from synthetic
+    verifier layers: new `scenarios` counts (rows whose name does not start
+    with `[`) and `layers` (`[{name, verdict}]` for `[boundaries]`,
+    `[atlas-symbols]`, `[complexity]` rows). The legacy `total/passed/failed/
+    skipped/uncertain/pending_review` keep their values (and their position
+    when the struct is serialized directly), so `is_passing` and existing
+    consumers are unchanged; text reports and the
+    run log summary now read e.g. `10/10 scenarios passed, 0 failed, 0
+    skipped, 0 uncertain · layers: boundaries=pass`.
+  - `guard`/`verify`/`matrix` `--change-scope` help lists every accepted
+    value: `none, staged, worktree, jj`.
+
 ### Added
 
 - Lint `boundary-entry-shape` (Warning): names an Allowed Changes entry that

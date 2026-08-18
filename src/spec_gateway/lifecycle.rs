@@ -581,6 +581,7 @@ name: "缺少测试绑定"
                 skipped: 1,
                 uncertain: 0,
                 pending_review: 0,
+                ..Default::default()
             },
         };
 
@@ -822,6 +823,7 @@ name: "Contract fidelity"
                 skipped: 1,
                 uncertain: 0,
                 pending_review: 0,
+                ..Default::default()
             },
         };
 
@@ -887,6 +889,7 @@ name: "lint-not-gating"
                 skipped: 0,
                 uncertain: 0,
                 pending_review: 0,
+                ..Default::default()
             },
         };
         assert!(gw.is_passing(&all_pass));

@@ -32,3 +32,10 @@ token) and `path_matches_pattern`; the same functions back
 tool. Trailing ` — note` / ` # note` outside backticks are stripped;
 parentheses are not. Verifier still runs only with an explicit change set and
 stays silent when a spec declares no path boundary at all.
+
+## Package membership
+
+`TestVerifier` fetches `cargo metadata --no-deps` once per run when any
+binding names a `Package:`; a non-member package short-circuits to
+`uncertain` with a reason naming the workspace root and members, without
+running cargo test. Metadata failure falls back to the legacy path.
