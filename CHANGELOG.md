@@ -31,6 +31,23 @@ All notable changes to `agent-spec` are documented here. Format follows
   scanning and the MCP `spec_allows_path` tool, which previously matched raw
   contract text with no normalization (so `./Cargo.toml` passed the verifier
   but not MCP).
+- Multi-line list items (REQ-LIST-ITEM-CONTINUATION, robrix2 feedback B5):
+  the parser used to keep only the bullet line of a Decisions / Constraints /
+  Boundaries / Out of Scope / Questions entry and drop its indented
+  continuation lines, and promoted indented sub-bullets to siblings — a
+  three-line Decision was read as its first third, in `explain` json/text/
+  markdown and in every keyword-matching lint (`decision-coverage`,
+  `precedence-fallback-coverage`, `observable-decision-coverage`). 268
+  continuation lines across 28 of this repository's own specs were affected.
+  Continuation lines now join the item (one space between Latin text, no
+  space between CJK characters); a deeper-indented sub-bullet stays inside
+  its parent as a `\n  - ` fragment; a blank line, `###` header, HTML
+  comment or unindented prose closes the item. Single-line items are
+  byte-identical to before. Lints therefore see whole decisions: several
+  false `decision-coverage` warnings disappear and a few genuine gaps
+  (fallback wording or output flags that only appeared on a wrapped line)
+  now surface.
+
 ### Added
 
 - Lint `boundary-entry-shape` (Warning): names an Allowed Changes entry that

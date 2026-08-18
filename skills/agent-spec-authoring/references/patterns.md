@@ -157,6 +157,26 @@ agent-spec lint specs/task.spec.md --min-score 0.7
 
 If `parse` reports `0 scenarios`, the spec is not ready for `contract`, `lifecycle`, or `guard`.
 
+## Multi-line List Items
+
+Decisions, Constraints, Boundaries, Out of Scope and Questions entries may
+wrap: indented continuation lines belong to the bullet above them, and an
+indented sub-bullet stays inside its parent item (rendered as a nested list
+by `explain`). Lints such as `decision-coverage` see the whole item, so an
+identifier that only appears on a wrapped line still counts.
+
+```spec
+## Decisions
+
+- Bot identification is positive and local: a target is a bot when it is
+  the resolved BotFather MXID, an entry in `known_bot_user_ids`, or a bot
+  recorded in `room_bindings`
+  - resolution failure never counts as evidence
+```
+
+A blank line, a `###` sub-header, an HTML comment or an unindented line
+ends the item; indented text after those is not attached to it.
+
 ## Boundary Sub-Headers
 
 ```spec

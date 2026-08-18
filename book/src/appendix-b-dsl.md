@@ -52,6 +52,11 @@
 - 显式排除项
 ```
 
+列表段（Decisions / Constraints / Boundaries / Out of Scope / Questions）的条目
+可以换行：缩进的续行属于上方 bullet，缩进的子 bullet 保留在父条目内（`explain`
+渲染为嵌套列表，lint 看到的是完整条目）。空行、`###` 子标题、HTML 注释或非缩进
+文本结束当前条目。
+
 ## frontmatter
 
 ```yaml
