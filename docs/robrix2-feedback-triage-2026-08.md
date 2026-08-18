@@ -3,6 +3,24 @@
 来源：robrix2 `docs/agent-spec-feedback-2026-08.md`（24 条，基于 agent-spec 1.4.0）。
 本文是对照源码逐条核实并经二次审查后的**实施清单**，取代原反馈中的优先级。
 
+## 进度（2026-08-19）
+
+| 队列 | 状态 | 交付 |
+|---|---|---|
+| 1 B4 | ✅ | PR #10 |
+| 1 B1/B2 | ✅ | PR #11 · REQ-BOUNDARY-PATH-EXPRESSIONS |
+| 1 B5 | ✅ | PR #12 · REQ-LIST-ITEM-CONTINUATION |
+| 1 C1 | ✅ | PR #13 · REQ-PROMOTE-CARRIES-SCENARIOS |
+| 2 D1-checkpoint | ✅ | PR #14 · REQ-CHECKPOINT-SPEC-FINGERPRINT |
+| 2 C2/A5/A4 | ✅ | PR #15 · REQ-VERIFICATION-DIAGNOSTICS |
+| 3 A1+A2 | 📝 LEP 待裁决 | LEP-004 `knowledge/proposals/2026-08-19-first-class-manual-verification.md` |
+| 4 A3+A4+C6 | 📝 LEP 待裁决 | LEP-005 `knowledge/proposals/2026-08-19-change-ownership-and-ci.md` |
+| 5 D1 其余 / 6 B6 / 7 roadmap | ⏳ | 未开始 |
+
+PR #10–#15 为 stacked，按序合并。六份 REQ 均为 `status: proposed`，等待
+`agent-spec requirements transition <ID> --to accepted`。用
+`agent-spec knowledge questions LEP-004` / `LEP-005` 取决策点。
+
 约束（不可违反）：
 - **skip ≠ pass**（AGENTS.md:518）：任何改动不得提供把普通 `skip` 降级为通过的开关。
 - **ADR-001**：判定记录不得携带身份字段（`trace_ledger.rs:138` 机械守卫）。
