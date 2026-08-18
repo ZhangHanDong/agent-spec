@@ -366,7 +366,9 @@ requires the Rule's Examples to pass (≥1 example). Authoring notes:
 
 - Capability specs use header `spec: capability`; a task can declare which
   capability it contributes to with a `capability:` frontmatter field.
-- Promotion preserves the Rule's `id` — task references stay valid.
+- Promotion preserves the Rule's `id` — task references stay valid — and
+  carries the Rule's Examples verbatim (Tags, Test selectors, steps, tables),
+  so the promoted Rule is proven in the capability spec, not an empty header.
 - In a capability spec, an empty Rule (no Example yet) is allowed but flagged
   unproven by `audit`.
 

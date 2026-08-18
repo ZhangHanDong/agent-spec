@@ -48,6 +48,17 @@ All notable changes to `agent-spec` are documented here. Format follows
   (fallback wording or output flags that only appeared on a wrapped line)
   now surface.
 
+- `promote` carries the Rule's Examples (REQ-PROMOTE-CARRIES-SCENARIOS,
+  robrix2 feedback C1): after the gate passed, `upsert_capability_rule` wrote
+  only a provenance comment and the `### Rule:` header, leaving an unproven
+  rule (`orphan-rule`) in the capability library. Every Example under the
+  rule is now copied verbatim from the task spec source (`Scenario:` line
+  through the last step — Tags, Test / structured selectors, Review, Mode,
+  Depends, step tables) in document order; re-promoting a rule already present
+  is still a byte-identical no-op and the gate (≥1 Example, all `pass`) is
+  unchanged. A new capability file uses English or Chinese section headers to
+  match the source spec instead of always `## 意图` / `## 完成条件`.
+
 ### Added
 
 - Lint `boundary-entry-shape` (Warning): names an Allowed Changes entry that
