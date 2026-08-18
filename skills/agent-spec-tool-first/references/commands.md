@@ -83,6 +83,11 @@ any other value (including `compact`/`diagnostic`) renders as plain text. Use
 New flags:
 - `--resume` — skip already-passed scenarios (incremental mode)
 - `--resume=conservative` — rerun all but detect regressions
+- The checkpoint records the spec's content fingerprint; if the spec was
+  renamed or edited since the checkpoint (or the checkpoint predates
+  fingerprinting) it is ignored — nothing is carried forward — and the run
+  reports `checkpoint_diagnostic` (json) / `warning: checkpoint ignored: …`
+  (stderr in text mode).
 - `--review-mode auto` (default) — treat `pending_review` as pass
 - `--review-mode strict` — treat `pending_review` as non-passing
 

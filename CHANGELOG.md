@@ -59,6 +59,16 @@ All notable changes to `agent-spec` are documented here. Format follows
   unchanged. A new capability file uses English or Chinese section headers to
   match the source spec instead of always `## 意图` / `## 完成条件`.
 
+- `lifecycle --resume` no longer carries a pass forward from a checkpoint
+  taken on different spec content (REQ-CHECKPOINT-SPEC-FINGERPRINT, robrix2
+  feedback D1). The checkpoint now records the spec's content fingerprint
+  (same algorithm as the run log); on resume a checkpoint whose spec name or
+  fingerprint differs — or that predates fingerprinting — is ignored as a
+  whole and the run reports `checkpoint_diagnostic` (json) / `warning:
+  checkpoint ignored: …` (stderr). A matching checkpoint behaves exactly as
+  before. Editing a spec between runs therefore always forces a full rerun
+  instead of silently keeping the old verdicts.
+
 ### Added
 
 - Lint `boundary-entry-shape` (Warning): names an Allowed Changes entry that

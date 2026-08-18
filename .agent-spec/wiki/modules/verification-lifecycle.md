@@ -120,3 +120,12 @@ scenario test evidence.
 Reviewed for the 1.2 release: release metadata does not weaken any Atlas
 selector. Provider, Agent A/B, and concurrent-serving contracts must still pass
 against a fresh worktree-bound graph before publication.
+
+## Resume checkpoints
+
+`.agent-spec/checkpoint.json` (written next to the run log) carries
+`spec_fingerprint`. `cmd_lifecycle` computes the fingerprint once, checks a
+loaded checkpoint with `checkpoint_staleness` (name changed / predates
+fingerprinting / content changed) and drops a stale one before
+`merge_checkpoint_results`, surfacing `checkpoint_diagnostic`. The merge
+logic itself is unchanged.

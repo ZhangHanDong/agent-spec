@@ -2352,10 +2352,31 @@ fn cmd_lifecycle(
     let ai_mode = parse_ai_mode(ai_mode)?;
     let effective_changes = resolve_command_change_paths(spec, code, change, change_scope)?;
 
-    // Load checkpoint if resuming
+    // Spec content fingerprint: shared by the run log and the checkpoint.
+    let spec_fingerprint = crate::spec_wiki::fingerprint_file(spec)?;
+
+    // Load checkpoint if resuming; a checkpoint from a different spec name,
+    // from before fingerprinting, or from different spec content is ignored
+    // and reported — a stale pass must never be carried forward.
+    let mut checkpoint_diagnostic: Option<String> = None;
     let checkpoint = if resume_mode.is_some() {
         if let Some(log_dir) = run_log_dir {
-            load_checkpoint(log_dir)?
+            match load_checkpoint(log_dir)? {
+                Some(cp) => {
+                    match checkpoint_staleness(
+                        &cp,
+                        &gw.resolved().task.meta.name,
+                        &spec_fingerprint,
+                    ) {
+                        Some(reason) => {
+                            checkpoint_diagnostic = Some(format!("checkpoint ignored: {reason}"));
+                            None
+                        }
+                        None => Some(cp),
+                    }
+                }
+                None => None,
+            }
         } else {
             None
         }
@@ -2530,6 +2551,12 @@ fn cmd_lifecycle(
         if !qa_missing_evidence.is_empty() {
             json_out["qa_missing_evidence"] = serde_json::to_value(&qa_missing_evidence)?;
         }
+        if let Some(ref message) = checkpoint_diagnostic {
+            json_out["checkpoint_diagnostic"] = serde_json::json!({
+                "severity": "warning",
+                "message": message,
+            });
+        }
         println!("{}", serde_json::to_string_pretty(&json_out)?);
     } else {
         if let Some(ref lr) = lint_report {
@@ -2548,6 +2575,9 @@ fn cmd_lifecycle(
         if !qa_missing_evidence.is_empty() {
             eprintln!("QA gate missing evidence: {qa_missing_evidence:?}");
         }
+        if let Some(ref message) = checkpoint_diagnostic {
+            eprintln!("warning: {message}");
+        }
     }
 
     // Stage 4: Write run log if enabled
@@ -2556,7 +2586,7 @@ fn cmd_lifecycle(
         let entry = RunLogEntry {
             spec_name: contract.name.clone(),
             spec_path: canonical_existing_path(spec),
-            spec_fingerprint: crate::spec_wiki::fingerprint_file(spec)?,
+            spec_fingerprint: spec_fingerprint.clone(),
             passing,
             summary: format!(
                 "{}/{} passed, {} failed, {} skipped, {} uncertain",
@@ -2577,6 +2607,7 @@ fn cmd_lifecycle(
             &verify_report,
             entry.vcs.as_ref().map(|v| v.change_ref.clone()),
             entry.timestamp,
+            &spec_fingerprint,
         )?;
     }
 
@@ -3506,17 +3537,49 @@ fn load_checkpoint(
     if !path.exists() {
         return Ok(None);
     }
-    let content = std::fs::read_to_string(&path)?;
-    let cp: spec_core::Checkpoint = serde_json::from_str(&content)?;
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| format!("failed to read checkpoint {}: {e}", path.display()))?;
+    let cp: spec_core::Checkpoint = serde_json::from_str(&content)
+        .map_err(|e| format!("failed to parse checkpoint {}: {e}", path.display()))?;
     Ok(Some(cp))
+}
+
+/// Why a loaded checkpoint must not be resumed from, if any: the spec was
+/// renamed, the checkpoint predates fingerprinting, or the spec content
+/// changed since it was written. `None` means it is safe to merge.
+fn checkpoint_staleness(
+    cp: &spec_core::Checkpoint,
+    spec_name: &str,
+    spec_fingerprint: &str,
+) -> Option<String> {
+    if cp.spec_name != spec_name {
+        return Some(format!(
+            "spec name changed since checkpoint (`{}` → `{spec_name}`)",
+            cp.spec_name
+        ));
+    }
+    if cp.spec_fingerprint.is_empty() {
+        return Some("checkpoint predates spec fingerprinting".to_string());
+    }
+    if cp.spec_fingerprint != spec_fingerprint {
+        return Some("spec content changed since checkpoint".to_string());
+    }
+    None
 }
 
 fn save_checkpoint(
     base_dir: &Path,
     report: &spec_core::VerificationReport,
     vcs_ref: Option<String>,
+    spec_fingerprint: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    save_checkpoint_with_timestamp(base_dir, report, vcs_ref, current_unix_timestamp())
+    save_checkpoint_with_timestamp(
+        base_dir,
+        report,
+        vcs_ref,
+        current_unix_timestamp(),
+        spec_fingerprint,
+    )
 }
 
 fn save_checkpoint_with_timestamp(
@@ -3524,6 +3587,7 @@ fn save_checkpoint_with_timestamp(
     report: &spec_core::VerificationReport,
     vcs_ref: Option<String>,
     timestamp: u64,
+    spec_fingerprint: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let path = checkpoint_path(base_dir);
     if let Some(parent) = path.parent() {
@@ -3546,6 +3610,7 @@ fn save_checkpoint_with_timestamp(
         timestamp,
         vcs_ref: vcs_ref.clone(),
         scenarios,
+        spec_fingerprint: spec_fingerprint.to_string(),
     };
 
     let json = serde_json::to_string_pretty(&cp)?;
@@ -8123,11 +8188,12 @@ mod tests {
     };
     use super::{
         GitChangeScope, ResumeMode, RunLogEntry, build_stamp_trailers, checkpoint_path,
-        cmd_init_at, generate_rewrite_parity_template_both, generate_rewrite_parity_template_en,
-        generate_rewrite_parity_template_zh, generate_template_both, generate_template_en,
-        generate_template_zh, is_spec_file, load_checkpoint, merge_checkpoint_results,
-        parse_ai_mode, render_brief_output, render_contract_output, resolve_command_change_paths,
-        resolve_guard_change_paths, save_checkpoint, vcs, warn_duplicate_spec_extensions,
+        checkpoint_staleness, cmd_init_at, generate_rewrite_parity_template_both,
+        generate_rewrite_parity_template_en, generate_rewrite_parity_template_zh,
+        generate_template_both, generate_template_en, generate_template_zh, is_spec_file,
+        load_checkpoint, merge_checkpoint_results, parse_ai_mode, render_brief_output,
+        render_contract_output, resolve_command_change_paths, resolve_guard_change_paths,
+        save_checkpoint, save_checkpoint_with_timestamp, vcs, warn_duplicate_spec_extensions,
     };
     use super::{
         ScenarioAiDecision, assemble_explain_markdown, build_matrix_for, merge_ai_decisions,
@@ -11918,6 +11984,83 @@ Scenario: verification metadata stays visible
 
     // === Phase 2 Tests ===
 
+    fn cp_with(spec_name: &str, fingerprint: &str) -> crate::spec_core::Checkpoint {
+        crate::spec_core::Checkpoint {
+            spec_name: spec_name.into(),
+            timestamp: 1,
+            vcs_ref: None,
+            scenarios: std::collections::HashMap::new(),
+            spec_fingerprint: fingerprint.into(),
+        }
+    }
+
+    #[test]
+    fn test_checkpoint_records_spec_fingerprint() {
+        let dir = make_temp_dir("agent-spec-cp-fp");
+        let report = crate::spec_core::VerificationReport::from_results(
+            "spec-a".into(),
+            vec![crate::spec_core::ScenarioResult {
+                scenario_name: "A".into(),
+                verdict: crate::spec_core::Verdict::Pass,
+                step_results: vec![],
+                evidence: vec![],
+                duration_ms: 0,
+                provenance: None,
+            }],
+        );
+        save_checkpoint_with_timestamp(&dir, &report, None, 42, "abc123").unwrap();
+        let raw = fs::read_to_string(checkpoint_path(&dir)).unwrap();
+        let cp: crate::spec_core::Checkpoint = serde_json::from_str(&raw).unwrap();
+        assert_eq!(cp.spec_fingerprint, "abc123");
+        assert_eq!(cp.spec_name, "spec-a");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_checkpoint_legacy_file_loads_with_empty_fingerprint() {
+        let dir = make_temp_dir("agent-spec-cp-legacy");
+        let path = checkpoint_path(&dir);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            r#"{"spec_name":"spec-a","timestamp":1,"vcs_ref":null,"scenarios":{}}"#,
+        )
+        .unwrap();
+        let cp = load_checkpoint(&dir)
+            .unwrap()
+            .expect("legacy checkpoint loads");
+        assert_eq!(cp.spec_fingerprint, "");
+        assert!(checkpoint_staleness(&cp, "spec-a", "x").is_some());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_checkpoint_staleness_detects_content_change() {
+        let cp = cp_with("spec-a", "old");
+        let why = checkpoint_staleness(&cp, "spec-a", "new").unwrap();
+        assert!(why.contains("spec content changed"), "{why}");
+    }
+
+    #[test]
+    fn test_checkpoint_staleness_detects_name_change() {
+        let cp = cp_with("spec-a", "same");
+        let why = checkpoint_staleness(&cp, "spec-b", "same").unwrap();
+        assert!(why.contains("spec name changed"), "{why}");
+    }
+
+    #[test]
+    fn test_checkpoint_staleness_treats_missing_fingerprint_as_stale() {
+        let cp = cp_with("spec-a", "");
+        let why = checkpoint_staleness(&cp, "spec-a", "x").unwrap();
+        assert!(why.contains("predates"), "{why}");
+    }
+
+    #[test]
+    fn test_checkpoint_staleness_none_when_fresh() {
+        let cp = cp_with("spec-a", "same");
+        assert!(checkpoint_staleness(&cp, "spec-a", "same").is_none());
+    }
+
     #[test]
     fn test_lifecycle_writes_structured_run_log_summary() {
         let dir = make_temp_dir("agent-spec-run-log");
@@ -14106,6 +14249,7 @@ Scenario: pass
             timestamp: 1000,
             vcs_ref: Some("abc123".into()),
             scenarios,
+            spec_fingerprint: "fp".into(),
         };
 
         let report = crate::spec_core::VerificationReport::from_results(
@@ -14159,6 +14303,7 @@ Scenario: pass
             timestamp: 1000,
             vcs_ref: Some("abc123".into()),
             scenarios,
+            spec_fingerprint: "fp".into(),
         };
 
         let report = crate::spec_core::VerificationReport::from_results(
@@ -14225,7 +14370,7 @@ Scenario: pass
             ],
         );
 
-        save_checkpoint(&dir, &report, Some("def456".into())).unwrap();
+        save_checkpoint(&dir, &report, Some("def456".into()), "fp-test").unwrap();
 
         let cp_path = checkpoint_path(&dir);
         assert!(cp_path.exists(), "checkpoint file should exist");
