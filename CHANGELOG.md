@@ -6,6 +6,99 @@ All notable changes to `agent-spec` are documented here. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `precedence-fallback-coverage` no longer treats a quoted Rust return arrow
+  (`` `f(&self, x) -> bool` ``, `` `|x| -> Option<T>` ``) as an ordering
+  chain; `memory() -> disk` and `local -> cache -> remote` still warn.
+  Reported from robrix2 practice.
+- Boundary path expressions (REQ-BOUNDARY-PATH-EXPRESSIONS, from robrix2
+  practice feedback B1/B2): `### Allowed Changes` entries are now path
+  expressions by definition. The old "looks like a path" whitelist (`/`, `*`
+  or a `.rs .ts .js .py .md .spec` suffix) silently dropped bare root files
+  (`Cargo.toml`, `LICENSE`, `Makefile`), any other extension (`.json`,
+  `.toml`, `.yml`, `.sh`) and backticked names such as `` `CLAUDE.md` `` —
+  fifteen entries in this repository's own specs were affected — so a
+  declared change still failed "not covered by any allowed boundary".
+  Every Allow entry is now normalized (trailing ` — note` / ` # note` outside
+  backticks stripped, backticks removed, `\` → `/`, leading `./` and
+  surrounding `/` trimmed; a bare filename is repo-root relative) and takes
+  part in matching. `### Forbidden` / general entries become a forbidden
+  pattern only when the whole entry is a single path token; paths quoted
+  inside prose are never extracted. Parentheses are never treated as a note.
+- The recognition/normalization/matching logic now lives once in
+  `spec_core::boundary_paths` and is shared by the boundaries verifier, plan
+  scanning and the MCP `spec_allows_path` tool, which previously matched raw
+  contract text with no normalization (so `./Cargo.toml` passed the verifier
+  but not MCP).
+- Multi-line list items (REQ-LIST-ITEM-CONTINUATION, robrix2 feedback B5):
+  the parser used to keep only the bullet line of a Decisions / Constraints /
+  Boundaries / Out of Scope / Questions entry and drop its indented
+  continuation lines, and promoted indented sub-bullets to siblings — a
+  three-line Decision was read as its first third, in `explain` json/text/
+  markdown and in every keyword-matching lint (`decision-coverage`,
+  `precedence-fallback-coverage`, `observable-decision-coverage`). 268
+  continuation lines across 28 of this repository's own specs were affected.
+  Continuation lines now join the item (one space between Latin text, no
+  space between CJK characters); a deeper-indented sub-bullet stays inside
+  its parent as a `\n  - ` fragment; a blank line, `###` header, HTML
+  comment or unindented prose closes the item. Single-line items are
+  byte-identical to before. Lints therefore see whole decisions: several
+  false `decision-coverage` warnings disappear and a few genuine gaps
+  (fallback wording or output flags that only appeared on a wrapped line)
+  now surface.
+
+- `promote` carries the Rule's Examples (REQ-PROMOTE-CARRIES-SCENARIOS,
+  robrix2 feedback C1): after the gate passed, `upsert_capability_rule` wrote
+  only a provenance comment and the `### Rule:` header, leaving an unproven
+  rule (`orphan-rule`) in the capability library. Every Example under the
+  rule is now copied verbatim from the task spec source (`Scenario:` line
+  through the last step — Tags, Test / structured selectors, Review, Mode,
+  Depends, step tables) in document order; re-promoting a rule already present
+  is still a byte-identical no-op and the gate (≥1 Example, all `pass`) is
+  unchanged. A new capability file uses English or Chinese section headers to
+  match the source spec instead of always `## 意图` / `## 完成条件`.
+
+- `lifecycle --resume` no longer carries a pass forward from a checkpoint
+  taken on different spec content (REQ-CHECKPOINT-SPEC-FINGERPRINT, robrix2
+  feedback D1). The checkpoint now records the spec's content fingerprint
+  (same algorithm as the run log); on resume a checkpoint whose spec name or
+  fingerprint differs — or that predates fingerprinting — is ignored as a
+  whole and the run reports `checkpoint_diagnostic` (json) / `warning:
+  checkpoint ignored: …` (stderr). A matching checkpoint behaves exactly as
+  before. Editing a spec between runs therefore always forces a full rerun
+  instead of silently keeping the old verdicts.
+
+- Verification diagnostics (REQ-VERIFICATION-DIAGNOSTICS, robrix2 feedback
+  C2 / A5 / A4):
+  - A `Package:` selector naming a crate that is not a member of the cargo
+    workspace is now reported as such — verdict `uncertain`, reason
+    ``package `x` is not a member of the cargo workspace at <root> (members:
+    …)`` — instead of running cargo and surfacing the same
+    "cargo exited before any test ran (build/toolchain failure)" wording as
+    a genuine build break. Membership comes from one `cargo metadata
+    --no-deps` call per verification; when metadata is unavailable the
+    previous behavior is kept.
+  - `VerificationSummary` now separates genuine scenarios from synthetic
+    verifier layers: new `scenarios` counts (rows whose name does not start
+    with `[`) and `layers` (`[{name, verdict}]` for `[boundaries]`,
+    `[atlas-symbols]`, `[complexity]` rows). The legacy `total/passed/failed/
+    skipped/uncertain/pending_review` keep their values (and their position
+    when the struct is serialized directly), so `is_passing` and existing
+    consumers are unchanged; text reports and the
+    run log summary now read e.g. `10/10 scenarios passed, 0 failed, 0
+    skipped, 0 uncertain · layers: boundaries=pass`.
+  - `guard`/`verify`/`matrix` `--change-scope` help lists every accepted
+    value: `none, staged, worktree, jj`.
+
+### Added
+
+- Lint `boundary-entry-shape` (Warning): names an Allowed Changes entry that
+  cannot match any change — empty after normalization, or containing
+  whitespace with a first/last token that is not a path fragment
+  (`` `Cargo.toml` (dev-dep only) ``, `src/vcs.rs (new file)`) — and
+  suggests the ` — note` form. `docs/foo (copy).md` is accepted.
+
 ## [1.4.0] - 2026-08-14
 
 The **enforcement** release: the forward-walking pipeline stops reminding and

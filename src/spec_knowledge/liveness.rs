@@ -51,6 +51,7 @@ mod tests {
             skipped,
             uncertain: 0,
             pending_review: 0,
+            ..Default::default()
         }
     }
 

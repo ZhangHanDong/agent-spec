@@ -184,7 +184,7 @@ fn format_verification_text(report: &VerificationReport) -> String {
     let mut out = String::new();
     out.push_str(&format!("Spec: {}\n", report.spec_name));
     out.push_str(&format!(
-        "Results: {} total, {} passed, {} failed, {} skipped, {} uncertain, {} pending_review\n\n",
+        "Results: {} total, {} passed, {} failed, {} skipped, {} uncertain, {} pending_review\n",
         report.summary.total,
         report.summary.passed,
         report.summary.failed,
@@ -192,6 +192,7 @@ fn format_verification_text(report: &VerificationReport) -> String {
         report.summary.uncertain,
         report.summary.pending_review,
     ));
+    out.push_str(&format!("Summary: {}\n\n", report.summary.human_line()));
 
     for result in &report.results {
         let icon = match result.verdict {
@@ -361,6 +362,7 @@ fn format_explain_text(input: &ExplainInput, report: &VerificationReport) -> Str
         report.summary.skipped,
         report.summary.uncertain,
     ));
+    out.push_str(&format!("  {}\n", report.summary.human_line()));
     for result in &report.results {
         let icon = match result.verdict {
             Verdict::Pass => "[PASS]",
@@ -776,6 +778,7 @@ mod tests {
                 skipped: 0,
                 uncertain: 0,
                 pending_review: 0,
+                ..Default::default()
             },
         };
         let text = format_verification(&report, &OutputFormat::Text);
@@ -811,6 +814,7 @@ mod tests {
                 skipped: 0,
                 uncertain: 1,
                 pending_review: 0,
+                ..Default::default()
             },
         };
 
@@ -847,6 +851,7 @@ mod tests {
                 skipped: 0,
                 uncertain: 0,
                 pending_review: 0,
+                ..Default::default()
             },
         };
 
@@ -894,6 +899,7 @@ mod tests {
                 skipped: 0,
                 uncertain: 0,
                 pending_review: 0,
+                ..Default::default()
             },
         };
 
@@ -987,6 +993,7 @@ mod tests {
                 skipped: 0,
                 uncertain: 0,
                 pending_review: 0,
+                ..Default::default()
             },
         }
     }
@@ -1027,6 +1034,7 @@ mod tests {
                 skipped: 1,
                 uncertain: 0,
                 pending_review: 0,
+                ..Default::default()
             },
         }
     }
@@ -1123,6 +1131,7 @@ mod tests {
                 skipped: 0,
                 uncertain: 0,
                 pending_review: 0,
+                ..Default::default()
             },
         };
 

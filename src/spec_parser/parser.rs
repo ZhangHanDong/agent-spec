@@ -201,58 +201,145 @@ fn build_section(
             })
         }
         SectionKind::OutOfScope => {
-            let items = lines
-                .iter()
-                .filter_map(|(_, l)| {
-                    let trimmed = l.trim().strip_prefix('-').map(str::trim);
-                    trimmed.filter(|s| !s.is_empty()).map(String::from)
-                })
-                .collect();
+            let items = parse_string_list(lines);
             Ok(Section::OutOfScope { items, span })
         }
         SectionKind::Questions => {
-            let items = lines
-                .iter()
-                .filter_map(|(_, l)| {
-                    let trimmed = l.trim().strip_prefix('-').map(str::trim);
-                    trimmed.filter(|s| !s.is_empty()).map(String::from)
-                })
-                .collect();
+            let items = parse_string_list(lines);
             Ok(Section::Questions { items, span })
         }
     }
+}
+
+/// One logical line of a bullet-list section after continuation merging.
+enum ListLine {
+    /// A `###` sub-header (text without the hashes).
+    Header(String),
+    /// A bullet item with its indented continuation lines joined by a single
+    /// space and any deeper-indented sub-bullets appended as `\n  - text`.
+    Item(String),
+}
+
+/// Group a list section's raw lines into headers and complete items.
+///
+/// Continuation: a non-empty, indented, non-bullet line following an open
+/// item is appended with one space. Nested: a bullet indented deeper than
+/// the open item's bullet is appended as a `\n  - ` fragment (its own
+/// continuation lines join it with a space). Terminators: a blank line, a
+/// `###` header, an HTML comment (single or multi-line) or an unindented
+/// non-bullet line close the open item so later indented lines never leak
+/// into it. The item's line number is that of its bullet.
+/// Append a continuation line: one space between Latin text, no space when
+/// both sides are CJK characters or CJK punctuation (a wrapped Chinese
+/// sentence must not grow spaces between characters).
+fn join_continuation(buf: &mut String, next: &str) {
+    let last = buf.chars().next_back();
+    let first = next.chars().next();
+    let cjk = |c: char| {
+        matches!(c as u32,
+            0x3000..=0x303F | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF
+            | 0xFF00..=0xFFEF | 0x2018..=0x201F)
+    };
+    if !(last.is_some_and(cjk) && first.is_some_and(cjk)) {
+        buf.push(' ');
+    }
+    buf.push_str(next);
+}
+
+fn group_list_lines(lines: &[(usize, &str)]) -> Vec<(usize, ListLine)> {
+    let mut out: Vec<(usize, ListLine)> = Vec::new();
+    // (line, text, bullet_indent, in_nested)
+    let mut open: Option<(usize, String, usize, bool)> = None;
+    let mut in_comment = false;
+
+    fn close(open: &mut Option<(usize, String, usize, bool)>, out: &mut Vec<(usize, ListLine)>) {
+        if let Some((line, text, _, _)) = open.take() {
+            out.push((line, ListLine::Item(text)));
+        }
+    }
+
+    for &(line_num, raw) in lines {
+        let trimmed = raw.trim();
+        let indent = raw.len() - raw.trim_start().len();
+
+        if in_comment {
+            if trimmed.contains("-->") {
+                in_comment = false;
+            }
+            continue;
+        }
+        if trimmed.starts_with("<!--") {
+            close(&mut open, &mut out);
+            if !trimmed.contains("-->") {
+                in_comment = true;
+            }
+            continue;
+        }
+        if trimmed.is_empty() {
+            close(&mut open, &mut out);
+            continue;
+        }
+        if trimmed.starts_with("###") {
+            close(&mut open, &mut out);
+            out.push((
+                line_num,
+                ListLine::Header(trimmed.trim_start_matches('#').trim().to_string()),
+            ));
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix('-') {
+            let text = rest.trim();
+            match open.as_mut() {
+                Some((_, buf, bullet_indent, in_nested)) if indent > *bullet_indent => {
+                    if !text.is_empty() {
+                        buf.push_str("\n  - ");
+                        buf.push_str(text);
+                        *in_nested = true;
+                    }
+                }
+                _ => {
+                    close(&mut open, &mut out);
+                    if !text.is_empty() {
+                        open = Some((line_num, text.to_string(), indent, false));
+                    }
+                }
+            }
+            continue;
+        }
+        // Non-bullet text line.
+        match open.as_mut() {
+            Some((_, buf, bullet_indent, _)) if indent > *bullet_indent => {
+                join_continuation(buf, trimmed);
+            }
+            _ => close(&mut open, &mut out),
+        }
+    }
+    close(&mut open, &mut out);
+    out
 }
 
 fn parse_constraints(lines: &[(usize, &str)]) -> Vec<Constraint> {
     let mut constraints = Vec::new();
     let mut category = ConstraintCategory::General;
 
-    for &(line_num, line) in lines {
-        let trimmed = line.trim();
-
-        // Sub-section headers for constraint categories
-        if trimmed.starts_with("###") || trimmed.starts_with("### ") {
-            let header = trimmed.trim_start_matches('#').trim().to_lowercase();
-            if header.contains("必须做") || header.contains("must") && !header.contains("not") {
-                category = ConstraintCategory::Must;
-            } else if header.contains("禁止") || header.contains("must not") {
-                category = ConstraintCategory::MustNot;
-            } else if header.contains("已定") || header.contains("decided") {
-                category = ConstraintCategory::Decided;
+    for (line_num, entry) in group_list_lines(lines) {
+        match entry {
+            ListLine::Header(header) => {
+                let header = header.to_lowercase();
+                if header.contains("必须做") || header.contains("must") && !header.contains("not")
+                {
+                    category = ConstraintCategory::Must;
+                } else if header.contains("禁止") || header.contains("must not") {
+                    category = ConstraintCategory::MustNot;
+                } else if header.contains("已定") || header.contains("decided") {
+                    category = ConstraintCategory::Decided;
+                }
             }
-            continue;
-        }
-
-        // Bullet items
-        if let Some(text) = trimmed.strip_prefix('-') {
-            let text = text.trim();
-            if !text.is_empty() {
-                constraints.push(Constraint {
-                    text: text.to_string(),
-                    category,
-                    span: Span::line(line_num),
-                });
-            }
+            ListLine::Item(text) => constraints.push(Constraint {
+                text,
+                category,
+                span: Span::line(line_num),
+            }),
         }
     }
 
@@ -260,11 +347,12 @@ fn parse_constraints(lines: &[(usize, &str)]) -> Vec<Constraint> {
 }
 
 fn parse_string_list(lines: &[(usize, &str)]) -> Vec<String> {
-    lines
-        .iter()
-        .filter_map(|(_, line)| line.trim().strip_prefix('-').map(str::trim))
-        .filter(|text| !text.is_empty())
-        .map(String::from)
+    group_list_lines(lines)
+        .into_iter()
+        .filter_map(|(_, entry)| match entry {
+            ListLine::Item(text) => Some(text),
+            ListLine::Header(_) => None,
+        })
         .collect()
 }
 
@@ -272,35 +360,30 @@ fn parse_boundaries(lines: &[(usize, &str)]) -> Vec<Boundary> {
     let mut items = Vec::new();
     let mut category = BoundaryCategory::General;
 
-    for &(line_num, line) in lines {
-        let trimmed = line.trim();
-
-        if trimmed.starts_with("###") || trimmed.starts_with("### ") {
-            let header = trimmed.trim_start_matches('#').trim().to_lowercase();
-            if header.contains("允许修改") || header.contains("allowed") || header.contains("allow")
-            {
-                category = BoundaryCategory::Allow;
-            } else if header.contains("禁止")
-                || header.contains("forbidden")
-                || header.contains("must not")
-                || header.contains("disallow")
-            {
-                category = BoundaryCategory::Deny;
-            } else if header.contains("symbols") || header.contains("符号") {
-                category = BoundaryCategory::Symbols;
+    for (line_num, entry) in group_list_lines(lines) {
+        match entry {
+            ListLine::Header(header) => {
+                let header = header.to_lowercase();
+                if header.contains("允许修改")
+                    || header.contains("allowed")
+                    || header.contains("allow")
+                {
+                    category = BoundaryCategory::Allow;
+                } else if header.contains("禁止")
+                    || header.contains("forbidden")
+                    || header.contains("must not")
+                    || header.contains("disallow")
+                {
+                    category = BoundaryCategory::Deny;
+                } else if header.contains("symbols") || header.contains("符号") {
+                    category = BoundaryCategory::Symbols;
+                }
             }
-            continue;
-        }
-
-        if let Some(text) = trimmed.strip_prefix('-') {
-            let text = text.trim();
-            if !text.is_empty() {
-                items.push(Boundary {
-                    text: text.to_string(),
-                    category,
-                    span: Span::line(line_num),
-                });
-            }
+            ListLine::Item(text) => items.push(Boundary {
+                text,
+                category,
+                span: Span::line(line_num),
+            }),
         }
     }
 
@@ -625,6 +708,213 @@ fn parse_table_row(line: &str) -> Option<Vec<String>> {
 mod tests {
     use super::*;
     use crate::spec_core::StepKind;
+
+    fn decisions_of(doc: &SpecDocument) -> Vec<String> {
+        doc.sections
+            .iter()
+            .find_map(|s| match s {
+                Section::Decisions { items, .. } => Some(items.clone()),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    fn constraints_of(doc: &SpecDocument) -> Vec<Constraint> {
+        doc.sections
+            .iter()
+            .find_map(|s| match s {
+                Section::Constraints { items, .. } => Some(items.clone()),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    fn boundaries_of(doc: &SpecDocument) -> Vec<Boundary> {
+        doc.sections
+            .iter()
+            .find_map(|s| match s {
+                Section::Boundaries { items, .. } => Some(items.clone()),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn test_list_continuation_merges_wrapped_decision() {
+        let doc = parse_spec_from_str(
+            "spec: task\nname: \"t\"\n---\n\n## Decisions\n\n- first line of the decision\n  second line continues it\n  third line ends it\n",
+        )
+        .unwrap();
+        assert_eq!(
+            decisions_of(&doc),
+            vec![
+                "first line of the decision second line continues it third line ends it"
+                    .to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn test_list_continuation_joins_cjk_lines_without_space() {
+        let doc = parse_spec_from_str(
+            "spec: task\nname: \"t\"\n---\n\n## Decisions\n\n- 覆盖只认显式归属：不做关键词、\n  文本相似度或位置邻近推断。\n- mixed `x`\n  然后中文\n",
+        )
+        .unwrap();
+        assert_eq!(
+            decisions_of(&doc),
+            vec![
+                "覆盖只认显式归属：不做关键词、文本相似度或位置邻近推断。".to_string(),
+                "mixed `x` 然后中文".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_list_continuation_leaves_single_line_items_unchanged() {
+        let doc = parse_spec_from_str(
+            "spec: task\nname: \"t\"\n---\n\n## Decisions\n\n- alpha `x`\n- beta\n- gamma。\n",
+        )
+        .unwrap();
+        assert_eq!(decisions_of(&doc), vec!["alpha `x`", "beta", "gamma。"]);
+    }
+
+    #[test]
+    fn test_list_continuation_keeps_nested_bullets_in_parent() {
+        let doc = parse_spec_from_str(
+            "spec: task\nname: \"t\"\n---\n\n## Decisions\n\n- parent decision\n  - child one\n  - child two\n    child two continues\n",
+        )
+        .unwrap();
+        let items = decisions_of(&doc);
+        assert_eq!(items.len(), 1, "{items:?}");
+        assert_eq!(
+            items[0],
+            "parent decision\n  - child one\n  - child two child two continues"
+        );
+    }
+
+    #[test]
+    fn test_list_continuation_stops_at_blank_comment_and_unindented_lines() {
+        let doc = parse_spec_from_str(
+            "spec: task\nname: \"t\"\n---\n\n## Decisions\n\n- only item\n\n<!-- a note -->\n  stray indented text\nunindented prose\n  more stray text\n",
+        )
+        .unwrap();
+        assert_eq!(decisions_of(&doc), vec!["only item".to_string()]);
+    }
+
+    #[test]
+    fn test_list_continuation_ignores_multiline_comment_body() {
+        let doc = parse_spec_from_str(
+            "spec: task\nname: \"t\"\n---\n\n## Decisions\n\n- item before\n<!--\n  hidden indented line\n-->\n  after comment\n- item after\n",
+        )
+        .unwrap();
+        assert_eq!(
+            decisions_of(&doc),
+            vec!["item before".to_string(), "item after".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_list_continuation_applies_to_constraints_and_boundaries() {
+        let doc = parse_spec_from_str(
+            "spec: task\nname: \"t\"\n---\n\n## Constraints\n\n- keep the public shape\n  of `Foo` unchanged\n\n## Boundaries\n\n### Forbidden\n- Do not add `proptest` to dependencies;\n  dev-dependency only\n",
+        )
+        .unwrap();
+        let c = constraints_of(&doc);
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].text, "keep the public shape of `Foo` unchanged");
+        let b = boundaries_of(&doc);
+        assert_eq!(b.len(), 1);
+        assert_eq!(b[0].category, BoundaryCategory::Deny);
+        assert_eq!(
+            b[0].text,
+            "Do not add `proptest` to dependencies; dev-dependency only"
+        );
+    }
+
+    #[test]
+    fn test_list_continuation_respects_subsection_headers() {
+        let doc = parse_spec_from_str(
+            "spec: task\nname: \"t\"\n---\n\n## Constraints\n\n### Must\n- do this\n  and this\n\n### Must Not\n- avoid that\n  and that\n",
+        )
+        .unwrap();
+        let c = constraints_of(&doc);
+        assert_eq!(c.len(), 2, "{c:?}");
+        assert_eq!(c[0].category, ConstraintCategory::Must);
+        assert_eq!(c[0].text, "do this and this");
+        assert_eq!(c[1].category, ConstraintCategory::MustNot);
+        assert_eq!(c[1].text, "avoid that and that");
+    }
+
+    #[test]
+    fn test_list_continuation_applies_to_out_of_scope_and_questions() {
+        let doc = parse_spec_from_str(
+            "spec: task\nname: \"t\"\n---\n\n## Out of Scope\n\n- login flow\n  including SSO\n\n## Questions\n\n- can discounts stack\n  across campaigns?\n",
+        )
+        .unwrap();
+        let oos = doc
+            .sections
+            .iter()
+            .find_map(|s| match s {
+                Section::OutOfScope { items, .. } => Some(items.clone()),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(oos, vec!["login flow including SSO"]);
+        let q = doc
+            .sections
+            .iter()
+            .find_map(|s| match s {
+                Section::Questions { items, .. } => Some(items.clone()),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(q, vec!["can discounts stack across campaigns?"]);
+    }
+
+    #[test]
+    fn test_list_continuation_span_points_at_bullet_line() {
+        let src = "spec: task\nname: \"t\"\n---\n\n## Constraints\n\n- starts here\n  goes on\n  and on\n";
+        let doc = parse_spec_from_str(src).unwrap();
+        let bullet_line = src.lines().position(|l| l.starts_with("- starts")).unwrap() + 1;
+        let c = constraints_of(&doc);
+        assert_eq!(c[0].span.start_line, bullet_line);
+    }
+
+    #[test]
+    fn test_list_continuation_decision_coverage_sees_wrapped_identifier() {
+        let doc = parse_spec_from_str(
+            "spec: task\nname: \"t\"\n---\n\n## Decisions\n\n- the resolver picks a strategy and records it in\n  `resolve_ai_mode` for later replay\n\n## Acceptance Criteria\n\nScenario: replay uses recorded mode\n  Test: test_replay_mode\n  Given a stored `resolve_ai_mode`\n  When replay runs\n  Then the recorded mode is used\n",
+        )
+        .unwrap();
+        let report = crate::spec_lint::LintPipeline::new().run(&doc);
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .all(|d| d.rule != "decision-coverage"),
+            "{:?}",
+            report.diagnostics
+        );
+    }
+
+    #[test]
+    fn test_list_continuation_does_not_touch_acceptance_criteria() {
+        let doc = parse_spec_from_str(
+            "spec: task\nname: \"t\"\n---\n\n## Acceptance Criteria\n\nScenario: batch\n  Test: test_batch\n  Given the following records:\n    | name | ok |\n    | a | true |\n    | b | false |\n  When the validator runs\n  Then one passes\n",
+        )
+        .unwrap();
+        let sc = doc
+            .sections
+            .iter()
+            .find_map(|s| match s {
+                Section::AcceptanceCriteria { scenarios, .. } => Some(scenarios.clone()),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(sc.len(), 1);
+        assert_eq!(sc[0].steps.len(), 3);
+        assert_eq!(sc[0].steps[0].table.len(), 3, "{:?}", sc[0].steps[0]);
+    }
 
     const SAMPLE_SPEC: &str = r#"spec: task
 name: "退款功能"

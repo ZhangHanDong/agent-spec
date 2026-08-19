@@ -45,3 +45,12 @@ Atlas E1 adds `agent-plan`, `agent-gate`, `serving-plan`, and `serving-gate`
 under `atlas benchmark`. Blocked but structurally valid gates write their
 receipt before returning non-zero. The CLI never launches a real Agent; the
 separate opt-in runners own that explicit boundary.
+
+## promote
+
+`cmd_promote` gates on the rule's Examples (≥1, all pass), then
+`rule_scenario_blocks` slices each Example's source lines by `Scenario.span`
+and `upsert_capability_rule` writes provenance comment + `### Rule:` + the
+blocks under the capability's completion section (`CapabilityLang::detect`
+picks `## Intent`/`## Completion Criteria` vs `## 意图`/`## 完成条件` for a
+new file). A rule already present leaves the file untouched.
