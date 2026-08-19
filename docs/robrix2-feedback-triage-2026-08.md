@@ -30,7 +30,7 @@ PR #10–#15 为 stacked，按序合并。六份 REQ 均为 `status: proposed`�
 | # | 结论 | 根因位置 | 修法 |
 |---|---|---|---|
 | B1 | 确认 | `spec_verify/boundaries.rs:136-148` 用"看起来像路径"白名单筛选条目，只认 `/ * .rs .ts .js .py .md .spec`（`.json/.toml/.yml/.txt` 全丢；`` `CLAUDE.md` `` 因结尾是反引号也丢；`Makefile/Dockerfile/LICENSE/Justfile` 无扩展名，任何后缀规则都救不了）；`plan.rs:113`、`spec_mcp/tools.rs:290` 三份逻辑不同步 | **放弃启发式筛选**：`### Allowed Changes` / `### Forbidden Paths` 下的条目按定义就是路径表达式——去反引号 → 剥尾注 → 规范化（`./`、`\`、裸文件名=仓库根相对）→ 直接参与匹配；无法解析为路径的条目由 lint `boundary-entry-shape` 告警而非静默丢弃。自然语言边界归 Constraints / 通用 Boundaries。三处合一为单一 `normalize_boundary_pattern` |
-| B2 | 确认 | `spec_parser/parser.rs:296-302` 整行入 `Boundary.text`，`src/vcs.rs (new file)` 成为永不匹配的活 pattern | 尾注语法**明确限定**：只识别反引号跨度之外的 ` — note` 与 ` # note`（前有空格）；`(…)` 不剥离（可能是合法文件名的一部分），由 `boundary-entry-shape` lint 提示改写。剥离只作用于非反引号部分 |
+| B2 | 确认 | `spec_parser/parser.rs:296-302` 整行入 `Boundary.text`，`src/vcs.rs (new file)` 成为永不匹配的活 pattern | 尾注语法**明确限定**：只识别反引号跨度之外、前有空格的 `—` 或 `#` 分隔符及其后的说明；`(…)` 不剥离（可能是合法文件名的一部分），由 `boundary-entry-shape` lint 提示改写。剥离只作用于非反引号部分 |
 | B5 | 确认，升 P1 | `spec_parser/parser.rs:261-268` `parse_string_list` 丢弃续行；影响 json/text/md 与 3 个 coverage linter | 解析器合并续行；缩进子 bullet 保持嵌套而非提升为同级 |
 | C1 | 确认 | `main.rs:2100-2131` `upsert_capability_rule` 只写注释 + `### Rule:`；新建能力 spec 固定中文段名 `## 意图`/`## 完成条件` | 搬运 Rule 下全部场景块（Tags/Test/Package/Filter/步骤）；段名跟随源 spec 语言（或 `--lang`） |
 
