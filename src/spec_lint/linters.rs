@@ -1486,7 +1486,68 @@ fn dedup_strings(values: &mut Vec<String>) {
     values.retain(|value| seen.insert(value.clone()));
 }
 
+/// Remove Rust return arrows from quoted signatures so `` `f(&self, x) -> bool` ``
+/// is not mistaken for a precedence chain. Applies only inside a backtick code
+/// span that has exactly one `->`, whose left side ends with `)` (fn) or `|`
+/// (closure), and whose right side is a type-shaped token. A real ordering
+/// chain (`local -> cache -> remote`, `memory() -> disk`) keeps its arrows.
+fn strip_signature_arrows(text: &str) -> String {
+    let parts: Vec<&str> = text.split('`').collect();
+    if parts.len() < 3 {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len());
+    for (i, part) in parts.iter().enumerate() {
+        if i > 0 {
+            out.push('`');
+        }
+        let inside_code = i % 2 == 1 && i + 1 < parts.len();
+        if inside_code && is_rust_signature_span(part) {
+            out.push_str(&part.replace("->", " "));
+        } else {
+            out.push_str(part);
+        }
+    }
+    out
+}
+
+fn is_rust_signature_span(span: &str) -> bool {
+    if span.matches("->").count() != 1 {
+        return false;
+    }
+    let Some((left, right)) = span.split_once("->") else {
+        return false;
+    };
+    let left = left.trim_end();
+    if !(left.ends_with(')') || left.ends_with('|')) {
+        return false;
+    }
+    let ret = right
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .trim_end_matches([';', '{', ',', '.']);
+    is_rust_type_token(ret)
+}
+
+fn is_rust_type_token(token: &str) -> bool {
+    const PRIMITIVES: [&str; 21] = [
+        "bool", "char", "str", "String", "Self", "!", "()", "u8", "u16", "u32", "u64", "u128",
+        "usize", "i8", "i16", "i32", "i64", "i128", "isize", "f32", "f64",
+    ];
+    if token.is_empty() {
+        return false;
+    }
+    PRIMITIVES.contains(&token)
+        || token.starts_with("impl ")
+        || token.starts_with("dyn ")
+        || token.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+        || token.contains(['<', '&', '(', '[', '*'])
+        || token.contains("::")
+}
+
 fn extract_ordered_behavior_terms(text: &str) -> Option<Vec<String>> {
+    let text = &strip_signature_arrows(text);
     let lower = text.to_lowercase();
     if text.contains("->") {
         let terms: Vec<String> = text
@@ -1548,6 +1609,70 @@ fn scenario_text_blob(scenario: &Scenario) -> String {
 // =============================================================================
 // 13. BoundaryEntryPointLinter - warns when Boundaries list multiple entry
 //     points (bin/, main.rs) but scenarios don't reference each one
+// =============================================================================
+// boundary-entry-shape: an Allowed Changes entry that is not a single path
+// expression would be silently un-matchable; name it instead.
+// =============================================================================
+
+pub struct BoundaryEntryShapeLinter;
+
+/// An Allow entry is malformed when it is empty, or contains whitespace and
+/// its first or last whitespace-separated token no longer looks like a path
+/// fragment. `docs/foo (copy).md` keeps path fragments at both ends and is
+/// accepted; `` `Cargo.toml` (dev-dep only) `` and `Do not modify src/x.rs`
+/// do not.
+fn allow_entry_is_malformed(normalized: &str) -> bool {
+    if normalized.is_empty() {
+        return true;
+    }
+    if !normalized.chars().any(char::is_whitespace) {
+        return false;
+    }
+    let mut tokens = normalized.split_whitespace();
+    let first = tokens.next().unwrap_or("");
+    let last = tokens.next_back().unwrap_or(first);
+    let pathish = |t: &str| t.contains(['/', '.', '*']);
+    !(pathish(first) && pathish(last))
+}
+
+impl SpecLinter for BoundaryEntryShapeLinter {
+    fn name(&self) -> &str {
+        "boundary-entry-shape"
+    }
+
+    fn lint(&self, doc: &SpecDocument) -> Vec<LintDiagnostic> {
+        let mut diags = Vec::new();
+        for section in &doc.sections {
+            let Section::Boundaries { items, .. } = section else {
+                continue;
+            };
+            for item in items {
+                if item.category != crate::spec_core::BoundaryCategory::Allow {
+                    continue;
+                }
+                let normalized = crate::spec_core::normalize_boundary_pattern(&item.text);
+                if !allow_entry_is_malformed(&normalized) {
+                    continue;
+                }
+                diags.push(LintDiagnostic {
+                    rule: "boundary-entry-shape".into(),
+                    severity: Severity::Warning,
+                    message: format!(
+                        "Allowed Changes entry '{}' is not a single path expression and cannot match any change",
+                        item.text
+                    ),
+                    span: item.span,
+                    suggestion: Some(
+                        "write one path per entry; put annotations after ` — ` (e.g. `` `Cargo.toml` — dev-dep only ``) or move prose to Forbidden / Constraints"
+                            .into(),
+                    ),
+                });
+            }
+        }
+        diags
+    }
+}
+
 // =============================================================================
 
 pub struct BoundaryEntryPointLinter;
@@ -2752,6 +2877,131 @@ name: "test"
         let diags = PrecedenceFallbackCoverageLinter.lint(&doc);
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].rule, "precedence-fallback-coverage");
+    }
+
+    #[test]
+    fn test_precedence_fallback_coverage_ignores_rust_return_arrows_in_signatures() {
+        // Regression from robrix2 task-dm-encryption-default.spec.md:27,38 —
+        // a quoted Rust signature's `) -> bool` is not a precedence chain.
+        let input = r#"spec: task
+name: "test"
+---
+
+## Constraints
+
+- Keep the signature of `BotSettingsState::should_create_encrypted_dm(&self, &UserId, Option<&UserId>) -> bool` unchanged
+
+## Decisions
+
+- Add `AppState::should_create_encrypted_dm(&self, target, current) -> bool` which additionally treats every MXID registered in `AgentRegistry` as a bot
+
+## Acceptance Criteria
+
+Scenario: Ordinary user DM is encrypted
+  Test: should_create_encrypted_dm_encrypts_ordinary_user
+  Given the target user is an ordinary user
+  When `should_create_encrypted_dm` is evaluated
+  Then it returns `true`
+"#;
+        let doc = parse_spec_from_str(input).unwrap();
+        let diags = PrecedenceFallbackCoverageLinter.lint(&doc);
+        assert!(
+            diags.is_empty(),
+            "return arrow in a signature must not trigger precedence-fallback-coverage: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn test_precedence_fallback_coverage_still_warns_on_call_shaped_ordering_chain() {
+        // `memory() -> disk` is an ordering chain, not a signature: the right
+        // side is a plain word, not a type.
+        let input = r#"spec: task
+name: "test"
+---
+
+## Decisions
+
+- Read order is `memory() -> disk`.
+- Resolution goes `resolve(local) -> remote`.
+
+## Acceptance Criteria
+
+Scenario: Read succeeds
+  Test: read_success
+  Given a request
+  When the read runs
+  Then content is returned
+"#;
+        let doc = parse_spec_from_str(input).unwrap();
+        let diags = PrecedenceFallbackCoverageLinter.lint(&doc);
+        assert_eq!(diags.len(), 2, "{diags:?}");
+    }
+
+    #[test]
+    fn test_precedence_fallback_coverage_ignores_closure_and_generic_return_arrows() {
+        let input = r#"spec: task
+name: "test"
+---
+
+## Decisions
+
+- The predicate has shape `|x: &Item| -> bool`.
+- `clause_coverage(doc) -> ClauseCoverage` returns per-clause status.
+- `lookup(key) -> Option<&Value>` returns the entry.
+
+## Acceptance Criteria
+
+Scenario: Lookup works
+  Test: lookup_works
+  Given a key
+  When lookup runs
+  Then the entry is returned
+"#;
+        let doc = parse_spec_from_str(input).unwrap();
+        let diags = PrecedenceFallbackCoverageLinter.lint(&doc);
+        assert!(diags.is_empty(), "{diags:?}");
+    }
+
+    #[test]
+    fn test_boundary_entry_shape_warns_on_annotated_allow_entry() {
+        let input = r#"spec: task
+name: "test"
+---
+
+## Boundaries
+
+### Allowed Changes
+- `Cargo.toml` (dev-dep only)
+"#;
+        let doc = parse_spec_from_str(input).unwrap();
+        let diags = BoundaryEntryShapeLinter.lint(&doc);
+        assert_eq!(diags.len(), 1, "{diags:?}");
+        assert_eq!(diags[0].rule, "boundary-entry-shape");
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert!(diags[0].message.contains("(dev-dep only)"));
+        assert!(diags[0].suggestion.as_deref().unwrap_or("").contains(" — "));
+    }
+
+    #[test]
+    fn test_boundary_entry_shape_silent_on_valid_entries() {
+        let input = r#"spec: task
+name: "test"
+---
+
+## Boundaries
+
+### Allowed Changes
+- Cargo.toml
+- src/**
+- `Cargo.toml` — dev-dep only
+- docs/foo (copy).md
+- LICENSE
+
+### Forbidden
+- Do not modify `src/sliding_sync.rs`
+"#;
+        let doc = parse_spec_from_str(input).unwrap();
+        assert!(BoundaryEntryShapeLinter.lint(&doc).is_empty());
     }
 
     #[test]
