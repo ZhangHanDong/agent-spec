@@ -608,7 +608,7 @@ This produces a final merged report where Skip verdicts are replaced with the Ag
 
 8. **Define precise boundaries**: Use path globs (`crates/foo/**`) for mechanical enforcement. Natural language prohibitions are lint-checked but not file-path enforced. Use both.
 
-9. **Use incremental resume for long specs**: `--resume` skips already-passed scenarios. `--resume=conservative` reruns all but detects regressions. Saves time on specs with 10+ scenarios.
+9. **Use incremental resume for long specs**: `--resume` skips already-passed scenarios. `--resume=conservative` reruns all but detects regressions. Saves time on specs with 10+ scenarios. A checkpoint taken on different spec content (or a renamed spec) is ignored with a `checkpoint_diagnostic` — editing the spec always forces a full rerun.
 
 10. **Split roadmaps into small specs**: Each spec should have 3-8 scenarios. If you need more, split into multiple specs with `depends` relationships. Use `agent-spec graph` to visualize.
 

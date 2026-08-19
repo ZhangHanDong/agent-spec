@@ -132,6 +132,11 @@ pub struct Checkpoint {
     pub timestamp: u64,
     pub vcs_ref: Option<String>,
     pub scenarios: HashMap<String, CheckpointEntry>,
+    /// Content fingerprint of the spec the checkpoint was taken from (same
+    /// algorithm as the run log). Empty for checkpoints written before this
+    /// field existed; such checkpoints are treated as stale.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub spec_fingerprint: String,
 }
 
 /// Entry for a single scenario in a checkpoint.
