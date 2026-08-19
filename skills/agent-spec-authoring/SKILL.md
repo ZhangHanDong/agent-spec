@@ -366,7 +366,9 @@ requires the Rule's Examples to pass (≥1 example). Authoring notes:
 
 - Capability specs use header `spec: capability`; a task can declare which
   capability it contributes to with a `capability:` frontmatter field.
-- Promotion preserves the Rule's `id` — task references stay valid.
+- Promotion preserves the Rule's `id` — task references stay valid — and
+  carries the Rule's Examples verbatim (Tags, Test selectors, steps, tables),
+  so the promoted Rule is proven in the capability spec, not an empty header.
 - In a capability spec, an empty Rule (no Example yet) is allowed but flagged
   unproven by `audit`.
 
@@ -498,9 +500,17 @@ Scenario: Batch validation
 ### Allowed Changes
 - crates/spec-parser/**
 - tests/parser_contract.rs
+- Cargo.toml
+- `CLAUDE.md` — docs only
 ```
 
-BoundariesVerifier checks actual changed files against these globs.
+BoundariesVerifier checks actual changed files against these globs. Every
+Allowed Changes entry is a path expression by definition: bare root files
+(`Cargo.toml`, `LICENSE`, `Makefile`), any extension, backticks and a
+trailing ` — note` / ` # note` (outside backticks) all work; a bare filename
+is repo-root relative. Parentheses are part of the path — write
+`` `Cargo.toml` — dev-dep only ``, not `` `Cargo.toml` (dev-dep only) ``; the
+latter can never match and lint `boundary-entry-shape` names it.
 
 ### Natural language prohibitions
 

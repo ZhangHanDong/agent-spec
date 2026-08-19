@@ -268,7 +268,12 @@ agent-spec promote <SPEC> \
 Promotes a passing task Rule into `specs/capabilities/<name>.spec.md` (the
 living-spec library). The promote gate requires the Rule's Examples to pass and
 at least one Example to exist. The Rule's stable `id` is preserved across the
-lift — only its scope changes (Task → Capability). The capability name is
+lift — only its scope changes (Task → Capability). The Rule's Examples travel
+with it verbatim (`Scenario:` line through the last step: Tags, Test /
+structured selectors, Review, Mode, Depends, step tables), in document order,
+so the capability spec is immediately provable by `lifecycle`; re-promoting a
+rule already present is a no-op. A new capability file uses English or Chinese
+section headers to match the source spec. The capability name is
 path-traversal-checked.
 
 ### audit

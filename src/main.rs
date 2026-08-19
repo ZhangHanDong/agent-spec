@@ -2084,6 +2084,74 @@ fn promote_gate_ok(
     Ok(())
 }
 
+/// Section-header language for a generated capability spec, taken from the
+/// source task spec so a promoted file reads in the same language.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CapabilityLang {
+    En,
+    Zh,
+}
+
+impl CapabilityLang {
+    /// English when the source uses any English section header for intent
+    /// or acceptance; Chinese otherwise.
+    fn detect(source: &str) -> Self {
+        let english = source.lines().any(|l| {
+            let t = l.trim().to_lowercase();
+            t.starts_with("## intent")
+                || t.starts_with("## acceptance criteria")
+                || t.starts_with("## completion criteria")
+        });
+        if english { Self::En } else { Self::Zh }
+    }
+}
+
+/// Verbatim source blocks (one per Example) for the scenarios grouped under
+/// `rule_id`, in document order. Each block runs from the `Scenario:` line to
+/// the last step (tables included), with common leading whitespace removed.
+fn rule_scenario_blocks(
+    source: &str,
+    doc: &crate::spec_core::SpecDocument,
+    rule_id: &str,
+) -> Vec<String> {
+    let lines: Vec<&str> = source.lines().collect();
+    let mut blocks = Vec::new();
+    for section in &doc.sections {
+        let crate::spec_core::Section::AcceptanceCriteria { scenarios, .. } = section else {
+            continue;
+        };
+        for sc in scenarios {
+            if sc.rule.as_deref() != Some(rule_id) {
+                continue;
+            }
+            let start = sc.span.start_line.max(1) - 1;
+            let end = sc.span.end_line.max(sc.span.start_line).min(lines.len());
+            if start >= end {
+                continue;
+            }
+            let raw = &lines[start..end];
+            let indent = raw
+                .iter()
+                .filter(|l| !l.trim().is_empty())
+                .map(|l| l.len() - l.trim_start().len())
+                .min()
+                .unwrap_or(0);
+            let block: Vec<String> = raw
+                .iter()
+                .map(|l| {
+                    if l.len() >= indent {
+                        l[indent..].to_string()
+                    } else {
+                        l.trim_start().to_string()
+                    }
+                })
+                .collect();
+            blocks.push(block.join("\n").trim_end().to_string());
+        }
+    }
+    blocks
+}
+
 /// Whether a capability spec already declares a Completion Criteria section.
 fn has_completion_section(content: &str) -> bool {
     content.lines().any(|l| {
@@ -2105,29 +2173,51 @@ fn upsert_capability_rule(
     rule_id: &str,
     rule_name: &str,
     from_task: &str,
+    scenario_blocks: &[String],
+    lang: CapabilityLang,
 ) -> String {
     let rule_line = if rule_name.is_empty() || rule_name == rule_id {
         format!("### Rule: {rule_id}\n")
     } else {
         format!("### Rule: {rule_id} — {rule_name}\n")
     };
-    let block = format!("<!-- promoted from {from_task} -->\n{rule_line}");
+    let mut block = format!("<!-- promoted from {from_task} -->\n{rule_line}");
+    for sc in scenario_blocks {
+        block.push('\n');
+        block.push_str(sc);
+        block.push('\n');
+    }
+    let (intent_header, criteria_header, intent_body) = match lang {
+        CapabilityLang::En => (
+            "## Intent",
+            "## Completion Criteria",
+            format!(
+                "Long-lived behavior truth for the {cap_name} capability (accumulated by promote)."
+            ),
+        ),
+        CapabilityLang::Zh => (
+            "## 意图",
+            "## 完成条件",
+            format!("{cap_name} 能力的长寿命行为真相库(由 promote 累积)。"),
+        ),
+    };
 
     match existing {
         Some(content) if rule_already_present(content, rule_id) => content.to_string(),
         Some(content) => {
             let mut out = content.trim_end().to_string();
             if !has_completion_section(content) {
-                out.push_str("\n\n## 完成条件\n");
+                out.push_str("\n\n");
+                out.push_str(criteria_header);
+                out.push('\n');
             }
             out.push('\n');
             out.push_str(&block);
-            out.push('\n');
             out
         }
         None => {
             format!(
-                "spec: capability\nname: \"{cap_name}\"\ntags: [capability]\n---\n\n## 意图\n\n{cap_name} 能力的长寿命行为真相库(由 promote 累积)。\n\n## 完成条件\n\n{block}\n"
+                "spec: capability\nname: \"{cap_name}\"\ntags: [capability]\n---\n\n{intent_header}\n\n{intent_body}\n\n{criteria_header}\n\n{block}"
             )
         }
     }
@@ -2170,9 +2260,12 @@ fn cmd_promote(
         )
         .into());
     }
+    let source = std::fs::read_to_string(spec)?;
     let doc = crate::spec_parser::parse_spec(spec)?;
     let scenario_names = rule_scenarios(&doc, rule_id)
         .ok_or_else(|| format!("rule id `{rule_id}` not found in {}", spec.display()))?;
+    let scenario_blocks = rule_scenario_blocks(&source, &doc, rule_id);
+    let lang = CapabilityLang::detect(&source);
 
     let gw = crate::spec_gateway::SpecGateway::load(spec)?;
     let report = gw.verify(code)?;
@@ -2206,6 +2299,8 @@ fn cmd_promote(
         rule_id,
         &rule_name,
         &from_task,
+        &scenario_blocks,
+        lang,
     );
     std::fs::write(&cap_path, updated)?;
     println!(
@@ -8022,6 +8117,11 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
+        CapabilityLang, cmd_requirements_graph, cmd_requirements_import,
+        cmd_requirements_work_units, examples_all_pass, rule_scenario_blocks, rule_scenarios,
+        upsert_capability_rule,
+    };
+    use super::{
         GitChangeScope, ResumeMode, RunLogEntry, build_stamp_trailers, checkpoint_path,
         cmd_init_at, generate_rewrite_parity_template_both, generate_rewrite_parity_template_en,
         generate_rewrite_parity_template_zh, generate_template_both, generate_template_en,
@@ -8031,10 +8131,6 @@ mod tests {
     };
     use super::{
         ScenarioAiDecision, assemble_explain_markdown, build_matrix_for, merge_ai_decisions,
-    };
-    use super::{
-        cmd_requirements_graph, cmd_requirements_import, cmd_requirements_work_units,
-        examples_all_pass, rule_scenarios, upsert_capability_rule,
     };
 
     // ---- Phase 3: promote ----
@@ -8075,6 +8171,227 @@ name: "退款"
 
     use super::{is_safe_capability_name, promote_gate_ok, rule_id_of};
 
+    const PROMOTE_SPEC_RICH: &str = r#"spec: task
+name: "Refunds"
+---
+
+## Intent
+
+Refund behavior.
+
+## Acceptance Criteria
+
+### Rule: r-idem — refund is idempotent
+Scenario: first refund succeeds
+  Tags: critical
+  Test:
+    Package: billing
+    Filter: test_first_refund
+  Given an order with the following lines:
+    | sku | qty |
+    | a   | 1   |
+  When a refund is requested
+  Then the refund is recorded
+
+Scenario: second refund is a no-op
+  Test: test_second_refund_noop
+  Given a refunded order
+  When a refund is requested again
+  Then no second refund is recorded
+
+### Rule: r-other — unrelated rule
+Scenario: other behavior
+  Test: test_other
+  When something else
+  Then it works
+"#;
+
+    fn rich_blocks() -> Vec<String> {
+        let doc = crate::spec_parser::parse_spec_from_str(PROMOTE_SPEC_RICH).unwrap();
+        rule_scenario_blocks(PROMOTE_SPEC_RICH, &doc, "r-idem")
+    }
+
+    fn rule_scenario_names_in(content: &str, rule_id: &str) -> Option<Vec<String>> {
+        let doc = crate::spec_parser::parse_spec_from_str(content).unwrap();
+        rule_scenarios(&doc, rule_id)
+    }
+
+    #[test]
+    fn test_promote_carries_scenario_blocks_verbatim() {
+        let blocks = rich_blocks();
+        assert_eq!(blocks.len(), 2, "{blocks:?}");
+        let out = upsert_capability_rule(
+            None,
+            "billing",
+            "r-idem",
+            "refund is idempotent",
+            "task-refunds",
+            &blocks,
+            CapabilityLang::En,
+        );
+        for line in [
+            "Scenario: first refund succeeds",
+            "  Tags: critical",
+            "  Test:",
+            "    Package: billing",
+            "    Filter: test_first_refund",
+            "    | sku | qty |",
+            "    | a   | 1   |",
+            "  Then the refund is recorded",
+            "Scenario: second refund is a no-op",
+            "  Test: test_second_refund_noop",
+            "  Then no second refund is recorded",
+        ] {
+            assert!(out.contains(line), "missing line {line:?} in:\n{out}");
+        }
+        assert!(
+            !out.contains("other behavior"),
+            "must not carry another rule's examples"
+        );
+    }
+
+    #[test]
+    fn test_promote_keeps_example_document_order() {
+        let out = upsert_capability_rule(
+            None,
+            "billing",
+            "r-idem",
+            "refund is idempotent",
+            "task-refunds",
+            &rich_blocks(),
+            CapabilityLang::En,
+        );
+        let a = out.find("Scenario: first refund succeeds").unwrap();
+        let b = out.find("Scenario: second refund is a no-op").unwrap();
+        assert!(a < b);
+    }
+
+    #[test]
+    fn test_promote_output_reparses_with_same_scenario_names() {
+        let out = upsert_capability_rule(
+            None,
+            "billing",
+            "r-idem",
+            "refund is idempotent",
+            "task-refunds",
+            &rich_blocks(),
+            CapabilityLang::En,
+        );
+        let doc = crate::spec_parser::parse_spec_from_str(&out).unwrap();
+        assert_eq!(doc.meta.level, crate::spec_core::SpecLevel::Capability);
+        let src = crate::spec_parser::parse_spec_from_str(PROMOTE_SPEC_RICH).unwrap();
+        assert_eq!(
+            rule_scenarios(&doc, "r-idem"),
+            rule_scenarios(&src, "r-idem"),
+        );
+        assert_eq!(rule_scenarios(&doc, "r-idem").unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_promote_appends_scenarios_under_rule_in_existing_file() {
+        let existing = "spec: capability\nname: \"billing\"\n---\n\n## Intent\n\nx\n\n## Completion Criteria\n\n### Rule: r-old — old rule\nScenario: old example\n  Test: t_old\n  When x\n  Then y\n";
+        let out = upsert_capability_rule(
+            Some(existing),
+            "billing",
+            "r-idem",
+            "refund is idempotent",
+            "task-refunds",
+            &rich_blocks(),
+            CapabilityLang::En,
+        );
+        assert_eq!(
+            rule_scenario_names_in(&out, "r-idem").unwrap().len(),
+            2,
+            "{out}"
+        );
+        assert_eq!(
+            rule_scenario_names_in(&out, "r-old").unwrap(),
+            vec!["old example".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_promote_with_scenarios_is_idempotent() {
+        let first = upsert_capability_rule(
+            None,
+            "billing",
+            "r-idem",
+            "refund is idempotent",
+            "task-refunds",
+            &rich_blocks(),
+            CapabilityLang::En,
+        );
+        let second = upsert_capability_rule(
+            Some(&first),
+            "billing",
+            "r-idem",
+            "refund is idempotent",
+            "task-refunds",
+            &rich_blocks(),
+            CapabilityLang::En,
+        );
+        assert_eq!(first, second);
+        assert_eq!(second.matches("Scenario: first refund succeeds").count(), 1);
+    }
+
+    #[test]
+    fn test_promote_gate_still_blocks_failing_example() {
+        let report = report_with(&[
+            ("first refund succeeds", crate::spec_core::Verdict::Pass),
+            ("second refund is a no-op", crate::spec_core::Verdict::Fail),
+        ]);
+        let err = promote_gate_ok(
+            &[
+                "first refund succeeds".into(),
+                "second refund is a no-op".into(),
+            ],
+            &report,
+        )
+        .unwrap_err();
+        assert!(err.contains("not all examples pass"), "{err}");
+    }
+
+    #[test]
+    fn test_promote_new_capability_uses_english_headers_for_english_source() {
+        assert_eq!(
+            CapabilityLang::detect(PROMOTE_SPEC_RICH),
+            CapabilityLang::En
+        );
+        let out = upsert_capability_rule(
+            None,
+            "billing",
+            "r-idem",
+            "refund is idempotent",
+            "task-refunds",
+            &rich_blocks(),
+            CapabilityLang::En,
+        );
+        assert!(out.contains("## Intent"));
+        assert!(out.contains("## Completion Criteria"));
+        assert!(!out.contains("## 意图"));
+    }
+
+    #[test]
+    fn test_promote_new_capability_uses_chinese_headers_for_chinese_source() {
+        assert_eq!(CapabilityLang::detect(PROMOTE_SPEC), CapabilityLang::Zh);
+        let doc = crate::spec_parser::parse_spec_from_str(PROMOTE_SPEC).unwrap();
+        let blocks = rule_scenario_blocks(PROMOTE_SPEC, &doc, "r-ok");
+        assert_eq!(blocks.len(), 2);
+        let out = upsert_capability_rule(
+            None,
+            "billing",
+            "r-ok",
+            "退款幂等",
+            "task-refund",
+            &blocks,
+            CapabilityLang::Zh,
+        );
+        assert!(out.contains("## 意图"));
+        assert!(out.contains("## 完成条件"));
+        assert!(!out.contains("## Intent"));
+        assert!(out.contains("场景: 首次退款\n  测试: t1"), "{out}");
+    }
+
     #[test]
     fn test_promote_refuses_rule_with_no_examples() {
         // C1/C6/C9: a rule with zero examples must NOT pass the gate (vacuous).
@@ -8090,7 +8407,15 @@ name: "退款"
     #[test]
     fn test_promote_rule_name_excludes_provenance_comment() {
         // C2/C8: the promoted rule, re-parsed, must not carry the HTML comment in its name.
-        let content = upsert_capability_rule(None, "billing", "r-bare", "r-bare", "task-x");
+        let content = upsert_capability_rule(
+            None,
+            "billing",
+            "r-bare",
+            "r-bare",
+            "task-x",
+            &[],
+            CapabilityLang::Zh,
+        );
         let doc = crate::spec_parser::parse_spec_from_str(&content).unwrap();
         let rule = doc
             .sections
@@ -8135,7 +8460,15 @@ name: "退款"
         // C4: appending to a capability file lacking a Completion Criteria
         // section must still place the rule where it parses as a rule.
         let hand = "spec: capability\nname: \"billing\"\n---\n\n## 意图\n\n手写的能力文件,没有完成条件段。\n";
-        let updated = upsert_capability_rule(Some(hand), "billing", "r-ok", "退款幂等", "task-x");
+        let updated = upsert_capability_rule(
+            Some(hand),
+            "billing",
+            "r-ok",
+            "退款幂等",
+            "task-x",
+            &[],
+            CapabilityLang::Zh,
+        );
         let doc = crate::spec_parser::parse_spec_from_str(&updated).unwrap();
         let has_rule = doc.sections.iter().any(|s| {
             matches!(s,
@@ -8171,7 +8504,15 @@ name: "退款"
 
     #[test]
     fn test_promote_appends_rule_when_examples_pass() {
-        let content = upsert_capability_rule(None, "billing", "r-ok", "退款幂等", "task-refund");
+        let content = upsert_capability_rule(
+            None,
+            "billing",
+            "r-ok",
+            "退款幂等",
+            "task-refund",
+            &[],
+            CapabilityLang::Zh,
+        );
         // Re-parse the generated capability spec: rule present with Capability scope.
         let doc = crate::spec_parser::parse_spec_from_str(&content).unwrap();
         assert_eq!(doc.meta.level, crate::spec_core::SpecLevel::Capability);
@@ -8194,9 +8535,24 @@ name: "退款"
 
     #[test]
     fn test_promote_is_idempotent_for_same_rule() {
-        let first = upsert_capability_rule(None, "billing", "r-ok", "退款幂等", "task-refund");
-        let second =
-            upsert_capability_rule(Some(&first), "billing", "r-ok", "退款幂等", "task-refund");
+        let first = upsert_capability_rule(
+            None,
+            "billing",
+            "r-ok",
+            "退款幂等",
+            "task-refund",
+            &[],
+            CapabilityLang::Zh,
+        );
+        let second = upsert_capability_rule(
+            Some(&first),
+            "billing",
+            "r-ok",
+            "退款幂等",
+            "task-refund",
+            &[],
+            CapabilityLang::Zh,
+        );
         assert_eq!(first, second, "re-promoting the same rule must be a no-op");
         // r-ok appears exactly once.
         assert_eq!(second.matches("Rule: r-ok").count(), 1);
@@ -8211,7 +8567,15 @@ name: "退款"
         ]);
         let before = report.summary.clone();
         let passing_before = gw.is_passing(&report);
-        let _ = upsert_capability_rule(None, "billing", "r-ok", "退款幂等", "task-refund");
+        let _ = upsert_capability_rule(
+            None,
+            "billing",
+            "r-ok",
+            "退款幂等",
+            "task-refund",
+            &[],
+            CapabilityLang::Zh,
+        );
         assert_eq!(passing_before, gw.is_passing(&report));
         assert_eq!(before.total, report.summary.total);
     }
