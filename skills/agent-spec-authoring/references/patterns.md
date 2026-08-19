@@ -179,6 +179,18 @@ Category keywords recognized:
 - Forbidden: `禁止`, `forbidden`, `forbid`, `deny`
 - Out of Scope: `排除`, `out of scope`, `scope`
 
+Path entry rules (single implementation shared by verifier, plan and MCP):
+- Every Allowed Changes entry is a path expression; nothing is dropped by a
+  suffix whitelist. `Cargo.toml`, `LICENSE`, `tools/x/gate.json`, `` `CLAUDE.md` ``
+  all match; a bare filename means a repo-root file.
+- Trailing notes: ` — note` (em dash) or ` # note`, only outside backticks.
+  `(…)` is never stripped — `docs/foo (copy).md` is a filename.
+- Forbidden entries are enforced as paths only when the whole entry is a
+  single path token (`src/sliding_sync.rs`); "Do not modify `src/x.rs`" is a
+  prose prohibition and is not extracted.
+- Lint `boundary-entry-shape` (Warning) flags an Allowed entry that cannot
+  match, e.g. `` `Cargo.toml` (dev-dep only) ``.
+
 ## Scenario Patterns
 
 ### Simple test selector

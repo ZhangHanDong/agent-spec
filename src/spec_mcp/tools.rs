@@ -295,7 +295,7 @@ fn spec_allows_path(spec_path: &Path, path: &str) -> bool {
     gw.contract()
         .allowed_changes
         .iter()
-        .any(|g| crate::spec_knowledge::guidance::glob_match(g, path))
+        .any(|entry| crate::spec_core::entry_allows_path(entry, path))
 }
 
 fn liveness_status(args: &Value, ctx: &McpContext) -> Result<Value, String> {
@@ -567,6 +567,87 @@ pub(crate) fn atlas_context_request(
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_boundary_matching_single_source_agrees_across_callers() {
+        let root =
+            std::env::temp_dir().join(format!("boundary-single-source-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let spec_path = root.join("task-x.spec.md");
+        let spec = r#"spec: task
+name: "Single source"
+---
+
+## Intent
+
+Boundary matching agrees everywhere.
+
+## Boundaries
+
+### Allowed Changes
+- ./Cargo.toml
+- `docs/*.md` — 说明
+
+## Completion Criteria
+
+Scenario: placeholder
+  Test: placeholder_test
+  Given x
+  When y
+  Then z
+"#;
+        std::fs::write(&spec_path, spec).unwrap();
+        let changes = ["Cargo.toml", "docs/x.md"];
+
+        // 1. MCP spec_allows_path (normalizes TaskContract.allowed_changes raw text)
+        for change in changes {
+            assert!(
+                spec_allows_path(&spec_path, change),
+                "mcp rejected {change}"
+            );
+        }
+
+        // 2. plan's allowed-pattern collection
+        let doc = crate::spec_parser::parse_spec_from_str(spec).unwrap();
+        let patterns = crate::spec_gateway::plan::collect_allowed_patterns(&doc.sections);
+        assert_eq!(
+            patterns,
+            vec!["Cargo.toml".to_string(), "docs/*.md".to_string()]
+        );
+        for change in changes {
+            assert!(
+                patterns
+                    .iter()
+                    .any(|p| crate::spec_core::path_matches_pattern(p, change)),
+                "plan rejected {change}"
+            );
+        }
+
+        // 3. boundaries verifier
+        let resolved = crate::spec_core::ResolvedSpec {
+            task: doc,
+            inherited_constraints: Vec::new(),
+            inherited_decisions: Vec::new(),
+            all_scenarios: Vec::new(),
+        };
+        let results = crate::spec_verify::Verifier::verify(
+            &crate::spec_verify::BoundariesVerifier,
+            &crate::spec_verify::VerificationContext {
+                code_paths: vec![PathBuf::from(".")],
+                change_paths: changes.iter().map(PathBuf::from).collect(),
+                ai_mode: crate::spec_verify::AiMode::Off,
+                resolved_spec: resolved,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            results[0].verdict,
+            crate::spec_core::Verdict::Pass,
+            "{:?}",
+            results[0].step_results
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     fn fixture(tag: &str) -> (PathBuf, McpContext) {
         let root = std::env::temp_dir().join(format!("kll-mcp-{}-{tag}", std::process::id()));
