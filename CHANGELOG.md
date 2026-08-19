@@ -6,6 +6,13 @@ All notable changes to `agent-spec` are documented here. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `precedence-fallback-coverage` no longer treats a quoted Rust return arrow
+  (`` `f(&self, x) -> bool` ``, `` `|x| -> Option<T>` ``) as an ordering
+  chain; `memory() -> disk` and `local -> cache -> remote` still warn.
+  Reported from robrix2 practice.
+
 ## [1.4.0] - 2026-08-14
 
 The **enforcement** release: the forward-walking pipeline stops reminding and
