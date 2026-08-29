@@ -1,7 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::spec_core::{
-    BoundaryCategory, Evidence, ScenarioResult, SpecResult, StepVerdict, Verdict,
+    Evidence, ScenarioResult, SpecResult, StepVerdict, Verdict, collect_boundary_patterns,
+    normalize_change_path, path_matches_pattern,
 };
 
 use super::{VerificationContext, Verifier};
@@ -18,7 +19,7 @@ impl Verifier for BoundariesVerifier {
     }
 
     fn verify(&self, ctx: &VerificationContext) -> SpecResult<Vec<ScenarioResult>> {
-        let (allowed, forbidden) = collect_path_boundaries(&ctx.resolved_spec.task.sections);
+        let (allowed, forbidden) = collect_boundary_patterns(&ctx.resolved_spec.task.sections);
         if ctx.change_paths.is_empty() || (allowed.is_empty() && forbidden.is_empty()) {
             return Ok(Vec::new());
         }
@@ -107,149 +108,17 @@ impl Verifier for BoundariesVerifier {
     }
 }
 
-fn collect_path_boundaries(sections: &[crate::spec_core::Section]) -> (Vec<String>, Vec<String>) {
-    let mut allowed = Vec::new();
-    let mut forbidden = Vec::new();
-
-    for section in sections {
-        if let crate::spec_core::Section::Boundaries { items, .. } = section {
-            for item in items {
-                if !looks_like_path_boundary(&item.text) {
-                    continue;
-                }
-
-                match item.category {
-                    BoundaryCategory::Allow => allowed.push(normalize_pattern(&item.text)),
-                    // Symbols are code-graph references, never path globs.
-                    BoundaryCategory::Symbols => {}
-                    BoundaryCategory::Deny | BoundaryCategory::General => {
-                        forbidden.push(normalize_pattern(&item.text))
-                    }
-                }
-            }
-        }
-    }
-
-    (allowed, forbidden)
-}
-
-fn looks_like_path_boundary(text: &str) -> bool {
-    let trimmed = text.trim();
-    trimmed.contains('/')
-        || trimmed.contains('\\')
-        || trimmed.contains('*')
-        || trimmed.ends_with(".rs")
-        || trimmed.ends_with(".ts")
-        || trimmed.ends_with(".js")
-        || trimmed.ends_with(".py")
-        || trimmed.ends_with(".md")
-        || trimmed.ends_with(".spec")
-        || trimmed.ends_with(".spec.md")
-}
-
 fn normalize_change_paths(paths: &[PathBuf], workspace_root: Option<&Path>) -> Vec<String> {
     let mut changes = Vec::new();
 
     for path in paths {
-        let normalized = normalize_path(path, workspace_root);
+        let normalized = normalize_change_path(path, workspace_root);
         if !normalized.is_empty() && !changes.iter().any(|item| item == &normalized) {
             changes.push(normalized);
         }
     }
 
     changes
-}
-
-fn normalize_path(path: &Path, workspace_root: Option<&Path>) -> String {
-    let candidate = workspace_root
-        .and_then(|root| path.strip_prefix(root).ok())
-        .unwrap_or(path);
-
-    candidate
-        .to_string_lossy()
-        .replace('\\', "/")
-        .trim_start_matches("./")
-        .trim_matches('/')
-        .to_string()
-}
-
-fn normalize_pattern(pattern: &str) -> String {
-    pattern
-        .trim()
-        .trim_matches('`')
-        .replace('\\', "/")
-        .trim_start_matches("./")
-        .trim_matches('/')
-        .to_string()
-}
-
-fn path_matches_pattern(pattern: &str, path: &str) -> bool {
-    let pattern_segments: Vec<&str> = pattern
-        .split('/')
-        .filter(|segment| !segment.is_empty())
-        .collect();
-    let path_segments: Vec<&str> = path
-        .split('/')
-        .filter(|segment| !segment.is_empty())
-        .collect();
-    match_segments(&pattern_segments, &path_segments)
-}
-
-fn match_segments(pattern: &[&str], path: &[&str]) -> bool {
-    if pattern.is_empty() {
-        return path.is_empty();
-    }
-
-    if pattern[0] == "**" {
-        return (0..=path.len()).any(|index| match_segments(&pattern[1..], &path[index..]));
-    }
-
-    if path.is_empty() {
-        return false;
-    }
-
-    segment_matches(pattern[0], path[0]) && match_segments(&pattern[1..], &path[1..])
-}
-
-fn segment_matches(pattern: &str, segment: &str) -> bool {
-    if pattern == "*" {
-        return true;
-    }
-
-    if !pattern.contains('*') {
-        return pattern == segment;
-    }
-
-    let parts: Vec<&str> = pattern.split('*').collect();
-    let anchored_start = !pattern.starts_with('*');
-    let anchored_end = !pattern.ends_with('*');
-    let mut cursor = 0usize;
-
-    for (index, part) in parts.iter().enumerate() {
-        if part.is_empty() {
-            continue;
-        }
-
-        if index == 0 && anchored_start {
-            if !segment[cursor..].starts_with(part) {
-                return false;
-            }
-            cursor += part.len();
-            continue;
-        }
-
-        if let Some(found) = segment[cursor..].find(part) {
-            cursor += found + part.len();
-        } else {
-            return false;
-        }
-    }
-
-    if anchored_end && let Some(last_part) = parts.iter().rev().find(|part| !part.is_empty()) {
-        return segment.ends_with(last_part);
-    }
-
-    true
 }
 
 fn find_workspace_root(paths: &[PathBuf]) -> Option<PathBuf> {
@@ -280,7 +149,7 @@ mod tests {
 
     use crate::spec_core::{ResolvedSpec, Scenario, SpecLevel, SpecMeta, SpecResult, Verdict};
 
-    use super::{BoundariesVerifier, path_matches_pattern};
+    use super::BoundariesVerifier;
     use crate::spec_verify::{AiMode, VerificationContext, Verifier};
 
     fn make_resolved_spec(input: &str) -> SpecResult<ResolvedSpec> {
@@ -293,17 +162,149 @@ mod tests {
         })
     }
 
+    fn run(spec: &str, changes: &[&str]) -> Vec<crate::spec_core::ScenarioResult> {
+        let resolved = make_resolved_spec(spec).unwrap();
+        BoundariesVerifier
+            .verify(&VerificationContext {
+                code_paths: vec![PathBuf::from(".")],
+                change_paths: changes.iter().map(PathBuf::from).collect(),
+                ai_mode: AiMode::Off,
+                resolved_spec: resolved,
+            })
+            .unwrap()
+    }
+
     #[test]
-    fn matches_double_star_path_patterns() {
-        assert!(path_matches_pattern(
-            "crates/spec-parser/**",
-            "crates/spec-parser/src/parser.rs"
-        ));
-        assert!(path_matches_pattern("specs/**", "specs/task.spec"));
-        assert!(!path_matches_pattern(
-            "crates/spec-parser/**",
-            "crates/spec-gateway/src/lib.rs"
-        ));
+    fn test_boundary_allow_accepts_bare_root_files_and_any_extension() {
+        let results = run(
+            r#"spec: task
+name: "Root files"
+---
+
+## Boundaries
+
+### Allowed Changes
+- Cargo.toml
+- `CLAUDE.md`
+- LICENSE
+- Makefile
+- tools/x/gate.json
+"#,
+            &[
+                "Cargo.toml",
+                "CLAUDE.md",
+                "LICENSE",
+                "Makefile",
+                "tools/x/gate.json",
+            ],
+        );
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].verdict,
+            Verdict::Pass,
+            "{:?}",
+            results[0].step_results
+        );
+        assert_eq!(results[0].step_results.len(), 5);
+        assert!(
+            results[0]
+                .step_results
+                .iter()
+                .all(|s| s.verdict == Verdict::Pass)
+        );
+    }
+
+    #[test]
+    fn test_boundary_allow_still_rejects_undeclared_root_file() {
+        let results = run(
+            r#"spec: task
+name: "Root files"
+---
+
+## Boundaries
+
+### Allowed Changes
+- Cargo.toml
+"#,
+            &["Cargo.lock"],
+        );
+        assert_eq!(results[0].verdict, Verdict::Fail);
+        let step = &results[0].step_results[0];
+        assert_eq!(step.step_text, "Cargo.lock");
+        assert_eq!(step.verdict, Verdict::Fail);
+        assert_eq!(step.reason, "not covered by any allowed boundary");
+    }
+
+    #[test]
+    fn test_boundary_deny_collects_only_path_tokens() {
+        let doc = crate::spec_parser::parse_spec_from_str(
+            r#"spec: task
+name: "Deny"
+---
+
+## Boundaries
+
+### Allowed Changes
+- src/**
+
+### Forbidden
+- Do not modify `src/sliding_sync.rs`
+- 不新增依赖
+- src/sliding_sync.rs
+"#,
+        )
+        .unwrap();
+        let (allowed, forbidden) = crate::spec_core::collect_boundary_patterns(&doc.sections);
+        assert_eq!(allowed, vec!["src/**".to_string()]);
+        assert_eq!(forbidden, vec!["src/sliding_sync.rs".to_string()]);
+    }
+
+    #[test]
+    fn test_boundary_deny_prose_mentioning_path_does_not_fail_change() {
+        let results = run(
+            r#"spec: task
+name: "Deny prose"
+---
+
+## Boundaries
+
+### Forbidden
+- Do not break the JSON shape in `src/spec_report/mod.rs`
+"#,
+            &["src/spec_report/mod.rs"],
+        );
+        // No path pattern at all → verifier has nothing to enforce.
+        assert!(
+            results.is_empty()
+                || results[0]
+                    .step_results
+                    .iter()
+                    .all(|s| s.verdict == Verdict::Pass),
+            "{results:?}"
+        );
+    }
+
+    #[test]
+    fn test_boundary_allow_annotated_entry_matches_after_note_strip() {
+        let results = run(
+            r#"spec: task
+name: "Notes"
+---
+
+## Boundaries
+
+### Allowed Changes
+- `Cargo.toml` — dev-dep only
+- docs/foo (copy).md
+"#,
+            &["Cargo.toml", "docs/foo (copy).md"],
+        );
+        assert_eq!(
+            results[0].verdict,
+            Verdict::Pass,
+            "{:?}",
+            results[0].step_results
+        );
     }
 
     #[test]

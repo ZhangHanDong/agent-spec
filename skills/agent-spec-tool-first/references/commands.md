@@ -83,6 +83,11 @@ any other value (including `compact`/`diagnostic`) renders as plain text. Use
 New flags:
 - `--resume` — skip already-passed scenarios (incremental mode)
 - `--resume=conservative` — rerun all but detect regressions
+- The checkpoint records the spec's content fingerprint; if the spec was
+  renamed or edited since the checkpoint (or the checkpoint predates
+  fingerprinting) it is ignored — nothing is carried forward — and the run
+  reports `checkpoint_diagnostic` (json) / `warning: checkpoint ignored: …`
+  (stderr in text mode).
 - `--review-mode auto` (default) — treat `pending_review` as pass
 - `--review-mode strict` — treat `pending_review` as non-passing
 
@@ -256,6 +261,16 @@ Provenance is `Computational` (mechanical evidence) vs `Inferential` (AI). Share
 `verify`'s change-set and ai-mode flags and default semantics. Scenarios with no
 matching test surface as orphan rows.
 
+### Verification summary shape
+
+`summary.total/passed/failed/skipped/uncertain/pending_review` are the gate
+counts and include synthetic layer rows (`[boundaries] …`, `[atlas-symbols] …`,
+`[complexity] …`). `summary.scenarios` holds the same counts over genuine
+scenarios only and `summary.layers` lists each layer's verdict; text output
+and the run log show `N/M scenarios passed … · layers: boundaries=pass`.
+A `Package:` selector that is not a workspace member yields `uncertain` with
+``package `x` is not a member of the cargo workspace at … (members: …)``.
+
 ### promote
 
 ```bash
@@ -268,7 +283,12 @@ agent-spec promote <SPEC> \
 Promotes a passing task Rule into `specs/capabilities/<name>.spec.md` (the
 living-spec library). The promote gate requires the Rule's Examples to pass and
 at least one Example to exist. The Rule's stable `id` is preserved across the
-lift — only its scope changes (Task → Capability). The capability name is
+lift — only its scope changes (Task → Capability). The Rule's Examples travel
+with it verbatim (`Scenario:` line through the last step: Tags, Test /
+structured selectors, Review, Mode, Depends, step tables), in document order,
+so the capability spec is immediately provable by `lifecycle`; re-promoting a
+rule already present is a no-op. A new capability file uses English or Chinese
+section headers to match the source spec. The capability name is
 path-traversal-checked.
 
 ### audit

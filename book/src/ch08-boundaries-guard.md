@@ -19,6 +19,14 @@
 BoundariesVerifier 把每个变更文件对照合同的 glob：命中禁止 → fail；有允许清单
 却不在其中 → fail；证据（PatternMatch）逐文件记录。
 
+`### Allowed Changes` 下的条目按定义就是路径表达式：裸根文件（`Cargo.toml`、
+`LICENSE`、`Makefile`）、任意扩展名、反引号、以及反引号外的 ` — 说明` / ` # 说明`
+尾注都能用；裸文件名即仓库根相对路径；`(…)` 是文件名的一部分，不会被剥离。
+`### Forbidden` 条目只有整条是单个路径 token 时才机械执法，散文禁令中的反引号
+路径不会被抽取。识别、规范化与匹配只有一份实现（`spec_core::boundary_paths`），
+verifier、plan 与 MCP `spec_allows_path` 结论一致。写成 `` `Cargo.toml` (dev-dep only) ``
+的条目永远匹配不上，lint `boundary-entry-shape` 会指名它。
+
 ## guard：全仓一次验证
 
 ```bash
