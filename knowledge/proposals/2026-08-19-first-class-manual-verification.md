@@ -63,8 +63,9 @@ robrix2 反馈 A1（P0）与 A2（P0）；两轮审查确定：A2 依赖 A1，�
 ## Decision
 
 1. **语法**：场景级字段 `Verification: manual` / `验证: manual`。带此字段的场景
-   不参与 TestVerifier；`Test:` 可缺省。若同时给出 `Test:`，机器结果仅作辅助证据，
-   verdict 仍由人工结算决定。
+   不参与 TestVerifier；`Test:` 可缺省。若同时给出 `Test:`，机器结果先行：机器判
+   fail 则场景即 fail，**人不能把机器判红的签成绿**（ADR-003：机械 pass/fail 永不被
+   任何来源覆盖）；机器 pass 或无测试时才进入人工结算。
 2. **verdict**：新增 `Verdict::ManualPending`。未结算的 manual 场景 verdict 为
    `manual_pending`；`is_passing` 把它与 skip 同等对待（**阻断**）。`--review-mode`
    不影响它。
@@ -72,7 +73,15 @@ robrix2 反馈 A1（P0）与 A2（P0）；两轮审查确定：A2 依赖 A1，�
    `manual-verification`），人以 answered envelope 回答，`resolve-ai` 把它结算为
    `pass` / `fail`，并在 `HumanJudgment` 上追加 `spec_fingerprint` 与可选的
    `external_reference`（PR review URL、commit sha 等不可解释的外部引用）。
-   `resolve-ai` 同时写 run log（今天它不写）。
+   提供语法糖 `agent-spec attest <spec> --scenario <name> --verdict pass
+   --reasoning <text> [--reference <url|sha>]`：内部生成并回答同一个 envelope，
+   走完全相同的校验路径——robrix2 A2 的原始诉求形态，不引入第二条结算通道。
+3b. **存储（关键）**：结算写入**受版本控制**的
+   `.agent-spec/manual/<spec-stem>.json`（`init` 生成 gitignore 豁免，形制同
+   `clause-baseline.json`），而非只写 run log——`.agent-spec/runs` 被 gitignore，
+   CI 干净 checkout 会丢失结算，门禁将永远无法变绿。读取发生在 **verify 层**
+   （而非仅 lifecycle），因此 `trace --gate` 现场重算 `verify_spec_rollup` 时同样
+   看得见结算。run log 仍追加一份结算副本作审计证据。
 4. **失效**：结算记录绑定当时的 `spec_fingerprint`；lifecycle 读到指纹不匹配的
    结算时忽略它并给 `manual_diagnostic`（形状同 `checkpoint_diagnostic`）。
 5. **可见性**：`explain` / `stamp --dry-run` / `matrix` 显示 manual 场景的结算状态
@@ -149,8 +158,11 @@ Bad, because 多一条人工路径就多一条被滥用的路径；只能靠可�
 
 ## Unresolved Questions
 
+（原第 2 问"机器红能否被人签绿"已删除——ADR-003 早有裁决：机械 pass/fail 永不被
+覆盖，这不是本提案的开放问题，见 Decision 1。）
+
 - 字段名用 `Verification: manual` 还是 `Test: manual`？前者语义更清楚，后者改动更小。
-- manual 场景带 `Test:` 时机器结果是否应能把 verdict 判成 fail（人无法把红的判绿）？
+- 结算文件按 spec 分片（`.agent-spec/manual/<stem>.json`）还是单文件？分片减少合并冲突。
 - 结算是否需要过期时间（例如随 release 失效），还是只随 spec 指纹失效？
 - `Spec-Manual` trailer 是否值得，还是并入 `Spec-Summary`？
 - codemod 是否也该处理 robrix2 那种 "Property — …" 标题约定（A7），还是留给单独提案？

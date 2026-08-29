@@ -47,7 +47,8 @@ Changes 与变更集有交集" 过滤——完全不相交恰恰可能是严重�
 
 - 不改变单个 spec 的边界语义（allow / forbid 的匹配规则见 REQ-BOUNDARY-PATH-EXPRESSIONS）。
 - 不改变 skip≠pass；回归模式下的 skip 仍阻断（manual 场景见 LEP-004）。
-- 不做 spec 之间的所有权冲突仲裁（多份 spec 同时 engaged 时全部检查）。
+- 不做 spec 之间的所有权冲突仲裁：多份 spec 同时 engaged 时各自检查各自的
+  Forbidden 与 Allowed，互相认领的文件互不判罚（见 Decision 2）。
 
 ## Decision
 
@@ -56,7 +57,13 @@ Changes 与变更集有交集" 过滤——完全不相交恰恰可能是严重�
    (c) C 中某文件命中 S 的任一 `### Symbols` 所在文件（需 atlas 新鲜图；图不可用
    时忽略 (c)）。
 2. **按层级区分**：
-   - engaged 的 **task** spec：完整变更集做边界检查（现行语义）+ 全部场景。
+   - engaged 的 **task** spec：全部场景 + 边界检查，但 allow 判定按文件归属：命中
+     本 spec Forbidden → fail（对完整变更集硬性生效）；命中本 spec Allowed → pass；
+     命中**其它 engaged spec** 的 Allowed 或 project 的 `### Unowned Allow` → pass
+     （归别人管，不是越界）；都不命中 → 进 unowned 报告，不在本 spec 处 fail。
+     若沿用"完整变更集对单 spec allow 清单"的现行语义，跨 spec 的 PR（同时改 A 管的
+     `src/a.rs` 与 B 管的 `src/b.rs`）会让 A、B 互判对方的文件越界——A3 原问题在
+     engaged 集内原样复现。
    - 未 engaged 的 task spec：只跑绑定测试（回归），不做边界层。
    - **capability** spec：不做边界（长寿命，不"拥有"变更），始终全量场景（回归）。
    - **project** spec：Boundaries 是约束不是路径，不做变更集边界；lint 按 level。
